@@ -73,6 +73,8 @@ jobs:
             --line-number \
             --ignore-case \
             --extended-regexp \
+            --binary-files=without-match \
+            --exclude-dir=node_modules \
             --exclude='.env*' \
             'septem|montrichard|51 rue des bois' \
             defaults examples apps services prototype README.md docs; then
