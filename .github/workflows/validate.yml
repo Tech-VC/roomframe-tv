@@ -36,6 +36,11 @@ jobs:
       - name: Smoke-test installer idempotence
         run: |
           test_root="$(mktemp -d)"
+          cleanup_test_root() {
+            sudo find "$test_root" -depth -mindepth 1 -delete
+            sudo rmdir "$test_root"
+          }
+          trap cleanup_test_root EXIT
           sudo env \
             ROOMFRAME_INSTALL_DIR="$test_root/install" \
             ROOMFRAME_CONFIG_DIR="$test_root/config" \
@@ -43,7 +48,9 @@ jobs:
             ROOMFRAME_SKIP_COMMAND_LINKS=1 \
             ./install.sh --source "$PWD" --host roomframe.example.test --no-start
           before="$(
-            sudo stat -c '%n:%i:%Y:%s' "$test_root"/config/secrets/* | sort
+            sudo find "$test_root/config/secrets" \
+              -mindepth 1 -maxdepth 1 -type f \
+              -printf '%f:%i:%Y:%s\n' | sort
           )"
           sudo env \
             ROOMFRAME_INSTALL_DIR="$test_root/install" \
@@ -52,7 +59,9 @@ jobs:
             ROOMFRAME_SKIP_COMMAND_LINKS=1 \
             ./install.sh --source "$PWD" --host roomframe.example.test --no-start
           after="$(
-            sudo stat -c '%n:%i:%Y:%s' "$test_root"/config/secrets/* | sort
+            sudo find "$test_root/config/secrets" \
+              -mindepth 1 -maxdepth 1 -type f \
+              -printf '%f:%i:%Y:%s\n' | sort
           )"
           test "$before" = "$after"
           test -f "$test_root/config/runtime.conf"
