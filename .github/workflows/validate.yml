@@ -64,8 +64,8 @@ jobs:
               -printf '%f:%i:%Y:%s\n' | sort
           )"
           test "$before" = "$after"
-          test -f "$test_root/config/runtime.conf"
-          test -f "$test_root/data/seed/default-experience/manifest.json"
+          sudo test -f "$test_root/config/runtime.conf"
+          sudo test -f "$test_root/data/seed/default-experience/manifest.json"
       - name: Ensure neutral public defaults
         run: |
           if grep \
