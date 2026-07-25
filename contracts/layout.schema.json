@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/layout.schema.json",
+  "title": "RoomFrame layout",
+  "type": "object",
+  "required": ["schemaVersion", "layoutId", "canvas", "nodes"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "layoutId": {"type": "string", "format": "uuid"},
+    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+    "canvas": {
+      "type": "object",
+      "required": ["width", "height", "background", "renderTarget"],
+      "properties": {
+        "width": {"const": 1920},
+        "height": {"const": 1080},
+        "renderTarget": {"enum": ["1080p", "native"]},
+        "background": {
+          "type": "object",
+          "required": ["type", "mode"],
+          "properties": {
+            "type": {"enum": ["color", "image", "video"]},
+            "asset": {"type": ["string", "null"]},
+            "color": {"type": ["string", "null"]},
+            "mode": {"enum": ["cover", "contain", "focus"]},
+            "focusX": {"type": "number", "minimum": 0, "maximum": 1},
+            "focusY": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "additionalProperties": false
+      },
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "x", "y", "width", "height", "zIndex", "props"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"},
+          "kind": {"enum": ["text", "clock", "weather", "message", "image", "video", "logo", "source", "app", "network"]},
+          "x": {"type": "number", "minimum": 0, "maximum": 1920},
+          "y": {"type": "number", "minimum": 0, "maximum": 1080},
+          "width": {"type": "number", "exclusiveMinimum": 0, "maximum": 1920},
+          "height": {"type": "number", "exclusiveMinimum": 0, "maximum": 1080},
+          "zIndex": {"type": "integer", "minimum": 0, "maximum": 10000},
+          "focusOrder": {"type": ["integer", "null"], "minimum": 0, "maximum": 10000},
+          "locked": {"type": "boolean"},
+          "hidden": {"type": "boolean"},
+          "props": {
+            "type": "object",
+            "maxProperties": 40,
+            "propertyNames": {"pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$"}
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

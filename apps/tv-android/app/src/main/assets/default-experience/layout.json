@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 2,
+  "layoutId": "00000000-0000-4000-8000-000000000100",
+  "name": "Accueil par défaut",
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "background": {
+      "type": "image",
+      "asset": "assets/background-default.webp",
+      "mode": "cover",
+      "focusX": 0.5,
+      "focusY": 0.5
+    },
+    "renderTarget": "1080p"
+  },
+  "nodes": [
+    {
+      "id": "greeting",
+      "kind": "text",
+      "x": 90,
+      "y": 170,
+      "width": 1000,
+      "height": 220,
+      "zIndex": 20,
+      "props": {
+        "role": "greeting",
+        "text": "Bonjour, bienvenue dans cette salle",
+        "fontScale": 1.0,
+        "maxLines": 3
+      }
+    },
+    {
+      "id": "clock-weather",
+      "kind": "clock",
+      "x": 1320,
+      "y": 58,
+      "width": 500,
+      "height": 90,
+      "zIndex": 20,
+      "props": {
+        "showDate": false,
+        "showWeather": true
+      }
+    },
+    {
+      "id": "airplay",
+      "kind": "source",
+      "x": 90,
+      "y": 485,
+      "width": 410,
+      "height": 125,
+      "zIndex": 20,
+      "props": {
+        "source": "airplay",
+        "label": "AirPlay"
+      }
+    },
+    {
+      "id": "cast",
+      "kind": "source",
+      "x": 90,
+      "y": 625,
+      "width": 410,
+      "height": 125,
+      "zIndex": 20,
+      "props": {
+        "source": "cast",
+        "label": "Cast"
+      }
+    },
+    {
+      "id": "hdmi",
+      "kind": "source",
+      "x": 90,
+      "y": 765,
+      "width": 410,
+      "height": 125,
+      "zIndex": 20,
+      "props": {
+        "source": "hdmi",
+        "label": "HDMI",
+        "physicalInput": "auto"
+      }
+    },
+    {
+      "id": "messages",
+      "kind": "message",
+      "x": 1160,
+      "y": 195,
+      "width": 610,
+      "height": 430,
+      "zIndex": 20,
+      "props": {
+        "title": "ACTUALITÉS",
+        "feed": "default",
+        "maximumItems": 3
+      }
+    },
+    {
+      "id": "network",
+      "kind": "network",
+      "x": 90,
+      "y": 970,
+      "width": 700,
+      "height": 45,
+      "zIndex": 20,
+      "props": {
+        "label": "RÉSEAU",
+        "value": "À CONFIGURER DANS L’ADMINISTRATION"
+      }
+    },
+    {
+      "id": "logo",
+      "kind": "logo",
+      "x": 1505,
+      "y": 850,
+      "width": 285,
+      "height": 145,
+      "zIndex": 30,
+      "props": {
+        "asset": "assets/logo-placeholder.png",
+        "fit": "contain",
+        "anchor": "bottom-right"
+      }
+    }
+  ]
+}

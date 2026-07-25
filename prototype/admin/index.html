@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
+  <title>RoomFrame TV — régie</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Aller à la scène</a>
+  <div class="noise" aria-hidden="true"></div>
+
+  <div class="shell" id="app" aria-busy="true">
+    <header class="mast">
+      <div class="wordmark"><span class="mark" aria-hidden="true"></span><span>ROOMFRAME TV</span></div>
+      <nav class="sections" aria-label="Espaces de travail">
+        <button class="section on" type="button" data-view="surface" aria-current="page">Surface</button>
+        <button class="section" type="button" data-view="content">Contenus</button>
+        <button class="section" type="button" data-view="fleet">Parc</button>
+        <button class="section" type="button" data-view="releases">Versions</button>
+        <button class="section" type="button" data-view="security">Sécurité</button>
+      </nav>
+      <div class="session-tools">
+        <span class="live"><span class="dot pending" id="serverDot"></span><span id="serverLabel">connexion…</span></span>
+        <button class="text-button hidden" id="logoutButton" type="button">Déconnexion</button>
+      </div>
+    </header>
+
+    <div class="global-status loading" id="globalStatus" role="status" aria-live="polite">
+      <span class="status-mark" aria-hidden="true"></span>
+      <span id="globalStatusText">Connexion à l’instance locale…</span>
+      <button class="text-button hidden" id="retryButton" type="button">Réessayer</button>
+    </div>
+
+    <main id="main-content">
+      <section class="workspace-panel on" id="view-surface" aria-labelledby="surfaceTitle">
+        <div class="workspace">
+          <aside class="left">
+            <div class="eyebrow">Scène active / configuration</div>
+            <h1 class="bigtitle" id="surfaceTitle">Composer<br>l’<em>accueil</em>.</h1>
+
+            <div class="field">
+              <label for="targetSelect">Aperçu</label>
+              <select id="targetSelect" disabled><option value="">Simulateur local · affectation non modifiée</option></select>
+            </div>
+            <div class="field">
+              <label for="sceneName">Nom de la scène</label>
+              <input id="sceneName" maxlength="100" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="greetingInput">Salutation</label>
+              <textarea id="greetingInput" maxlength="220"></textarea>
+            </div>
+            <fieldset class="field">
+              <legend>Fond de scène</legend>
+              <div class="choice" id="backgroundModes">
+                <button class="chip" type="button" data-fit="cover">Remplir</button>
+                <button class="chip" type="button" data-fit="contain">Entier</button>
+                <button class="chip" type="button" data-fit="focus">Point focal</button>
+              </div>
+            </fieldset>
+            <div class="field">
+              <label class="asset-trigger" for="backgroundFile">
+                <span class="asset-icon">BG</span>
+                <span><b>Image ou vidéo</b><small>Le serveur valide et adapte le média</small></span>
+                <b aria-hidden="true">＋</b>
+              </label>
+              <input class="visually-hidden" type="file" id="backgroundFile" accept="image/*,video/*">
+            </div>
+
+            <fieldset class="field palette">
+              <legend>Ajouter un objet</legend>
+              <div class="palette-grid" id="palette">
+                <button type="button" data-add-kind="text">Texte</button>
+                <button type="button" data-add-kind="clock">Heure</button>
+                <button type="button" data-add-kind="weather">Météo</button>
+                <button type="button" data-add-kind="message">Messages</button>
+                <button type="button" data-add-kind="image">Image</button>
+                <button type="button" data-add-kind="video">Vidéo</button>
+                <button type="button" data-add-kind="logo">Logo</button>
+                <button type="button" data-add-kind="source" data-source="airplay">AirPlay</button>
+                <button type="button" data-add-kind="source" data-source="cast">Cast</button>
+                <button type="button" data-add-kind="source" data-source="hdmi">HDMI</button>
+                <button type="button" data-add-kind="app">Application</button>
+                <button type="button" data-add-kind="network">Réseau</button>
+              </div>
+            </fieldset>
+          </aside>
+
+          <section class="stage-zone" aria-label="Éditeur de scène">
+            <div class="stage-head">
+              <div><strong id="stageTitle">Scène</strong><br><span id="stageMeta">1920 × 1080 · brouillon local</span></div>
+              <div class="stage-tools">
+                <button class="tool" type="button" id="reloadStudioButton">Recharger</button>
+                <button class="tool" type="button" id="saveButton">Enregistrer</button>
+                <button class="tool primary" type="button" id="publishButton">Publier</button>
+              </div>
+            </div>
+            <div class="stage-empty hidden" id="stageEmpty">
+              <strong>Aucune scène disponible.</strong>
+              <span>Ajoutez un objet ou rechargez les données de l’instance.</span>
+            </div>
+            <div class="monitor" id="monitor" aria-label="Scène logique 1920 par 1080">
+              <div class="screen-bg" id="screenBg"></div>
+              <div class="screen-wash" aria-hidden="true"></div>
+              <div class="safe-zone" aria-hidden="true"></div>
+              <div id="nodeLayer"></div>
+            </div>
+            <p class="keyboard-help">Flèches : déplacer · Maj + flèches : 10 px · Alt + flèches : redimensionner · Suppr : retirer</p>
+          </section>
+
+          <aside class="right">
+            <section aria-labelledby="propertiesTitle">
+              <h2 id="propertiesTitle">Propriétés</h2>
+              <form id="propertiesForm">
+                <p class="empty-copy" id="noSelection">Sélectionnez un objet dans la scène.</p>
+                <div id="propertyFields" class="hidden">
+                  <div class="property-heading"><b id="selectedKind">Objet</b><button class="danger-link" id="deleteNodeButton" type="button">Retirer</button></div>
+                  <label for="nodeLabel">Libellé</label><input id="nodeLabel" maxlength="120">
+                  <label for="nodeText">Texte / valeur</label><textarea id="nodeText" maxlength="1000"></textarea>
+                  <div id="nodeAssetField" class="hidden">
+                    <label for="nodeAsset">Média</label>
+                    <select id="nodeAsset"></select>
+                  </div>
+                  <div class="coordinate-grid">
+                    <label for="nodeX">X<input id="nodeX" type="number" min="0" max="1920"></label>
+                    <label for="nodeY">Y<input id="nodeY" type="number" min="0" max="1080"></label>
+                    <label for="nodeWidth">Largeur<input id="nodeWidth" type="number" min="20" max="1920"></label>
+                    <label for="nodeHeight">Hauteur<input id="nodeHeight" type="number" min="20" max="1080"></label>
+                  </div>
+                  <label for="nodeZ">Calque<input id="nodeZ" type="number" min="0" max="10000"></label>
+                  <label for="focusOrder">Ordre de focus D-pad<input id="focusOrder" type="number" min="0" max="999"></label>
+                </div>
+              </form>
+            </section>
+            <section aria-labelledby="layersTitle">
+              <h2 id="layersTitle">Calques</h2>
+              <div class="object-list" id="objectList"></div>
+            </section>
+            <section aria-labelledby="revisionsTitle">
+              <h2 id="revisionsTitle">Révisions</h2>
+              <div class="revision-list" id="revisionList"><p class="empty-copy">Aucune révision chargée.</p></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="workspace-panel full-panel" id="view-content" aria-labelledby="contentTitle">
+        <aside class="panel-index">
+          <div class="eyebrow">Bibliothèque locale</div>
+          <h1 class="editorial-title" id="contentTitle">Ce qui<br>passe à<br>l’écran.</h1>
+          <p class="note">Médias et messages ne deviennent visibles qu’après validation serveur et publication.</p>
+        </aside>
+        <div class="panel-content content-columns">
+          <section>
+            <h2>Médias</h2>
+            <form class="release-drop" id="mediaForm">
+              <div><h3>Importer un média</h3><p>Image ou vidéo, nettoyée et adaptée par le serveur.</p></div>
+              <label class="action-label" for="mediaFile">Choisir<input class="visually-hidden" id="mediaFile" name="file" type="file" accept="image/*,video/*" required></label>
+              <button class="tool primary" type="submit">Envoyer</button>
+            </form>
+            <div class="content-ledger" id="mediaList"><p class="empty-copy">Aucun média.</p></div>
+          </section>
+          <section>
+            <h2>Programmer un message</h2>
+            <form class="editor-form" id="messageForm">
+              <label for="messageTitle">Titre</label><input id="messageTitle" name="title" maxlength="160" required>
+              <label for="messageBody">Message</label><textarea id="messageBody" name="body" maxlength="2000" required></textarea>
+              <div class="form-pair">
+                <label for="messageStartsAt">Début<input id="messageStartsAt" name="startsAt" type="datetime-local"></label>
+                <label for="messageEndsAt">Fin<input id="messageEndsAt" name="endsAt" type="datetime-local"></label>
+              </div>
+              <button class="tool primary" type="submit">Programmer</button>
+            </form>
+            <div class="content-ledger" id="messageList"><p class="empty-copy">Aucun message programmé.</p></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="workspace-panel full-panel" id="view-fleet" aria-labelledby="fleetTitle">
+        <aside class="panel-index"><div class="eyebrow">Parc local</div><h1 class="editorial-title" id="fleetTitle">Les salles<br>comme une<br>constellation.</h1><p class="note">Les capacités non remontées restent explicitement inconnues.</p></aside>
+        <div class="panel-content"><div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div></div>
+      </section>
+
+      <section class="workspace-panel full-panel" id="view-releases" aria-labelledby="releasesTitle">
+        <aside class="panel-index"><div class="eyebrow">Distribution locale</div><h1 class="editorial-title" id="releasesTitle">Mettre à<br>jour sans<br>effacer.</h1><p class="note">Le serveur vérifie le bundle avant de proposer tout déploiement.</p></aside>
+        <div class="panel-content">
+          <form class="release-drop" id="releaseForm">
+            <div><h3>Importer une version hors ligne</h3><p>Bundle signé <b>.rfupdate</b>. Aucun statut n’est présumé avant la réponse serveur.</p></div>
+            <label class="action-label" for="releaseFile">Choisir<input class="visually-hidden" id="releaseFile" name="file" type="file" accept=".rfupdate" required></label>
+            <button class="tool primary" type="submit">Vérifier</button>
+          </form>
+          <div class="release-result" id="releaseResult" aria-live="polite"><p class="empty-copy">Aucun bundle importé.</p></div>
+        </div>
+      </section>
+
+      <section class="workspace-panel full-panel" id="view-security" aria-labelledby="securityTitle">
+        <aside class="panel-index"><div class="eyebrow">Confiance locale</div><h1 class="editorial-title" id="securityTitle">Chaque<br>écran a<br>une identité.</h1><p class="note">La session et les capacités affichées proviennent uniquement de l’API.</p></aside>
+        <div class="panel-content"><dl class="security-ledger" id="securityLedger"><dt>Session</dt><dd>Chargement…</dd></dl></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="gate hidden" id="authGate">
+    <section class="gate-art" aria-hidden="true"><div class="setup-brand">ROOMFRAME / ACCÈS LOCAL</div><div class="setup-num" id="gateNumber">01</div><div><h1 id="gateHeadline">Préparer l’instance.</h1><p id="gateAside">Le réseau du serveur est déjà configuré. RoomFrame ne le modifie pas.</p></div></section>
+    <section class="gate-panel" id="loginPanel" aria-labelledby="loginTitle">
+      <div class="server-ready"><b>HTTPS local</b><span id="loginServerUrl">Instance RoomFrame</span></div>
+      <form class="gate-form" id="loginForm">
+        <h2 id="loginTitle">Ouvrir la régie</h2>
+        <p>Utilisez votre compte local et votre second facteur.</p>
+        <label for="loginUsername">Identifiant</label><input id="loginUsername" name="username" autocomplete="username" required>
+        <label for="loginPassword">Phrase de passe</label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+        <label for="loginTotp">Code TOTP</label><input id="loginTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+        <p class="form-error hidden" id="loginError" role="alert"></p>
+        <button class="next" type="submit">Se connecter</button>
+      </form>
+    </section>
+    <section class="gate-panel hidden" id="bootstrapPanel" aria-labelledby="bootstrapTitle">
+      <div class="server-ready"><b>Serveur prêt</b><span id="bootstrapServerUrl">Aucun réglage réseau demandé</span></div>
+      <form class="gate-form" id="bootstrapForm">
+        <h2 id="bootstrapTitle">Initialiser une seule fois</h2>
+        <p>Créez l’identité et le premier administrateur. Le serveur verrouillera définitivement ce parcours.</p>
+        <div class="form-grid">
+          <label class="wide" for="bootstrapToken">Jeton initial affiché par l’installateur<input id="bootstrapToken" name="bootstrapToken" type="password" autocomplete="off" minlength="20" required></label>
+          <label for="bootstrapDisplayName">Organisation<input id="bootstrapDisplayName" name="displayName" maxlength="100" required></label>
+          <label for="bootstrapRoomName">Salle par défaut<input id="bootstrapRoomName" name="roomName" value="Salle de réunion 1" maxlength="100" required></label>
+          <label class="wide" for="bootstrapGreeting">Salutation<input id="bootstrapGreeting" name="defaultGreeting" value="Bonjour, bienvenue dans cette salle" maxlength="220" required></label>
+          <label for="bootstrapUsername">Identifiant admin<input id="bootstrapUsername" name="username" autocomplete="username" required></label>
+          <label for="bootstrapEmail">E-mail interne<input id="bootstrapEmail" name="email" type="email" autocomplete="email" required></label>
+          <label for="bootstrapPassword">Phrase de passe<input id="bootstrapPassword" name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label for="bootstrapPasswordConfirm">Confirmation<input id="bootstrapPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="12" required></label>
+        </div>
+        <div class="totp-enrolment">
+          <button class="tool" id="prepareTotpButton" type="button">Préparer le TOTP</button>
+          <div class="hidden" id="totpDetails">
+            <p>Ajoutez ce secret dans votre application d’authentification, puis saisissez le code courant.</p>
+            <output id="totpSecret" aria-label="Secret TOTP"></output>
+            <a id="totpUri" href="#">Ouvrir l’application compatible</a>
+            <label for="bootstrapTotpCode">Code TOTP<input id="bootstrapTotpCode" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+          </div>
+        </div>
+        <p class="form-error hidden" id="bootstrapError" role="alert"></p>
+        <button class="next" type="submit">Initialiser et verrouiller</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

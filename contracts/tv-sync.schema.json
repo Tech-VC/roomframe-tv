@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/tv-sync.schema.json",
+  "title": "RoomFrame atomic TV synchronization manifest",
+  "type": "object",
+  "required": [
+    "formatVersion",
+    "kind",
+    "revision",
+    "sceneId",
+    "sceneRevision",
+    "generatedAt",
+    "documents",
+    "assets",
+    "sha256"
+  ],
+  "properties": {
+    "formatVersion": {"const": 1},
+    "kind": {"const": "tv-sync"},
+    "revision": {"type": "integer", "minimum": 1},
+    "sceneId": {"type": "string", "format": "uuid"},
+    "sceneRevision": {"type": "integer", "minimum": 1},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "documents": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "size"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$"},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "size": {"type": "integer", "minimum": 0, "maximum": 10485760}
+        },
+        "additionalProperties": false
+      }
+    },
+    "assets": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["id", "path", "url", "sha256", "size"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 600},
+          "assetId": {"type": "string", "format": "uuid"},
+          "variant": {"enum": ["1080p", "4k"]},
+          "path": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$"},
+          "url": {"type": "string", "pattern": "^/api/v1/"},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "size": {"type": "integer", "minimum": 0, "maximum": 4294967296},
+          "mime": {"type": "string", "maxLength": 100}
+        },
+        "additionalProperties": false
+      }
+    },
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

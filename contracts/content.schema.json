@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/content.schema.json",
+  "title": "RoomFrame scheduled content",
+  "type": "object",
+  "required": ["schemaVersion", "feeds"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "feeds": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 100,
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "body", "priority", "startsAt", "endsAt"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "title": {"type": "string", "minLength": 1, "maxLength": 200},
+              "body": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "priority": {"type": "integer", "minimum": -100, "maximum": 100},
+              "startsAt": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              },
+              "endsAt": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

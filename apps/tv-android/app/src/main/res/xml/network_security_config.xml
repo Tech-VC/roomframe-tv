@@ -1,0 +1,6 @@
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors><certificates src="system" /></trust-anchors>
+    </base-config>
+    <!-- La CA locale ou le pin est injecté pendant l’enrôlement dans la version production. -->
+</network-security-config>

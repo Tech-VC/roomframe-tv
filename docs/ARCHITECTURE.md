@@ -1,0 +1,121 @@
+# Architecture
+
+## Deux phases distinctes
+
+### Installation du serveur
+
+`install.sh` s’exécute sur un Debian/CT dont le réseau existe déjà. Il détecte
+l’IPv4 et un suffixe DNS, installe les dépendances manquantes, prépare HTTPS,
+les secrets et les volumes persistants, puis démarre les conteneurs. Il ne
+configure jamais l’IP, le masque, la passerelle, les routes ou les DNS.
+
+### Configuration de l’instance
+
+Le bootstrap applicatif crée l’identité, le premier propriétaire avec TOTP et
+la première scène. Les salles, contenus, sources et politiques appartiennent à
+l’application ; aucun champ réseau serveur n’est demandé.
+
+## Pile du jalon 0.3.0
+
+```text
+Navigateur ── HTTPS ── Caddy ── API Node.js ── PostgreSQL
+                  │                  │
+                  │                  ├── médias privés
+                  │                  ├── releases vérifiées
+                  │                  └── seed figé
+                  │
+                  └── fichiers statiques admin/simulateur
+
+Worker Sharp/FFmpeg ── file PostgreSQL ── médias privés
+```
+
+- Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
+- l’administration et l’API partagent une origine ;
+- PostgreSQL et le worker restent sur un réseau Docker interne ;
+- l’API et le worker tournent sans privilège, avec racine en lecture seule,
+  capacités supprimées et volumes dédiés ;
+- l’API et le worker utilisent l’UID/GID du compte système Debian
+  `roomframe`, sans home ni shell de connexion ;
+- la demande de récupération est montée en lecture seule dans l’API ; l’état
+  de consommation autoritatif reste transactionnel en base ;
+- l’API et le worker appliquent les migrations sous verrou advisory ;
+- un seul worker média détient le verrou global de traitement ;
+- code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
+  séparés.
+
+Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions,
+les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
+sources, les horaires, les métriques, les événements, les releases, les
+déploiements et l’audit.
+
+## Une seule origine HTTPS
+
+```text
+https://roomframe.domaine-interne/
+https://roomframe.domaine-interne/api/
+https://roomframe.domaine-interne/simulator/
+```
+
+L’IPv4 principale est également incluse dans le certificat Caddy et reste une
+URL de secours. La CA locale doit être distribuée ou épinglée par un canal
+administré.
+
+## Scènes et publication
+
+La scène logique mesure 1920 × 1080. Les composants et leurs propriétés sont
+validés contre les contrats JSON et des contrôles sémantiques : limites du
+canevas, identifiants uniques, propriétés autorisées, fuseau IANA, références
+médias sûres et ordre de focus.
+
+Le moteur n’accepte aucun HTML ni JavaScript fourni par un administrateur. Une
+révision est immuable ; la publication déplace un pointeur et incrémente la
+révision de synchronisation dans une transaction unique.
+
+## Local-first TV
+
+L’API produit un manifeste par révision comprenant les documents et assets
+adressés par SHA-256. Le protocole attendu côté client est :
+
+1. rendre immédiatement la dernière révision locale validée ;
+2. demander la révision courante en arrière-plan ;
+3. télécharger documents et médias dans une zone de staging ;
+4. vérifier tailles et SHA-256 ;
+5. activer atomiquement le nouveau pointeur ;
+6. conserver l’ancienne révision tant que la nouvelle n’est pas complète.
+
+Ce protocole et ses invariants serveur sont présents et testés. Le simulateur
+web stocke les révisions et blobs dans IndexedDB, vérifie le hash canonique du
+manifeste, chaque document et chaque asset, puis active le staging dans une
+transaction qui conserve la révision précédente. Son interrupteur « Couper
+l’API » et le rechargement du cache démontrent le rendu sans serveur.
+
+Le client Android fournit maintenant `FileExperienceStore`, les interfaces de
+synchronisation/vérification et des adaptateurs `unsupported` ou explicitement
+simulés. L’intégration HTTPS/PKI, le branchement du magasin au rendu et les
+tests Gradle sur appareil restent à réaliser.
+
+## Studio
+
+Le Studio conserve l’esthétique de régie du prototype et utilise les endpoints
+réels de bootstrap, authentification, scènes, médias, messages et releases. Le
+modèle partagé côté interface est testé avec le validateur de layout de l’API.
+Les interactions couvrent déplacement, redimensionnement, clavier, calques,
+propriétés, palette et historique.
+
+Le sélecteur d’aperçu TV/groupe est volontairement désactivé : `0.3.0` édite la
+scène d’instance et ne simule pas une affectation que l’API ne sait pas encore
+retourner.
+
+## Frontière matérielle
+
+L’architecture cible sépare :
+
+- `RoomFrame Home`, le launcher visible ;
+- un agent Device Owner chargé des politiques, si le matériel le permet ;
+- des adaptateurs HDMI, puissance, Cast et AirPlay ;
+- les intégrations constructeur isolées.
+
+Le jalon ne prétend pas que ces adaptateurs fonctionnent sur une TV Philips.
+PhairPlay reste absent jusqu’à la validation d’Android, de l’ABI, des codecs et
+du budget mémoire réels. Ouvrir une application native ne doit jamais forcer
+sa résolution 4K/HDR à celle du rendu d’accueil.

@@ -1,0 +1,45 @@
+# Modèle rendu par install.sh. Le marqueur est remplacé par le FQDN validé
+# et l'IPv4 principale, sans modifier la configuration réseau de l'hôte.
+{
+  auto_https disable_redirects
+  admin off
+}
+
+__ROOMFRAME_SITE_ADDRESSES__ {
+  tls internal
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "no-referrer"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
+    Cross-Origin-Opener-Policy "same-origin"
+    Cross-Origin-Resource-Policy "same-origin"
+    Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'"
+    -Server
+  }
+
+  handle /health {
+    reverse_proxy api:8080
+  }
+
+  redir /api /api/ 308
+  handle /api/* {
+    reverse_proxy api:8080
+  }
+
+  redir /simulator /simulator/ 308
+  handle_path /simulator/* {
+    root * /srv/simulator
+    try_files {path} /index.html
+    file_server
+  }
+
+  handle {
+    root * /srv/admin
+    try_files {path} /index.html
+    file_server
+  }
+}

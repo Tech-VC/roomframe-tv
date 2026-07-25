@@ -1,0 +1,176 @@
+x-api-environment: &api-environment
+  NODE_ENV: production
+  ROOMFRAME_DB_HOST: postgres
+  ROOMFRAME_DB_PORT: "5432"
+  ROOMFRAME_DB_NAME: roomframe
+  ROOMFRAME_DB_USER: roomframe
+  ROOMFRAME_POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+  ROOMFRAME_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
+  ROOMFRAME_SESSION_SECRET_FILE: /run/secrets/session_secret
+  ROOMFRAME_TOTP_KEY_FILE: /run/secrets/totp_encryption_key
+  ROOMFRAME_VERSION: ${ROOMFRAME_VERSION:-dev}
+  ROOMFRAME_MEDIA_DIR: /data/media
+  ROOMFRAME_PROCESSING_DIR: /data/processing
+  ROOMFRAME_RELEASES_DIR: /data/releases
+  ROOMFRAME_BACKUPS_DIR: /data/backups
+  ROOMFRAME_DEFAULT_BUNDLE_DIR: /defaults/experience
+  ROOMFRAME_SERVER_STATE_FILE: /run/roomframe/server-state.json
+  ROOMFRAME_UPDATE_TRUST_DIR: /run/roomframe/update-trust
+  ROOMFRAME_RECOVERY_REQUEST_FILE: /run/roomframe/recovery/request.json
+  ROOMFRAME_PUBLIC_URL: ${ROOMFRAME_PUBLIC_URL:?ROOMFRAME_PUBLIC_URL requis}
+  ROOMFRAME_PREFERRED_URL: ${ROOMFRAME_PREFERRED_URL:?ROOMFRAME_PREFERRED_URL requis}
+  ROOMFRAME_FALLBACK_URL: ${ROOMFRAME_FALLBACK_URL:?ROOMFRAME_FALLBACK_URL requis}
+  ROOMFRAME_API_URL: ${ROOMFRAME_API_URL:?ROOMFRAME_API_URL requis}
+  ROOMFRAME_SERVER_IP: ${ROOMFRAME_SERVER_IP:?ROOMFRAME_SERVER_IP requis}
+  ROOMFRAME_PRIMARY_HOST: ${ROOMFRAME_PRIMARY_HOST:?ROOMFRAME_PRIMARY_HOST requis}
+  TZ: ${ROOMFRAME_TIMEZONE:-UTC}
+
+x-api-build: &api-build
+  context: .
+  dockerfile: services/api/Dockerfile
+
+x-api-secrets: &api-secrets
+  - postgres_password
+  - bootstrap_token
+  - session_secret
+  - totp_encryption_key
+
+services:
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./prototype/admin:/srv/admin:ro
+      - ./prototype/tv:/srv/simulator:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy:/data
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${ROOMFRAME_CADDY_MEMORY_LIMIT:-256m}
+    cpus: ${ROOMFRAME_CADDY_CPU_LIMIT:-0.50}
+    pids_limit: 128
+    networks:
+      - frontend
+
+  api:
+    build: *api-build
+    image: roomframe-api:${ROOMFRAME_VERSION:-dev}
+    restart: unless-stopped
+    user: "${ROOMFRAME_RUNTIME_UID:?ROOMFRAME_RUNTIME_UID requis}:${ROOMFRAME_RUNTIME_GID:?ROOMFRAME_RUNTIME_GID requis}"
+    read_only: true
+    environment: *api-environment
+    secrets: *api-secrets
+    volumes:
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/app/recovery:/run/roomframe/recovery:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/media:/data/media
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/processing:/data/processing
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/releases:/data/releases
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/seed/default-experience:/defaults/experience:ro
+      - ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/server-state.json:/run/roomframe/server-state.json:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/update-trust:/run/roomframe/update-trust:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROOMFRAME_API_MEMORY_LIMIT:-768m}
+    cpus: ${ROOMFRAME_API_CPU_LIMIT:-1.00}
+    pids_limit: 256
+    networks:
+      - frontend
+      - backend
+
+  worker:
+    build: *api-build
+    image: roomframe-api:${ROOMFRAME_VERSION:-dev}
+    command: ["npm", "run", "worker"]
+    restart: unless-stopped
+    user: "${ROOMFRAME_RUNTIME_UID:?ROOMFRAME_RUNTIME_UID requis}:${ROOMFRAME_RUNTIME_GID:?ROOMFRAME_RUNTIME_GID requis}"
+    read_only: true
+    environment: *api-environment
+    secrets:
+      - postgres_password
+    volumes:
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/media:/data/media
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/processing:/data/processing
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.kill(1, 0)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROOMFRAME_WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${ROOMFRAME_WORKER_CPU_LIMIT:-2.00}
+    pids_limit: 512
+    networks:
+      - backend
+
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: roomframe
+      POSTGRES_USER: roomframe
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      TZ: ${ROOMFRAME_TIMEZONE:-UTC}
+    secrets:
+      - postgres_password
+    volumes:
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${ROOMFRAME_POSTGRES_MEMORY_LIMIT:-1g}
+    cpus: ${ROOMFRAME_POSTGRES_CPU_LIMIT:-1.00}
+    pids_limit: 256
+    networks:
+      - backend
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+secrets:
+  postgres_password:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/postgres_password
+  bootstrap_token:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/bootstrap_token
+  session_secret:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/session_secret
+  totp_encryption_key:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/totp_encryption_key

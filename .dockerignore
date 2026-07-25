@@ -1,0 +1,45 @@
+# Le build API fonctionne sur une liste blanche : aucun secret, média,
+# certificat, artefact ou fichier local hors des chemins ci-dessous n'est
+# transmis au démon Docker.
+**
+
+!services/
+!services/api/
+!services/api/Dockerfile
+!services/api/package.json
+!services/api/package-lock.json
+!services/api/src/
+!services/api/src/**
+!services/api/scripts/
+!services/api/scripts/**
+
+!contracts/
+!contracts/**
+
+!database/
+!database/migrations/
+!database/migrations/**
+
+# Défense en profondeur pour les moteurs dont la gestion des ré-inclusions
+# de répertoires diffère.
+services/api/node_modules
+services/api/node_modules/**
+**/.git
+**/.git/**
+**/.env*
+**/*.pem
+**/*.key
+**/*.crt
+**/*.p12
+**/*.jks
+**/*.keystore
+**/*.rfupdate
+**/backups
+**/backups/**
+**/media
+**/media/**
+**/releases
+**/releases/**
+**/dist
+**/dist/**
+AGENTS.md

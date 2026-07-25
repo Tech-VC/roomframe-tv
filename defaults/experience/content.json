@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "feeds": {
+    "default": [
+      {
+        "id": "welcome-message",
+        "title": "Votre communication apparaîtra ici",
+        "body": "Publiez des messages, actualités, images ou vidéos depuis l’administration.",
+        "priority": 10,
+        "startsAt": null,
+        "endsAt": null
+      },
+      {
+        "id": "offline-message",
+        "title": "Fonctionnement local",
+        "body": "La dernière configuration reste disponible même sans connexion au serveur.",
+        "priority": 5,
+        "startsAt": null,
+        "endsAt": null
+      }
+    ]
+  }
+}

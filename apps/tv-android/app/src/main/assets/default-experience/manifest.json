@@ -1,0 +1,59 @@
+{
+  "formatVersion": 1,
+  "kind": "experience-template",
+  "bundleId": "org.roomframe.default-experience",
+  "version": "1.0.0",
+  "createdAt": "2026-07-24T00:00:00Z",
+  "seedPolicy": {
+    "onlyWhenInstanceEmpty": true,
+    "neverOverwriteExistingInstance": true
+  },
+  "entrypoints": {
+    "layout": "layout.json",
+    "content": "content.json",
+    "schedule": "schedule.json",
+    "settings": "settings.json"
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "964bab57682e42a7a71fa1626cbfc6634c2338e7698a098ae42510022dec601c",
+      "size": 543
+    },
+    {
+      "path": "assets/background-default.jpg",
+      "sha256": "eac6723374bbd8ffc6468a1061587e71a0b65718fc5b1a12e8ee40574c43222f",
+      "size": 63957
+    },
+    {
+      "path": "assets/background-default.webp",
+      "sha256": "0f6d89e91dcac17fa13cc983723a9a376fc8468911be90e44ceab3f813218c05",
+      "size": 14220
+    },
+    {
+      "path": "assets/logo-placeholder.png",
+      "sha256": "0208cf041186d84990b5c0c24b457ab1cdc1e6ffd297b8e9cd16a727923c8f39",
+      "size": 10702
+    },
+    {
+      "path": "content.json",
+      "sha256": "bc5f8d26a90faed8c878409f339365b4fac3570727b6ca099c13b9a0b2630825",
+      "size": 602
+    },
+    {
+      "path": "layout.json",
+      "sha256": "1ee8a07d3ae65c3a1e625083a58bbd52f596960ce1a29ba5bc2a349d4605f1ec",
+      "size": 2446
+    },
+    {
+      "path": "schedule.json",
+      "sha256": "8e4d0e9a20b54116c04a7ab68322f3e14414cb114c5a4a44844d67daae6aea5c",
+      "size": 549
+    },
+    {
+      "path": "settings.json",
+      "sha256": "10f033e12d43ffec340547008400d5aebd8ab9c92a1171da10fdaf4141324d88",
+      "size": 416
+    }
+  ]
+}

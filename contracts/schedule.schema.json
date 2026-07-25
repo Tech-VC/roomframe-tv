@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/schedule.schema.json",
+  "title": "RoomFrame source and power policies",
+  "type": "object",
+  "required": ["schemaVersion", "timezone", "sourcePolicies", "power"],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "timezone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?:UTC|[A-Za-z_+-]+(?:/[A-Za-z0-9_+-]+)+)$"
+    },
+    "sourcePolicies": {
+      "type": "object",
+      "required": ["returnHomeWhenInactiveMinutes", "homeSleepMinutes"],
+      "properties": {
+        "returnHomeWhenInactiveMinutes": {"type": "integer", "minimum": 1, "maximum": 1440},
+        "homeSleepMinutes": {"type": "integer", "minimum": 1, "maximum": 1440}
+      },
+      "additionalProperties": false
+    },
+    "power": {
+      "type": "object",
+      "required": ["enabled", "requireCapabilityProbe", "rules"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "requireCapabilityProbe": {"type": "boolean"},
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["days", "wake", "sleep"],
+            "properties": {
+              "days": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 7,
+                "uniqueItems": true,
+                "items": {"enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}
+              },
+              "wake": {"type": ["string", "null"], "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"},
+              "sleep": {"type": ["string", "null"], "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"}
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

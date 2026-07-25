@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'">
+  <title>RoomFrame TV — simulateur local-first</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="simulator-bar">
+    <div><b>ROOMFRAME / SIMULATEUR TV</b><span id="revisionLabel">cache en cours d’ouverture…</span></div>
+    <div class="simulator-actions">
+      <label><input id="offlineToggle" type="checkbox"> Couper l’API</label>
+      <button id="syncButton" type="button">Synchroniser</button>
+      <button id="reloadButton" type="button">Recharger le cache</button>
+    </div>
+  </header>
+  <main>
+    <div class="frame" id="frame" aria-label="Rendu de la dernière scène valide">
+      <div class="background" id="background"></div>
+      <div class="wash" aria-hidden="true"></div>
+      <div id="nodeLayer"></div>
+      <section class="empty-state hidden" id="emptyState">
+        <h1>Aucune révision valide</h1>
+        <p>Connectez ce simulateur à l’API au moins une fois.</p>
+      </section>
+    </div>
+  </main>
+  <footer class="status" id="status" role="status" aria-live="polite">
+    <span class="status-dot pending" id="statusDot"></span>
+    <span id="statusText">Ouverture du cache local…</span>
+    <small id="hashLabel"></small>
+  </footer>
+</body>
+</html>

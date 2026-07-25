@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "defaults": {
+    "organizationName": "",
+    "roomName": "Salle de réunion 1",
+    "displayGreeting": "Bonjour, bienvenue en salle de réunion 1",
+    "logoPlacement": "bottom-right",
+    "networkLabel": "",
+    "weatherLocation": "",
+    "allowImageBackgrounds": true,
+    "allowVideoBackgrounds": true,
+    "renderResolution": "1920x1080",
+    "preserveNativeAppResolution": true
+  }
+}

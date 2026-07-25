@@ -1,0 +1,136 @@
+name: release-assets
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: roomframe_test
+          POSTGRES_USER: roomframe
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U roomframe -d roomframe_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: '22' }
+      - name: Check and test the tagged sources
+        env:
+          ROOMFRAME_TEST_DB_HOST: 127.0.0.1
+          ROOMFRAME_TEST_DB_PORT: "5432"
+          ROOMFRAME_TEST_DB_NAME: roomframe_test
+          ROOMFRAME_TEST_DB_USER: roomframe
+        run: ./scripts/test.sh
+
+  package:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment:
+      name: release-signing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version: '22' }
+      - name: Verify tag provenance and version consistency
+        run: |
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main || {
+            echo "Le commit tagué n'appartient pas à la branche main protégée." >&2
+            exit 1
+          }
+          tag_version="${GITHUB_REF_NAME#v}"
+          install_version="$(awk -F'"' '$1 == "ROOMFRAME_VERSION=" {print $2; exit}' install.sh)"
+          api_version="$(node -p "require('./services/api/package.json').version")"
+          [[ "$GITHUB_REF_NAME" == "v${tag_version}" && -n "$tag_version" ]]
+          [[ "$tag_version" == "$install_version" ]] || {
+            echo "Le tag et install.sh annoncent des versions différentes." >&2
+            exit 1
+          }
+          [[ "$tag_version" == "$api_version" ]] || {
+            echo "Le tag et services/api/package.json annoncent des versions différentes." >&2
+            exit 1
+          }
+      - name: Create source package
+        run: |
+          mkdir -p dist
+          tar \
+            --exclude-vcs \
+            --exclude=dist \
+            --exclude='.env*' \
+            --exclude='*/.env*' \
+            --exclude='node_modules' \
+            --exclude='*/node_modules' \
+            --exclude='.gradle' \
+            --exclude='*/.gradle' \
+            --exclude='build' \
+            --exclude='*/build' \
+            --exclude='AGENTS.md' \
+            -czf "dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" .
+      - name: Build autonomous installer
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+          ARCHIVE_PATH="dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" \
+          ./scripts/build-release-installer.sh
+      - name: Build and verify signed update
+        env:
+          SIGNING_KEY_B64: ${{ secrets.ROOMFRAME_RELEASE_SIGNING_KEY_B64 }}
+          SIGNING_KEY_ID: ${{ vars.ROOMFRAME_RELEASE_KEY_ID }}
+        run: |
+          if [[ -z "$SIGNING_KEY_B64" ]]; then
+            echo "Le secret ROOMFRAME_RELEASE_SIGNING_KEY_B64 est requis pour publier." >&2
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          key_id="${SIGNING_KEY_ID:-release-main}"
+          key_file="$RUNNER_TEMP/roomframe-release-private.pem"
+          public_key="$RUNNER_TEMP/roomframe-release-public.pem"
+          published_key="dist/roomframe-release-${key_id}.pem"
+          trap 'rm -f "$key_file" "$public_key"' EXIT
+          umask 077
+          printf '%s' "$SIGNING_KEY_B64" | base64 --decode >"$key_file"
+          chmod 0600 "$key_file"
+          openssl pkey -in "$key_file" -pubout -out "$public_key"
+          install -m 0644 "$public_key" "$published_key"
+          sha256sum "$published_key" >"${published_key}.sha256"
+          python scripts/build-signed-update.py \
+            --artifact "dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" \
+            --version "$version" \
+            --private-key "$key_file" \
+            --key-id "$key_id" \
+            --output "dist/roomframe-tv-${GITHUB_REF_NAME}.rfupdate"
+          python scripts/verify-update-bundle.py \
+            "dist/roomframe-tv-${GITHUB_REF_NAME}.rfupdate" \
+            --trust-key "$public_key"
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          files: |
+            dist/roomframe-install.sh
+            dist/roomframe-tv-*.tar.gz
+            dist/roomframe-tv-*.rfupdate
+            dist/roomframe-release-*.pem
+            dist/roomframe-release-*.pem.sha256
+            bundles/roomframe-default-experience-1.0.0.rfbundle

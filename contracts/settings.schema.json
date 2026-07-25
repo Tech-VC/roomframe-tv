@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/settings.schema.json",
+  "title": "RoomFrame experience defaults",
+  "type": "object",
+  "required": ["schemaVersion", "defaults"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "defaults": {
+      "type": "object",
+      "required": [
+        "organizationName",
+        "roomName",
+        "displayGreeting",
+        "logoPlacement",
+        "networkLabel",
+        "weatherLocation",
+        "allowImageBackgrounds",
+        "allowVideoBackgrounds",
+        "renderResolution",
+        "preserveNativeAppResolution"
+      ],
+      "properties": {
+        "organizationName": {"type": "string", "maxLength": 200},
+        "roomName": {"type": "string", "minLength": 1, "maxLength": 200},
+        "displayGreeting": {"type": "string", "minLength": 1, "maxLength": 500},
+        "logoPlacement": {
+          "enum": [
+            "top-left",
+            "top",
+            "top-right",
+            "left",
+            "center",
+            "right",
+            "bottom-left",
+            "bottom",
+            "bottom-right"
+          ]
+        },
+        "networkLabel": {"type": "string", "maxLength": 200},
+        "weatherLocation": {"type": "string", "maxLength": 200},
+        "allowImageBackgrounds": {"type": "boolean"},
+        "allowVideoBackgrounds": {"type": "boolean"},
+        "renderResolution": {"const": "1920x1080"},
+        "preserveNativeAppResolution": {"const": true}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

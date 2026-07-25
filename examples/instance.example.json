@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 2,
+  "instanceId": "00000000-0000-4000-8000-000000000001",
+  "configuredAt": "2026-07-24T00:00:00Z",
+  "displayName": "Example Organisation",
+  "server": {
+    "serverReady": true,
+    "networkManagedExternally": true,
+    "serverIp": "192.0.2.20",
+    "primaryHost": "roomframe.example.internal",
+    "adminUrl": "https://roomframe.example.internal",
+    "fallbackAdminUrl": "https://192.0.2.20",
+    "apiUrl": "https://roomframe.example.internal/api",
+    "softwareVersion": "0.2.0",
+    "preferredAdminUrl": "https://roomframe.example.internal"
+  },
+  "branding": {
+    "primary": "#111111",
+    "accent": "#ff4f1f",
+    "logoAssetId": null,
+    "defaultGreeting": "Bonjour, bienvenue dans cette salle",
+    "defaultLogoPlacement": "bottom-right"
+  },
+  "defaults": {
+    "roomName": "Salle de réunion 1",
+    "experienceBundle": {
+      "bundleId": "org.roomframe.default-experience",
+      "version": "1.0.0"
+    },
+    "policies": {
+      "returnHomeWhenInactiveMinutes": 15,
+      "homeSleepMinutes": 30,
+      "powerScheduleEnabled": false
+    }
+  }
+}

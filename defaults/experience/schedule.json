@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 2,
+  "timezone": "Europe/Paris",
+  "sourcePolicies": {
+    "returnHomeWhenInactiveMinutes": 15,
+    "homeSleepMinutes": 30
+  },
+  "power": {
+    "enabled": false,
+    "requireCapabilityProbe": true,
+    "rules": [
+      {
+        "days": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri"
+        ],
+        "wake": "07:30",
+        "sleep": "19:00"
+      },
+      {
+        "days": [
+          "sat",
+          "sun"
+        ],
+        "wake": null,
+        "sleep": null
+      }
+    ]
+  }
+}

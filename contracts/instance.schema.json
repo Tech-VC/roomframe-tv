@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/instance.schema.json",
+  "title": "RoomFrame instance",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "instanceId",
+    "displayName",
+    "server",
+    "branding",
+    "defaults"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 2
+    },
+    "instanceId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "configuredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "server": {
+      "type": "object",
+      "required": [
+        "serverReady",
+        "networkManagedExternally",
+        "adminUrl",
+        "apiUrl"
+      ],
+      "properties": {
+        "serverReady": {
+          "const": true
+        },
+        "networkManagedExternally": {
+          "const": true
+        },
+        "serverIp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primaryHost": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "adminUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallbackAdminUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "apiUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "softwareVersion": {
+          "type": "string"
+        },
+        "preferredAdminUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "branding": {
+      "type": "object",
+      "required": [
+        "primary",
+        "accent",
+        "defaultGreeting",
+        "defaultLogoPlacement"
+      ],
+      "properties": {
+        "primary": {
+          "type": "string"
+        },
+        "accent": {
+          "type": "string"
+        },
+        "logoAssetId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultGreeting": {
+          "type": "string",
+          "maxLength": 220
+        },
+        "defaultLogoPlacement": {
+          "enum": [
+            "bottom-right",
+            "bottom-left",
+            "top-right",
+            "top-left",
+            "free"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "defaults": {
+      "type": "object",
+      "required": [
+        "roomName",
+        "experienceBundle",
+        "policies"
+      ],
+      "properties": {
+        "roomName": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "experienceBundle": {
+          "type": "object"
+        },
+        "policies": {
+          "type": "object",
+          "required": [
+            "returnHomeWhenInactiveMinutes",
+            "homeSleepMinutes",
+            "powerScheduleEnabled"
+          ],
+          "properties": {
+            "returnHomeWhenInactiveMinutes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1440
+            },
+            "homeSleepMinutes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1440
+            },
+            "powerScheduleEnabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

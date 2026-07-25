@@ -1,0 +1,53 @@
+:root {
+  --ink: #f5f4ef;
+  --dark: #061210;
+  --signal: #ff4f1f;
+  --acid: #d7ff36;
+  --muted: #a9b4af;
+  font-family: Arial, Helvetica, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: #050505; color: var(--ink); display: grid; grid-template-rows: 58px 1fr 42px; overflow: hidden; }
+button, input { font: inherit; }
+button:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 4px solid var(--acid); outline-offset: 4px; }
+.hidden { display: none !important; }
+.simulator-bar { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 24px; background: #ece9df; color: #151511; border-bottom: 1px solid #151511; }
+.simulator-bar b { display: block; font-size: 11px; letter-spacing: .14em; }
+.simulator-bar span { display: block; color: #64625c; font-size: 10px; margin-top: 3px; }
+.simulator-actions { display: flex; align-items: center; gap: 16px; font-size: 10px; font-weight: 900; text-transform: uppercase; }
+.simulator-actions label { display: flex; align-items: center; gap: 6px; }
+.simulator-actions button { border: 1px solid #151511; background: transparent; padding: 8px 10px; font-size: 10px; font-weight: 900; text-transform: uppercase; }
+main { min-height: 0; display: grid; place-items: center; background: #050505; }
+.frame { position: relative; width: min(100vw, calc((100vh - 100px) * 1.777777)); aspect-ratio: 16 / 9; overflow: hidden; background: var(--dark); container-type: inline-size; }
+.background { position: absolute; inset: 0; background: #132323 url("./assets/background-default.webp") center / cover no-repeat; }
+.wash { position: absolute; inset: 0; z-index: 1; background: linear-gradient(90deg, rgba(2,6,6,.76), rgba(2,6,6,.08) 67%, rgba(2,6,6,.55)); }
+#nodeLayer { position: absolute; inset: 0; z-index: 2; }
+.node { position: absolute; display: flex; align-items: center; color: white; overflow: hidden; white-space: pre-wrap; }
+.kind-text { font-family: Georgia, serif; font-size: 3.3cqw; line-height: 1.03; letter-spacing: -.04em; }
+.kind-clock, .kind-weather { justify-content: flex-end; font-size: 1.05cqw; letter-spacing: .08em; }
+.kind-source, .kind-app { justify-content: space-between; border: 0; border-top: 1px solid rgba(255,255,255,.65); border-bottom: 1px solid rgba(255,255,255,.22); padding: 0 1cqw; background: rgba(0,0,0,.08); color: white; font-weight: 900; font-size: 1.25cqw; text-transform: uppercase; letter-spacing: .09em; text-align: left; }
+.kind-source::after, .kind-app::after { content: "↗"; color: var(--acid); font-size: 1.5cqw; }
+.kind-message { align-items: flex-start; border-left: .3cqw solid var(--signal); padding: 1.7cqw; background: rgba(5,8,8,.48); font-size: .85cqw; line-height: 1.5; }
+.kind-message strong { display: block; margin-bottom: .8cqw; font-size: 1.05cqw; letter-spacing: .1em; }
+.kind-network { color: #d7ded9; font-size: .7cqw; text-transform: uppercase; letter-spacing: .12em; }
+.kind-logo, .kind-image, .kind-video { justify-content: flex-end; align-items: flex-end; }
+.node img, .node video { width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }
+.empty-state { position: absolute; inset: 0; z-index: 10; display: grid; place-content: center; text-align: center; background: #101310; }
+.empty-state h1 { font: 400 4cqw/1 Georgia, serif; margin: 0 0 1cqw; }
+.empty-state p { color: var(--muted); }
+.status { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 0 24px; background: #101310; border-top: 1px solid #3e4844; font-size: 11px; }
+.status small { color: var(--muted); font-family: monospace; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #1d9b58; box-shadow: 0 0 0 5px rgba(29,155,88,.13); }
+.status-dot.pending { background: #c48a16; box-shadow: 0 0 0 5px rgba(196,138,22,.13); }
+.status-dot.error { background: #d2462c; box-shadow: 0 0 0 5px rgba(210,70,44,.13); }
+@media (max-width: 760px) {
+  body { grid-template-rows: auto 1fr auto; }
+  .simulator-bar { align-items: flex-start; padding: 12px; flex-direction: column; }
+  .simulator-actions { flex-wrap: wrap; }
+  .status { padding: 10px 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/experience-bundle.schema.json",
+  "title": "RoomFrame experience template bundle",
+  "type": "object",
+  "required": ["formatVersion", "kind", "bundleId", "version", "seedPolicy", "entrypoints", "files"],
+  "properties": {
+    "formatVersion": {"const": 1},
+    "kind": {"const": "experience-template"},
+    "bundleId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,127}$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "seedPolicy": {
+      "type": "object",
+      "required": ["onlyWhenInstanceEmpty", "neverOverwriteExistingInstance"],
+      "properties": {
+        "onlyWhenInstanceEmpty": {"const": true},
+        "neverOverwriteExistingInstance": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "entrypoints": {
+      "type": "object",
+      "required": ["layout", "content", "schedule", "settings"],
+      "properties": {
+        "layout": {"const": "layout.json"},
+        "content": {"const": "content.json"},
+        "schedule": {"const": "schedule.json"},
+        "settings": {"const": "settings.json"}
+      },
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "size"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$"},
+          "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "size": {"type": "integer", "minimum": 0, "maximum": 536870912}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
