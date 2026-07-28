@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui7">
-  <script type="module" src="/app.js?v=0.3.0-ui7"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui8">
+  <script type="module" src="/app.js?v=0.3.0-ui8"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -257,6 +257,66 @@
               <button class="tool primary" id="copyEnrollmentButton" type="button">Copier les trois valeurs</button>
               <button class="tool" id="hideEnrollmentButton" type="button">Masquer maintenant</button>
             </div>
+          </section>
+          <section class="operations-console" aria-labelledby="operationsTitle">
+            <div class="console-index">
+              <span>PARC / 02</span>
+              <h2 id="operationsTitle">Règles de salle</h2>
+              <p>Les intégrations matérielles restent soumises à la sonde de capacité de chaque TV.</p>
+            </div>
+            <div class="operations-targets">
+              <label for="sourceTargetSelect">Cible des sources<select id="sourceTargetSelect"></select></label>
+              <label for="powerTargetSelect">Cible des horaires<select id="powerTargetSelect"></select></label>
+            </div>
+            <form id="sourceSettingsForm" class="source-settings-form">
+              <fieldset>
+                <legend><span class="source-glyph airplay" aria-hidden="true"></span> AirPlay</legend>
+                <label><input id="sourceAirplayEnabled" type="checkbox"> Afficher cette source</label>
+                <label for="sourceAirplayLabel">Libellé<input id="sourceAirplayLabel" maxlength="100" value="AirPlay"></label>
+                <label for="sourceAirplayService">Nom du récepteur<input id="sourceAirplayService" maxlength="120" value="RoomFrame"></label>
+              </fieldset>
+              <fieldset>
+                <legend><span class="source-glyph cast" aria-hidden="true"></span> Cast</legend>
+                <label><input id="sourceCastEnabled" type="checkbox"> Afficher cette source</label>
+                <label for="sourceCastLabel">Libellé<input id="sourceCastLabel" maxlength="100" value="Cast"></label>
+                <label for="sourceCastReceiver">Application réceptrice<input id="sourceCastReceiver" maxlength="200" placeholder="Identifiant optionnel"></label>
+              </fieldset>
+              <fieldset>
+                <legend><span class="source-glyph hdmi" aria-hidden="true"></span> HDMI</legend>
+                <label><input id="sourceHdmiEnabled" type="checkbox"> Afficher cette source</label>
+                <label for="sourceHdmiLabel">Libellé<input id="sourceHdmiLabel" maxlength="100" value="HDMI"></label>
+                <label for="sourceHdmiInput">Entrée physique<select id="sourceHdmiInput"><option>HDMI1</option><option>HDMI2</option><option>HDMI3</option><option>HDMI4</option></select></label>
+              </fieldset>
+              <fieldset>
+                <legend><span class="source-glyph app" aria-hidden="true"></span> Application privée</legend>
+                <label><input id="sourcePrivateAppEnabled" type="checkbox"> Afficher cette source</label>
+                <label for="sourcePrivateAppLabel">Libellé<input id="sourcePrivateAppLabel" maxlength="100" value="Application privée"></label>
+                <label for="sourcePrivateAppId">Identifiant Android<input id="sourcePrivateAppId" maxlength="200" value="org.example.privateapp"></label>
+              </fieldset>
+              <button class="tool primary" type="submit">Enregistrer les sources</button>
+              <p class="form-error hidden" id="sourceSettingsError" role="alert"></p>
+            </form>
+            <form id="powerSettingsForm" class="power-settings-form">
+              <label><input id="powerEnabled" type="checkbox"> Activer les demandes veille / réveil</label>
+              <label for="powerTimezone">Fuseau horaire<input id="powerTimezone" maxlength="100" value="Europe/Paris"></label>
+              <label for="powerReturnHome">Retour accueil après inactivité<input id="powerReturnHome" type="number" min="1" max="1440" value="15"></label>
+              <label for="powerHomeSleep">Veille accueil après<input id="powerHomeSleep" type="number" min="1" max="1440" value="30"></label>
+              <fieldset>
+                <legend>Semaine</legend>
+                <label><input id="powerWeekdaysEnabled" type="checkbox" checked> Lundi à vendredi</label>
+                <label for="powerWeekdayWake">Demande de réveil<input id="powerWeekdayWake" type="time" value="07:30"></label>
+                <label for="powerWeekdaySleep">Demande de veille<input id="powerWeekdaySleep" type="time" value="20:00"></label>
+              </fieldset>
+              <fieldset>
+                <legend>Week-end</legend>
+                <label><input id="powerWeekendEnabled" type="checkbox"> Samedi et dimanche</label>
+                <label for="powerWeekendWake">Demande de réveil<input id="powerWeekendWake" type="time" value="09:00"></label>
+                <label for="powerWeekendSleep">Demande de veille<input id="powerWeekendSleep" type="time" value="18:00"></label>
+              </fieldset>
+              <button class="tool primary" type="submit">Enregistrer les horaires</button>
+              <p class="form-error hidden" id="powerSettingsError" role="alert"></p>
+              <p class="capability-note">Le serveur distribue ces règles. Une TV ne les exécute que si son adaptateur confirme la capacité ; aucun réveil constructeur n’est présumé.</p>
+            </form>
           </section>
           <div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div>
         </div>

@@ -18,6 +18,12 @@ Le serveur valide et persiste déjà les horaires avec
 `requireCapabilityProbe=true`. Le squelette Android n’exécute pas encore ces
 politiques et aucune commande Philips n’est fournie dans le jalon `0.3.0`.
 
+Le Studio permet de choisir l’instance, un groupe ou une TV, puis de saisir
+séparément semaine et week-end. Il persiste aussi, pour cette même cible, le
+délai de retour automatique à l’accueil et le délai de veille de l’accueil.
+L’aperçu résout ces valeurs avec les mêmes règles d’héritage que la
+synchronisation TV.
+
 ## Économiseur d’écran et mode ambiant
 
 Le launcher applique `FLAG_KEEP_SCREEN_ON` tant que son activité est visible.
@@ -48,7 +54,8 @@ Un réveil programmé est plus contraignant : une application ne s’exécute pa
 2. **fonction RTC / timer du firmware Philips** : meilleure solution si exposée ;
 3. **Wake-on-LAN/Wi-Fi ou commande réseau constructeur** : seulement si le modèle l’accepte.
 
-Le futur back-office affichera une capacité réelle par TV :
+Le Studio rappelle que l’exécution est conditionnée à la sonde matérielle. Une
+future étape affichera une capacité réelle par TV :
 
 ```text
 Veille programmée : compatible

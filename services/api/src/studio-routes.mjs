@@ -362,8 +362,10 @@ const synchronizedDocumentsForScreen = async (pool, screen) => {
       schemaVersion: 2,
       timezone: power?.timezone ?? 'Europe/Paris',
       sourcePolicies: {
-        returnHomeWhenInactiveMinutes: policies.returnHomeWhenInactiveMinutes,
-        homeSleepMinutes: policies.homeSleepMinutes,
+        returnHomeWhenInactiveMinutes:
+          power?.return_home_when_inactive_minutes
+          ?? policies.returnHomeWhenInactiveMinutes,
+        homeSleepMinutes: power?.home_sleep_minutes ?? policies.homeSleepMinutes,
       },
       power: {
         enabled: Boolean(power?.enabled),
@@ -997,6 +999,74 @@ export const registerStudioRoutes = ({
     return reply.code(201).send({ id });
   });
 
+  app.put('/api/v1/settings/sources', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request) => {
+    const targetType = request.body?.targetType ?? 'instance';
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    const targetId = targetIdFor(targetType, request.body?.targetId);
+    const items = request.body?.items;
+    if (!Array.isArray(items) || items.length < 1 || items.length > 4) {
+      throw Object.assign(new Error('invalid_source_settings_items'), { statusCode: 400 });
+    }
+    const seenKinds = new Set();
+    const normalized = items.map((item) => {
+      const kind = item?.kind;
+      if (!['airplay', 'cast', 'hdmi', 'private-app'].includes(kind)) {
+        throw Object.assign(new Error('invalid_source_kind'), { statusCode: 400 });
+      }
+      if (seenKinds.has(kind)) {
+        throw Object.assign(new Error('duplicate_source_kind'), { statusCode: 400 });
+      }
+      seenKinds.add(kind);
+      const normalizedItem = {
+        kind,
+        enabled: item.enabled !== false,
+        label: cleanText(item.label ?? kind, 'source_label', 100),
+        configuration: sourceConfiguration(kind, item.configuration ?? {}),
+      };
+      if (
+        normalizedItem.kind === 'private-app'
+        && normalizedItem.enabled
+        && !normalizedItem.configuration.applicationId
+      ) {
+        throw Object.assign(new Error('source_application_id_required'), { statusCode: 400 });
+      }
+      return normalizedItem;
+    });
+    await withTransaction(pool, async (client) => {
+      for (const item of normalized) {
+        await client.query(
+          `DELETE FROM source_settings
+           WHERE target_type = $1 AND target_id IS NOT DISTINCT FROM $2 AND source_kind = $3`,
+          [targetType, targetId, item.kind],
+        );
+        await client.query(
+          `INSERT INTO source_settings (
+             id, target_type, target_id, source_kind, enabled, label, configuration
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            crypto.randomUUID(),
+            targetType,
+            targetId,
+            item.kind,
+            item.enabled,
+            item.label,
+            JSON.stringify(item.configuration),
+          ],
+        );
+      }
+      await bumpSyncRevision(client);
+      await writeAudit(client, request, 'sources.updated', 'source-settings', targetType, {
+        targetId,
+        kinds: normalized.map((item) => item.kind),
+      });
+    });
+    return { updated: true, sourceCount: normalized.length };
+  });
+
   app.put('/api/v1/settings/sources/:kind', {
     preHandler: [authenticated, requirePermission('fleet:write'), csrf],
   }, async (request) => {
@@ -1010,6 +1080,9 @@ export const registerStudioRoutes = ({
     }
     const targetId = targetIdFor(targetType, request.body?.targetId);
     const configuration = sourceConfiguration(kind, request.body?.configuration ?? {});
+    if (kind === 'private-app' && request.body?.enabled !== false && !configuration.applicationId) {
+      throw Object.assign(new Error('source_application_id_required'), { statusCode: 400 });
+    }
     await withTransaction(pool, async (client) => {
       await client.query(
         'DELETE FROM source_settings WHERE target_type = $1 AND target_id IS NOT DISTINCT FROM $2 AND source_kind = $3',
@@ -1064,8 +1137,9 @@ export const registerStudioRoutes = ({
       );
       await client.query(
         `INSERT INTO power_schedules (
-           id, target_type, target_id, timezone, enabled, require_capability_probe, rules
-         ) VALUES ($1, $2, $3, $4, $5, true, $6)`,
+           id, target_type, target_id, timezone, enabled, require_capability_probe,
+           rules, return_home_when_inactive_minutes, home_sleep_minutes
+         ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8)`,
         [
           crypto.randomUUID(),
           targetType,
@@ -1073,6 +1147,8 @@ export const registerStudioRoutes = ({
           schedule.timezone,
           schedule.power.enabled,
           JSON.stringify(schedule.power.rules),
+          schedule.sourcePolicies.returnHomeWhenInactiveMinutes,
+          schedule.sourcePolicies.homeSleepMinutes,
         ],
       );
       await bumpSyncRevision(client);

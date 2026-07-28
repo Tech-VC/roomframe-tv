@@ -33,3 +33,13 @@ test("l’aperçu TV ou groupe reste séparé du brouillon modifiable", () => {
   assert.match(source, /if \(!state\.scene \|\| state\.preview\) return;/);
   assert.match(source, /state\.preview = null;[\s\S]*state\.selectedId = state\.scene\?\.nodes\[0\]\?\.id/);
 });
+
+test("les règles de salle utilisent des formulaires structurés et l’API atomique", () => {
+  assert.match(markup, /id="sourceSettingsForm"/);
+  assert.match(markup, /id="powerSettingsForm"/);
+  assert.match(markup, /id="powerWeekdaysEnabled"/);
+  assert.match(markup, /son adaptateur confirme la capacité/);
+  assert.match(source, /api\.put\("settings\/sources"/);
+  assert.match(source, /api\.put\("settings\/power"/);
+  assert.doesNotMatch(markup, /textarea[^>]*id="(?:source|power)/);
+});

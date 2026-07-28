@@ -67,6 +67,7 @@ GET  /api/v1/tvs
 POST /api/v1/tvs/enrollment
 GET  /api/v1/groups
 POST /api/v1/groups
+PUT  /api/v1/settings/sources
 PUT  /api/v1/settings/sources/:kind
 PUT  /api/v1/settings/power
 GET  /api/v1/users
@@ -109,6 +110,13 @@ serveur la scène publiée et les messages, sources, horaires et éléments de
 charte effectivement hérités par cette cible. Il est strictement en lecture
 seule dans le Studio et exige à la fois `studio:read` et `fleet:read` ; le
 brouillon local reste intact lorsqu’on entre ou sort de l’aperçu.
+
+`PUT /settings/sources` enregistre atomiquement de une à quatre sources pour
+une même cible. Les types et les clés de configuration sont fermés ; aucune
+configuration HTML ou JavaScript n’est acceptée. La route unitaire
+`/settings/sources/:kind` reste disponible. Les règles de puissance conservent
+aussi les délais de retour accueil et de veille propres à la cible, avec
+héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 
 ## Enrôlement et synchronisation TV
 

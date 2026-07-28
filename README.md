@@ -104,6 +104,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - Studio de régie relié aux flux réels de bootstrap, session, scènes, médias,
   messages et releases, avec glisser-déposer, redimensionnement, calques,
   propriétés, clavier et historique ;
+- règles AirPlay, Cast, HDMI, application privée, retour accueil et horaires
+  configurables par instance, groupe ou TV sans prétendre exécuter le matériel ;
 - validation des scènes typées 1920 × 1080, sans HTML ni JavaScript libre ;
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
@@ -167,8 +169,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 18 tests Studio/synchronisation TV et
-20 tests API, contrôle de syntaxe serveur inclus, soit 38 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 19 tests Studio/synchronisation TV et
+20 tests API, contrôle de syntaxe serveur inclus, soit 39 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,

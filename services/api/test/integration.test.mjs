@@ -523,9 +523,95 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(createdGroup.statusCode, 201, createdGroup.body);
+  const groupId = createdGroup.json().id;
+  const groupSources = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      items: [
+        {
+          kind: 'airplay',
+          enabled: true,
+          label: 'AirPlay',
+          configuration: {
+            adapter: 'unsupported',
+            serviceName: 'RoomFrame',
+            receiverMode: 'isolated',
+          },
+        },
+        {
+          kind: 'hdmi',
+          enabled: true,
+          label: 'HDMI',
+          configuration: {
+            adapter: 'unsupported',
+            physicalInput: 'HDMI1',
+            signalProbe: true,
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(groupSources.statusCode, 200, groupSources.body);
+  assert.equal(groupSources.json().sourceCount, 2);
+  const duplicateGroupSources = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      items: [
+        { kind: 'airplay', label: 'Un', configuration: {} },
+        { kind: 'airplay', label: 'Deux', configuration: {} },
+      ],
+    },
+  });
+  assert.equal(duplicateGroupSources.statusCode, 400, duplicateGroupSources.body);
+  assert.equal(duplicateGroupSources.json().error, 'duplicate_source_kind');
+  const privateAppWithoutPackage = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      items: [{
+        kind: 'private-app',
+        enabled: true,
+        label: 'Application privée',
+        configuration: { adapter: 'unsupported' },
+      }],
+    },
+  });
+  assert.equal(privateAppWithoutPackage.statusCode, 400, privateAppWithoutPackage.body);
+  assert.equal(privateAppWithoutPackage.json().error, 'source_application_id_required');
+  const groupPower = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/power',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      timezone: 'Europe/Paris',
+      enabled: true,
+      returnHomeWhenInactiveMinutes: 12,
+      homeSleepMinutes: 25,
+      rules: [{
+        days: ['mon', 'tue', 'wed', 'thu', 'fri'],
+        wake: '07:30',
+        sleep: '20:00',
+      }],
+    },
+  });
+  assert.equal(groupPower.statusCode, 200, groupPower.body);
+  assert.equal(groupPower.json().capabilityProbeRequired, true);
   const groupPreview = await app.inject({
     method: 'GET',
-    url: `/api/v1/studio/preview?targetType=group&targetId=${createdGroup.json().id}`,
+    url: `/api/v1/studio/preview?targetType=group&targetId=${groupId}`,
     headers: { cookie },
   });
   assert.equal(groupPreview.statusCode, 200, groupPreview.body);
@@ -533,6 +619,20 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(groupPreview.json().target.name, 'Groupe aperçu');
   assert.equal(groupPreview.json().scene.document.schemaVersion, 2);
   assert.equal(groupPreview.json().documents.branding.displayName, 'Atelier de test');
+  const resolvedGroupSources = groupPreview.json().documents.sources.items;
+  assert.equal(resolvedGroupSources.filter((source) => source.target_type === 'group').length, 2);
+  assert.ok(resolvedGroupSources.some((source) => (
+    source.source_kind === 'airplay' && source.target_type === 'group'
+  )));
+  assert.ok(resolvedGroupSources.some((source) => (
+    source.source_kind === 'hdmi' && source.target_type === 'group'
+  )));
+  assert.equal(
+    groupPreview.json().documents.schedule.sourcePolicies.returnHomeWhenInactiveMinutes,
+    12,
+  );
+  assert.equal(groupPreview.json().documents.schedule.sourcePolicies.homeSleepMinutes, 25);
+  assert.equal(groupPreview.json().documents.schedule.power.enabled, true);
   const tvPreview = await app.inject({
     method: 'GET',
     url: `/api/v1/studio/preview?targetType=tv&targetId=${pendingDevice.id}`,
@@ -936,6 +1036,15 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   await runMigrations(pool, config.migrationsDir);
   const seedsAfterMigrations = await pool.query('SELECT count(*) AS count FROM experience_seed_history');
   assert.equal(seedsAfterMigrations.rows[0].count, '1');
+  const groupPolicyAfterMigrations = await pool.query(
+    `SELECT return_home_when_inactive_minutes, home_sleep_minutes, rules
+     FROM power_schedules
+     WHERE target_type = 'group' AND target_id = $1`,
+    [groupId],
+  );
+  assert.equal(groupPolicyAfterMigrations.rows[0].return_home_when_inactive_minutes, 12);
+  assert.equal(groupPolicyAfterMigrations.rows[0].home_sleep_minutes, 25);
+  assert.equal(groupPolicyAfterMigrations.rows[0].rules[0].wake, '07:30');
   const personalizedAfterMigrations = await pool.query(
     `SELECT s.published_revision, r.document
      FROM scenes s

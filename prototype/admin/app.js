@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui7";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui7";
+} from "./scene-model.js?v=0.3.0-ui8";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui8";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -98,6 +98,8 @@ const state = {
   targets: [],
   televisions: [],
   groups: [],
+  sourceSettings: [],
+  powerSchedules: [],
   releases: [],
   deployments: [],
   measuredMetrics: null,
@@ -300,6 +302,8 @@ const loadStudio = async () => {
     ];
     state.televisions = Array.isArray(payload.televisions) ? payload.televisions : Array.isArray(payload.tvs) ? payload.tvs : [];
     state.groups = Array.isArray(payload.groups) ? payload.groups : [];
+    state.sourceSettings = Array.isArray(payload.sourceSettings) ? payload.sourceSettings : [];
+    state.powerSchedules = Array.isArray(payload.powerSchedules) ? payload.powerSchedules : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
     state.measuredMetrics = payload.measuredMetrics ?? null;
@@ -617,6 +621,135 @@ const ledgerRow = (title, meta) => {
   return row;
 };
 
+const operationalTargetKey = (targetType, targetId) => (
+  targetType === "instance" ? "instance" : `${targetType}:${targetId}`
+);
+
+const parseOperationalTarget = (value) => {
+  if (value === "instance") return { targetType: "instance", targetId: null };
+  const [targetType, targetId] = String(value).split(":");
+  if (!["group", "tv"].includes(targetType) || !targetId) {
+    throw new Error("Cible de règles invalide.");
+  }
+  return { targetType, targetId };
+};
+
+const operationalTargetOptions = () => {
+  const entries = [
+    { value: "instance", label: "Toute l’instance" },
+    ...state.groups.map((group) => ({
+      value: `group:${group.id}`,
+      label: `Groupe · ${group.name}`,
+    })),
+    ...state.televisions
+      .filter((tv) => (tv.enrollmentState ?? tv.enrollment_state) !== "simulated")
+      .map((tv) => ({
+        value: `tv:${tv.id}`,
+        label: `TV · ${tv.displayName ?? tv.display_name ?? tv.id}`,
+      })),
+  ];
+  return entries.map((entry) => {
+    const option = make("option", "", entry.label);
+    option.value = entry.value;
+    return option;
+  });
+};
+
+const sourceSettingFor = (kind, selection) => {
+  const { targetType, targetId } = parseOperationalTarget(selection);
+  return state.sourceSettings.find((setting) => (
+    (setting.sourceKind ?? setting.source_kind) === kind
+    && (setting.targetType ?? setting.target_type) === targetType
+    && (setting.targetId ?? setting.target_id ?? null) === targetId
+  ));
+};
+
+const populateSourceSettings = () => {
+  const selection = $("#sourceTargetSelect").value || "instance";
+  const fields = {
+    airplay: {
+      enabled: $("#sourceAirplayEnabled"),
+      label: $("#sourceAirplayLabel"),
+      defaultLabel: "AirPlay",
+    },
+    cast: {
+      enabled: $("#sourceCastEnabled"),
+      label: $("#sourceCastLabel"),
+      defaultLabel: "Cast",
+    },
+    hdmi: {
+      enabled: $("#sourceHdmiEnabled"),
+      label: $("#sourceHdmiLabel"),
+      defaultLabel: "HDMI",
+    },
+    "private-app": {
+      enabled: $("#sourcePrivateAppEnabled"),
+      label: $("#sourcePrivateAppLabel"),
+      defaultLabel: "Application privée",
+    },
+  };
+  for (const [kind, field] of Object.entries(fields)) {
+    const setting = sourceSettingFor(kind, selection);
+    field.enabled.checked = Boolean(setting?.enabled);
+    field.label.value = setting?.label ?? field.defaultLabel;
+  }
+  const airplay = sourceSettingFor("airplay", selection)?.configuration ?? {};
+  const cast = sourceSettingFor("cast", selection)?.configuration ?? {};
+  const hdmi = sourceSettingFor("hdmi", selection)?.configuration ?? {};
+  const privateApp = sourceSettingFor("private-app", selection)?.configuration ?? {};
+  $("#sourceAirplayService").value = airplay.serviceName ?? "RoomFrame";
+  $("#sourceCastReceiver").value = cast.receiverApplicationId ?? "";
+  $("#sourceHdmiInput").value = hdmi.physicalInput ?? "HDMI1";
+  $("#sourcePrivateAppId").value = privateApp.applicationId ?? "org.example.privateapp";
+};
+
+const powerScheduleFor = (selection) => {
+  const { targetType, targetId } = parseOperationalTarget(selection);
+  return state.powerSchedules.find((schedule) => (
+    (schedule.targetType ?? schedule.target_type) === targetType
+    && (schedule.targetId ?? schedule.target_id ?? null) === targetId
+  ));
+};
+
+const populatePowerSettings = () => {
+  const selection = $("#powerTargetSelect").value || "instance";
+  const schedule = powerScheduleFor(selection);
+  const policies = state.instance?.defaults?.policies ?? {};
+  const rules = Array.isArray(schedule?.rules) ? schedule.rules : [];
+  const weekdays = rules.find((rule) => rule.days?.some((day) => ["mon", "tue", "wed", "thu", "fri"].includes(day)));
+  const weekend = rules.find((rule) => rule.days?.some((day) => ["sat", "sun"].includes(day)));
+  $("#powerEnabled").checked = Boolean(schedule?.enabled);
+  $("#powerTimezone").value = schedule?.timezone ?? "Europe/Paris";
+  $("#powerReturnHome").value = String(
+    schedule?.return_home_when_inactive_minutes
+    ?? policies.returnHomeWhenInactiveMinutes
+    ?? 15,
+  );
+  $("#powerHomeSleep").value = String(
+    schedule?.home_sleep_minutes
+    ?? policies.homeSleepMinutes
+    ?? 30,
+  );
+  $("#powerWeekdaysEnabled").checked = Boolean(weekdays);
+  $("#powerWeekdayWake").value = weekdays?.wake ?? "07:30";
+  $("#powerWeekdaySleep").value = weekdays?.sleep ?? "20:00";
+  $("#powerWeekendEnabled").checked = Boolean(weekend);
+  $("#powerWeekendWake").value = weekend?.wake ?? "09:00";
+  $("#powerWeekendSleep").value = weekend?.sleep ?? "18:00";
+};
+
+const renderOperationalSettings = () => {
+  for (const select of [$("#sourceTargetSelect"), $("#powerTargetSelect")]) {
+    const previous = select.value || "instance";
+    select.replaceChildren(...operationalTargetOptions());
+    select.value = [...select.options].some((option) => option.value === previous)
+      ? previous
+      : "instance";
+  }
+  populateSourceSettings();
+  populatePowerSettings();
+};
+
 const renderCollections = () => {
   const mediaRows = state.media.map((item) => ledgerRow(item.name ?? item.originalFilename ?? item.originalName ?? item.id, [item.kind ?? item.mimeType ?? item.mediaType, item.status].filter(Boolean).join(" · ")));
   $("#mediaList").replaceChildren(...(mediaRows.length ? mediaRows : [make("p", "empty-copy", "Aucun média.")]));
@@ -677,6 +810,7 @@ const renderCollections = () => {
     ...(fleetSummary ? [fleetSummary] : []),
     ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
   );
+  renderOperationalSettings();
 };
 
 const renderEnrollmentTicket = () => {
@@ -1302,6 +1436,146 @@ refs.backgroundBlur.addEventListener("input", () => {
   refs.backgroundBlurValue.value = `${refs.backgroundBlur.value} px`;
   refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
   renderBackground();
+});
+$("#sourceTargetSelect").addEventListener("change", populateSourceSettings);
+$("#powerTargetSelect").addEventListener("change", populatePowerSettings);
+$("#sourceSettingsForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("sourceSettingsError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const { targetType, targetId } = parseOperationalTarget($("#sourceTargetSelect").value);
+  const castReceiver = $("#sourceCastReceiver").value.trim();
+  const privateApplicationId = $("#sourcePrivateAppId").value.trim();
+  const items = [
+    {
+      kind: "airplay",
+      enabled: $("#sourceAirplayEnabled").checked,
+      label: $("#sourceAirplayLabel").value.trim(),
+      configuration: {
+        adapter: "unsupported",
+        serviceName: $("#sourceAirplayService").value.trim(),
+        receiverMode: "isolated",
+      },
+    },
+    {
+      kind: "cast",
+      enabled: $("#sourceCastEnabled").checked,
+      label: $("#sourceCastLabel").value.trim(),
+      configuration: {
+        adapter: "unsupported",
+        ...(castReceiver ? { receiverApplicationId: castReceiver } : {}),
+      },
+    },
+    {
+      kind: "hdmi",
+      enabled: $("#sourceHdmiEnabled").checked,
+      label: $("#sourceHdmiLabel").value.trim(),
+      configuration: {
+        adapter: "unsupported",
+        physicalInput: $("#sourceHdmiInput").value,
+        signalProbe: true,
+      },
+    },
+    {
+      kind: "private-app",
+      enabled: $("#sourcePrivateAppEnabled").checked,
+      label: $("#sourcePrivateAppLabel").value.trim(),
+      configuration: {
+        adapter: "unsupported",
+        ...(privateApplicationId ? { applicationId: privateApplicationId } : {}),
+        returnPolicy: "home-on-exit",
+      },
+    },
+  ];
+  submit.disabled = true;
+  try {
+    const payload = await api.put("settings/sources", {
+      targetType,
+      targetId,
+      items,
+    });
+    const targetKey = operationalTargetKey(targetType, targetId);
+    state.sourceSettings = state.sourceSettings.filter((setting) => (
+      operationalTargetKey(
+        setting.targetType ?? setting.target_type,
+        setting.targetId ?? setting.target_id ?? null,
+      ) !== targetKey
+    ));
+    state.sourceSettings.push(...items.map((item) => ({
+      target_type: targetType,
+      target_id: targetId,
+      source_kind: item.kind,
+      enabled: item.enabled,
+      label: item.label,
+      configuration: item.configuration,
+    })));
+    populateSourceSettings();
+    toast(`${payload.sourceCount} sources enregistrées. Les adaptateurs restent à valider sur la TV.`);
+  } catch (error) {
+    formError("sourceSettingsError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+$("#powerSettingsForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("powerSettingsError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const { targetType, targetId } = parseOperationalTarget($("#powerTargetSelect").value);
+  const rules = [];
+  if ($("#powerWeekdaysEnabled").checked) {
+    rules.push({
+      days: ["mon", "tue", "wed", "thu", "fri"],
+      wake: $("#powerWeekdayWake").value || null,
+      sleep: $("#powerWeekdaySleep").value || null,
+    });
+  }
+  if ($("#powerWeekendEnabled").checked) {
+    rules.push({
+      days: ["sat", "sun"],
+      wake: $("#powerWeekendWake").value || null,
+      sleep: $("#powerWeekendSleep").value || null,
+    });
+  }
+  const schedule = {
+    targetType,
+    targetId,
+    timezone: $("#powerTimezone").value.trim(),
+    enabled: $("#powerEnabled").checked,
+    returnHomeWhenInactiveMinutes: Number($("#powerReturnHome").value),
+    homeSleepMinutes: Number($("#powerHomeSleep").value),
+    rules,
+  };
+  submit.disabled = true;
+  try {
+    const payload = await api.put("settings/power", schedule);
+    const targetKey = operationalTargetKey(targetType, targetId);
+    state.powerSchedules = state.powerSchedules.filter((entry) => (
+      operationalTargetKey(
+        entry.targetType ?? entry.target_type,
+        entry.targetId ?? entry.target_id ?? null,
+      ) !== targetKey
+    ));
+    state.powerSchedules.push({
+      target_type: targetType,
+      target_id: targetId,
+      timezone: schedule.timezone,
+      enabled: schedule.enabled,
+      rules: schedule.rules,
+      return_home_when_inactive_minutes: schedule.returnHomeWhenInactiveMinutes,
+      home_sleep_minutes: schedule.homeSleepMinutes,
+    });
+    populatePowerSettings();
+    toast(payload.capabilityProbeRequired
+      ? "Horaires enregistrés · exécution conditionnée à la sonde matérielle."
+      : "Horaires enregistrés.");
+  } catch (error) {
+    formError("powerSettingsError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
 });
 $("#enrollmentForm").addEventListener("submit", async (event) => {
   event.preventDefault();
