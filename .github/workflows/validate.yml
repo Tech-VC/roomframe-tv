@@ -90,7 +90,7 @@ jobs:
             echo 'Des artefacts locaux ou sensibles sont suivis par Git.' >&2
             exit 1
           fi
-          if git ls-files -z \
+          if git ls-files -z -- . ':(exclude).github/workflows/validate.yml' \
             | xargs -0 grep \
                 --line-number \
                 --extended-regexp \
