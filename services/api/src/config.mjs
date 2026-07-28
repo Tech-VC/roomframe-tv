@@ -1,5 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  normalizeGithubRepository,
+  normalizeUpdateChannel,
+} from './update-source.mjs';
 
 const readTextFile = async (file, label) => {
   try {
@@ -15,6 +19,14 @@ const readTextFile = async (file, label) => {
 const positiveInteger = (value, fallback) => {
   const parsed = Number(value ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return fallback;
+  return parsed;
+};
+
+const boundedInteger = (value, fallback, minimum, maximum) => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    return fallback;
+  }
   return parsed;
 };
 
@@ -80,6 +92,27 @@ export const loadConfig = async (overrides = {}) => {
     updateTrustDir: overrides.updateTrustDir
       ?? process.env.ROOMFRAME_UPDATE_TRUST_DIR
       ?? '/run/roomframe/update-trust',
+    updateGithubRepository: normalizeGithubRepository(
+      overrides.updateGithubRepository
+      ?? process.env.ROOMFRAME_UPDATE_GITHUB_REPOSITORY,
+    ),
+    updateGithubChannel: normalizeUpdateChannel(
+      overrides.updateGithubChannel
+      ?? process.env.ROOMFRAME_UPDATE_GITHUB_CHANNEL,
+    ),
+    updatePollMinutes: boundedInteger(
+      overrides.updatePollMinutes ?? process.env.ROOMFRAME_UPDATE_POLL_MINUTES,
+      360,
+      15,
+      10_080,
+    ),
+    updateRequestTimeoutMs: boundedInteger(
+      overrides.updateRequestTimeoutMs
+      ?? process.env.ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS,
+      60_000,
+      5_000,
+      300_000,
+    ),
     maxImageBytes: positiveInteger(
       overrides.maxImageBytes ?? process.env.ROOMFRAME_MAX_IMAGE_BYTES,
       25 * 1024 * 1024,

@@ -84,7 +84,7 @@ fi
 if [[ -x "$COMPOSE_COMMAND" ]]; then
   note "État des services:"
   "$COMPOSE_COMMAND" ps 2>&1 || bad "impossible de lire l'état des services"
-  for service_name in caddy api worker postgres; do
+  for service_name in caddy api worker update-poller postgres; do
     container_id="$("$COMPOSE_COMMAND" ps -q "$service_name" 2>/dev/null || true)"
     if [[ -z "$container_id" ]]; then
       bad "conteneur absent: $service_name"

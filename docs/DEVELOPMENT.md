@@ -42,12 +42,12 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 17 scénarios : modèle Studio, salutation mono-ligne, flou borné et
+Ils comptent 20 scénarios : modèle Studio, salutation mono-ligne, flou borné et
 compatibilité avec le validateur API, normalisation du vrai manifeste TV,
 réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
 sûr des réponses API non JSON ou malformées, ainsi que la conservation des
 références de formulaire au-delà des appels asynchrones, ainsi que la présence
-et le nettoyage du flux de récupération locale. Ce lot passe `17/17`.
+et le nettoyage du flux de récupération locale. Ce lot passe `20/20`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -78,8 +78,8 @@ ROOMFRAME_TEST_DB_PASSWORD
 Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
-La suite API couvre actuellement 20 scénarios Node, auxquels s’ajoutent les
-20 tests UI, soit 40 tests sur un clone frais. Les workflows GitHub de
+La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
+20 tests UI, soit 43 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -103,7 +103,9 @@ donc ce même ensemble. Les scénarios comprennent notamment :
   jusqu’à l’état installé et refus HTTP d’un manifeste signé contenant des
   clés JSON dupliquées ;
 - mise à jour Ed25519 valide et refus des altérations, artefacts non listés et
-  downgrades, ainsi que remplacement sûr d’une quarantaine corrompue.
+  downgrades, ainsi que remplacement sûr d’une quarantaine corrompue ;
+- sélection GitHub `stable`/`preview`, ETag, refus d’assets ambigus,
+  redirections limitées, contrôle taille/digest et réimport idempotent.
 
 ## Installateur
 

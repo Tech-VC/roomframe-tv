@@ -286,6 +286,9 @@ textarea { min-height: 58px; resize: vertical; }
 .tv-cell p { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .release-result { margin-top: 20px; }
 .release-line { display: grid; grid-template-columns: 160px 1fr; border-bottom: 1px solid var(--line); padding: 12px 0; font-size: 12px; }
+.release-source { margin-top: 28px; padding: 20px 22px; border: 1px solid var(--ink); border-left: 10px solid var(--signal); background: color-mix(in srgb, var(--paper) 88%, var(--brand)); }
+.release-source h3 { margin: 12px 0 7px; font: 400 24px/1 Georgia, serif; }
+.release-source p { margin: 0; white-space: pre-line; color: var(--muted); font: 600 10px/1.6 var(--mono, monospace); }
 .deployment-console { display: grid; grid-template-columns: minmax(220px, .7fr) minmax(520px, 1.3fr); gap: 34px; margin-top: 34px; padding: 24px 0; border-top: 6px solid var(--ink); border-bottom: 1px solid var(--ink); }
 .deployment-console form { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 16px; align-items: end; }
 .deployment-console label { font: 900 9px/1.2 var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }

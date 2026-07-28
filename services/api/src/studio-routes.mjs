@@ -26,10 +26,12 @@ import {
   sha256,
 } from './security.mjs';
 import {
-  materializeVerifiedApkArtifacts,
-  quarantineVerifiedUpdate,
-  verifyUpdateBundle,
-} from './update-verifier.mjs';
+  importReleaseBundle,
+} from './release-importer.mjs';
+import {
+  releaseSourceKey,
+  serializeReleaseSource,
+} from './update-source.mjs';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -228,6 +230,22 @@ const serializeRelease = (release) => ({
     ),
   },
 });
+
+const readReleaseSource = async (pool, config) => {
+  const sourceKey = releaseSourceKey(
+    config.updateGithubRepository,
+    config.updateGithubChannel,
+  );
+  if (!sourceKey) return serializeReleaseSource(config);
+  const result = await pool.query(
+    `SELECT last_checked_at, last_success_at, last_result, last_error_code,
+            external_release_id, external_asset_id, imported_release_id
+     FROM update_poll_state
+     WHERE source_key = $1`,
+    [sourceKey],
+  );
+  return serializeReleaseSource(config, result.rows[0] ?? null);
+};
 
 const saveUpload = async (part, target, maximum) => {
   let bytes = 0;
@@ -586,6 +604,7 @@ export const registerStudioRoutes = ({
       powerResult,
       releasesResult,
       deploymentsResult,
+      releaseSource,
       syncResult,
     ] = await Promise.all([
       pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
@@ -646,6 +665,7 @@ export const registerStudioRoutes = ({
          FROM release_history ORDER BY imported_at DESC LIMIT 100`,
       ),
       pool.query('SELECT * FROM deployments ORDER BY created_at DESC LIMIT 100'),
+      readReleaseSource(pool, config),
       pool.query('SELECT revision, updated_at FROM sync_state WHERE singleton = true'),
     ]);
     if (!instanceResult.rows[0]) throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
@@ -686,6 +706,7 @@ export const registerStudioRoutes = ({
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
       releases: can('releases:read') ? releasesResult.rows.map(serializeRelease) : [],
       deployments: can('releases:read') ? deploymentsResult.rows : [],
+      releaseSource: can('releases:read') ? releaseSource : null,
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
       measuredMetrics: can('fleet:read') ? {
         totalScreens: screensResult.rows.length,
@@ -1314,14 +1335,19 @@ export const registerStudioRoutes = ({
   app.get('/api/v1/releases', {
     preHandler: [authenticated, requirePermission('releases:read')],
   }, async () => {
-    const [releases, deployments] = await Promise.all([
+    const [releases, deployments, source] = await Promise.all([
       pool.query(
         `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at
          FROM release_history ORDER BY imported_at DESC LIMIT 100`,
       ),
       pool.query('SELECT * FROM deployments ORDER BY created_at DESC LIMIT 100'),
+      readReleaseSource(pool, config),
     ]);
-    return { releases: releases.rows.map(serializeRelease), deployments: deployments.rows };
+    return {
+      releases: releases.rows.map(serializeRelease),
+      deployments: deployments.rows,
+      source,
+    };
   });
 
   app.post('/api/v1/releases/import', {
@@ -1345,68 +1371,26 @@ export const registerStudioRoutes = ({
     const temporary = path.join(config.processingDir, `release-${crypto.randomUUID()}.rfupdate.part`);
     try {
       await saveUpload(part, temporary, config.maxUpdateBytes);
-      const verified = await verifyUpdateBundle({
-        file: temporary,
+      const imported = await importReleaseBundle({
+        pool,
+        config,
         validators,
-        trustDir: config.updateTrustDir,
-        currentVersion: config.version,
-      });
-      const destination = await quarantineVerifiedUpdate({
         source: temporary,
-        releasesDir: config.releasesDir,
-        bundleSha256: verified.bundleSha256,
+        actor: {
+          actorType: 'user',
+          session: request.roomframeSession,
+          remoteAddress: request.ip,
+        },
+        sourceDetails: { provider: 'manual' },
       });
-      const apkArtifacts = await materializeVerifiedApkArtifacts({
-        bundleFile: destination,
-        manifest: verified.manifest,
-        releasesDir: config.releasesDir,
-      });
-      await withTransaction(pool, async (client) => {
-        await client.query(
-          `INSERT INTO release_history (
-             id, version, manifest, status, sha256, signature_key_id,
-             verification, storage_path, created_by
-           ) VALUES ($1, $2, $3, 'verified', $4, $5, $6, $7, $8)`,
-          [
-            verified.manifest.releaseId,
-            verified.manifest.version,
-            JSON.stringify(verified.manifest),
-            verified.bundleSha256,
-            verified.signatureKeyId,
-            JSON.stringify({
-              signature: 'valid',
-              hashes: 'valid',
-              compatibility: 'valid',
-              dataPreservation: true,
-              apkArtifacts,
-            }),
-            destination,
-            request.roomframeSession.user_id,
-          ],
-        );
-        await writeAudit(
-          client,
-          request,
-          'release.imported',
-          'release',
-          verified.manifest.releaseId,
-          { version: verified.manifest.version, sha256: verified.bundleSha256 },
-        );
-      });
-      return reply.code(201).send({
-        releaseId: verified.manifest.releaseId,
-        version: verified.manifest.version,
-        status: 'verified',
-        signatureKeyId: verified.signatureKeyId,
-        bundleSha256: verified.bundleSha256,
-        apkArtifacts: apkArtifacts.map((artifact) => ({
-          kind: artifact.kind,
-          packageName: artifact.packageName,
-          versionCode: artifact.versionCode,
-          sha256: artifact.sha256,
-          size: artifact.size,
-          signingCertificateSha256: artifact.signingCertificateSha256,
-        })),
+      return reply.code(imported.alreadyImported ? 200 : 201).send({
+        releaseId: imported.releaseId,
+        version: imported.version,
+        status: imported.status,
+        signatureKeyId: imported.signatureKeyId,
+        bundleSha256: imported.bundleSha256,
+        apkArtifacts: imported.apkArtifacts,
+        alreadyImported: imported.alreadyImported,
         nextStep: 'Planifier explicitement une vague canari. Aucun artefact n’a été exécuté.',
       });
     } catch (error) {

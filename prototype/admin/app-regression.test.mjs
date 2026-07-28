@@ -53,4 +53,7 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(source, /api\.put\("scene-assignments"/);
   assert.match(source, /studio\?sceneId=/);
   assert.match(markup, /abandonne les modifications non enregistrées/);
+  assert.match(markup, /id="automaticReleaseSource"/);
+  assert.match(source, /state\.releaseSource = payload\.source \?\? null/);
+  assert.match(source, /Aucun déploiement n’a été lancé automatiquement/);
 });

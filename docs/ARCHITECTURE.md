@@ -27,19 +27,28 @@ Navigateur ── HTTPS ── Caddy ── API Node.js ── PostgreSQL
                   └── fichiers statiques admin/simulateur
 
 Worker Sharp/FFmpeg ── file PostgreSQL ── médias privés
+
+Poller GitHub ── HTTPS sortant ── release `.rfupdate`
+      │
+      ├── vérificateur Ed25519 commun
+      └── releases vérifiées + historique PostgreSQL
 ```
 
 - Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
 - l’administration et l’API partagent une origine ;
-- PostgreSQL et le worker restent sur un réseau Docker interne ;
-- l’API et le worker tournent sans privilège, avec racine en lecture seule,
+- PostgreSQL et le worker média restent sur un réseau Docker interne ;
+- l’API rejoint seulement les réseaux internes `frontend` et `backend` ;
+  Caddy reçoit le LAN sur `ingress` et le poller possède sa sortie dédiée
+  `update-egress`, sans port publié ;
+- l’API, le worker et le poller tournent sans privilège, avec racine en lecture seule,
   capacités supprimées et volumes dédiés ;
-- l’API et le worker utilisent l’UID/GID du compte système Debian
+- l’API, le worker et le poller utilisent l’UID/GID du compte système Debian
   `roomframe`, sans home ni shell de connexion ;
 - la demande de récupération est montée en lecture seule dans l’API ; l’état
   de consommation autoritatif reste transactionnel en base ;
-- l’API et le worker appliquent les migrations sous verrou advisory ;
+- l’API, le worker et le poller appliquent les migrations sous verrou advisory ;
 - un seul worker média détient le verrou global de traitement ;
+- un seul poller GitHub détient son propre verrou global ;
 - code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
   séparés.
 

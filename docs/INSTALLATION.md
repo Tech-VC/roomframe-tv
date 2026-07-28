@@ -35,6 +35,22 @@ sudo ./install.sh --host roomframe.example.local
 `--host` accepte un FQDN validé ou l’IPv4 principale détectée. Un schéma, un
 port, un chemin, un nom DNS invalide ou une autre IPv4 sont refusés.
 
+Quand la source possède un remote GitHub, l’installateur en déduit le dépôt de
+releases. L’installateur autonome publié embarque le dépôt qui l’a construit.
+Une source différente peut être fixée explicitement :
+
+```bash
+sudo ./install.sh \
+  --updates-repository owner/roomframe-tv \
+  --updates-channel stable \
+  --update-poll-minutes 360
+```
+
+Le canal `stable` ignore les préreleases ; `preview` les accepte. La fréquence
+doit rester entre 15 minutes et 7 jours. Une réinstallation conserve ces
+valeurs. `--disable-github-updates` désactive le poller sans retirer l’import
+hors ligne `.rfupdate`.
+
 Sans `--host`, l’ordre de sélection est :
 
 1. `roomframe.<suffixe-DNS-détecté>` ;
@@ -83,6 +99,7 @@ Interface d’administration : https://roomframe.example.local
 API locale TV             : https://roomframe.example.local/api
 URL de secours par IP     : https://192.0.2.20
 Simulateur TV             : https://roomframe.example.local/simulator/
+Updates GitHub signées     : owner/roomframe-tv · canal stable · toutes les 360 min
 ```
 
 Si le FQDN ne pointe pas encore vers l’IPv4 détectée, l’installation continue.
@@ -140,6 +157,11 @@ aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-roo
 une fois montés individuellement et en lecture seule par Docker. Chaque service
 ne reçoit que les secrets déclarés dans `compose.yaml`.
 
+Le service `update-poller` est séparé de l’API et du worker média. Il ne reçoit
+que le secret PostgreSQL, le magasin de clés publiques en lecture seule et les
+volumes `processing`/`releases`. Il ne publie aucun port. Lui seul rejoint un
+réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau interne.
+
 `runtime.conf` mémorise également l’UID/GID du compte `roomframe`. Les médias,
 traitements et releases lui appartiennent. La demande de récupération reste
 écrite par root, lisible par le groupe runtime et montée en lecture seule dans
@@ -165,7 +187,7 @@ des archives de release.
 
 ```bash
 sudo roomframe-compose ps
-sudo roomframe-compose logs --tail=200 api worker
+sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-verify-backup --latest

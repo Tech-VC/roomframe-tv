@@ -99,6 +99,40 @@ python3 scripts/verify-update-bundle.py release.rfupdate \
 Ce vérificateur contrôle aussi les clés JSON dupliquées et n’extrait pas
 l’archive.
 
+## Import automatique depuis GitHub
+
+L’installateur configure un dépôt `owner/repo` lorsqu’il peut le déduire du
+remote GitHub ou de l’installateur autonome. Une autre source, un canal et une
+fréquence peuvent être fournis sans secret :
+
+```bash
+sudo ./install.sh \
+  --updates-repository owner/roomframe-tv \
+  --updates-channel stable \
+  --update-poll-minutes 360
+```
+
+Le service `update-poller` interroge au plus 20 releases publiées. `stable`
+ignore les préreleases ; `preview` accepte la première release publiée
+contenant exactement un asset `.rfupdate`. Les requêtes utilisent l’API REST
+GitHub versionnée et un ETag. Le poller public non authentifié reste par défaut
+à six heures, très en dessous de la limite publique ; il ne nécessite aucun
+token GitHub. Voir la documentation GitHub sur les
+[releases](https://docs.github.com/en/rest/releases/releases), les
+[assets](https://docs.github.com/en/rest/releases/assets) et les
+[requêtes conditionnelles](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests-if-appropriate).
+
+Avant l’écriture, RoomFrame contrôle l’identifiant et l’URL d’asset API, la
+taille annoncée, l’espace disque, les redirections HTTPS autorisées, le nombre
+d’octets et le digest SHA-256 GitHub lorsqu’il est fourni. Le `.rfupdate`
+téléchargé passe ensuite dans le même vérificateur Ed25519, de contrat et de
+compatibilité que l’import hors ligne. Une release identique est reconnue de
+manière idempotente.
+
+Le poller ne possède ni accès Docker, ni secret de session/TOTP, ni port
+entrant. Il importe et historise uniquement. Il ne lance pas de déploiement TV
+et n’applique pas le code serveur.
+
 Avant toute future application de release, une sauvegarde peut être éprouvée
 sans toucher à l’instance :
 
@@ -137,8 +171,6 @@ du serveur.
 
 Le jalon ne comprend pas encore :
 
-- le poller périodique des releases GitHub ;
-- le téléchargement automatique avec politique de canal ;
 - un moteur privilégié, séparé de l’API web, qui extrait et applique le bundle ;
 - l’association obligatoire d’une sauvegarde à une release importée ;
 - l’import des images, le redémarrage orchestré et le healthcheck de rollback ;

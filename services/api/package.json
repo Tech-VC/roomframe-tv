@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.mjs",
     "worker": "node src/worker.mjs",
+    "update-poller": "node src/update-poller.mjs",
     "check": "node scripts/check-syntax.mjs",
     "test": "node --test"
   },

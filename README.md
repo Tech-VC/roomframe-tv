@@ -14,8 +14,9 @@ sur chaque instance après l’installation.
 > synchronisation TV et vérification des mises à jour signées. Le simulateur
 > et le client Android conservent la dernière révision valide hors ligne ; le
 > client natif rend la scène sans WebView et contrôle les APK distribués par
-> vagues. Device Owner, installation silencieuse, HDMI, veille/réveil, Cast et
-> AirPlay restent à valider sur matériel.
+> vagues. Un poller non privilégié peut aussi importer automatiquement une
+> release GitHub signée. Device Owner, installation silencieuse, application
+> du code serveur, HDMI, veille/réveil, Cast et AirPlay restent à valider.
 
 ## Installation Debian
 
@@ -118,6 +119,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   révision précédente conservée et interrupteur de coupure API ;
 - import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles et
   hashes, puis quarantaine ;
+- découverte GitHub `stable` ou `preview`, ETag, téléchargement borné,
+  redirections GitHub contrôlées et import automatique idempotent sans
+  exécution de l’artefact ;
 - distribution d’APK par canari ou vagues progressives avec état par TV ;
 - état du parc alimenté par la dernière télémétrie technique autorisée, sans
   contenu consulté ni identifiant d’appareil personnel ;
@@ -131,7 +135,7 @@ Les commandes installées sont :
 
 ```bash
 sudo roomframe-compose ps
-sudo roomframe-compose logs --tail=200 api worker
+sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup --without-media
@@ -172,7 +176,7 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
 test n’est pas fourni. Il exécute 20 tests Studio/synchronisation TV et
-20 tests API, contrôle de syntaxe serveur inclus, soit 40 tests. Les workflows GitHub de
+23 tests API, contrôle de syntaxe serveur inclus, soit 43 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -180,15 +184,16 @@ la compatibilité des scènes UI, le rejet concis des réponses API non JSON,
 la stabilité des formulaires asynchrones, le détourage prudent des logos et le refus des
 bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test
 d’intégration couvre aussi l’upload et le traitement réel d’une image ainsi
-que l’import multipart d’un `.rfupdate`.
+que l’import multipart d’un `.rfupdate`, la découverte GitHub conditionnelle,
+le contrôle des redirections et l’import automatique idempotent.
 
 Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- l’import `.rfupdate`, le téléchargement APK affecté et les vagues
-  canari/progressives sont implémentés ; le poller GitHub et le moteur
-  privilégié qui applique le code serveur restent à livrer ;
+- l’import `.rfupdate`, le poller GitHub, le téléchargement APK affecté et les
+  vagues canari/progressives sont implémentés ; le moteur privilégié qui
+  sauvegarde puis applique atomiquement le code serveur reste à livrer ;
 - le Studio gère plusieurs scènes et leurs affectations publiées ; la
   programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,

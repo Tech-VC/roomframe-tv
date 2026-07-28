@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui9">
-  <script type="module" src="/app.js?v=0.3.0-ui9"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui10">
+  <script type="module" src="/app.js?v=0.3.0-ui10"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -354,6 +354,11 @@
             <button class="tool primary" type="submit">Vérifier</button>
           </form>
           <div class="release-result" id="releaseResult" aria-live="polite"><p class="empty-copy">Aucun bundle importé.</p></div>
+          <article class="release-source" id="automaticReleaseSource" aria-live="polite">
+            <span class="record-kicker">AUTO / GITHUB</span>
+            <h3>Lecture de la source signée…</h3>
+            <p>La configuration est chargée depuis le serveur.</p>
+          </article>
           <section class="deployment-console" aria-labelledby="deploymentTitle">
             <div class="console-index">
               <span>VAGUES CONTRÔLÉES</span>

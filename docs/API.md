@@ -191,6 +191,13 @@ releases. Les clés JSON dupliquées sont refusées avant la validation du
 contrat, y compris lorsque le manifeste est correctement signé. Aucun
 artefact n’est exécuté par la requête web.
 
+`GET /releases` et `GET /studio` exposent également l’état non sensible de la
+source automatique : dépôt public, canal, fréquence, dernier contrôle,
+dernier résultat et code de refus contrôlé. L’ETag et les chemins de stockage
+restent internes. Le poller non privilégié utilise le même importeur que la
+route multipart ; une archive déjà présente avec le même identifiant, la même
+version et le même hash est reconnue sans créer de doublon.
+
 Une release vérifiée qui contient un `home-apk` peut démarrer un plan `canary`
 sur une TV active ou `progressive` sur un groupe ou le parc. La première vague
 est offerte immédiatement ; les suivantes sont avancées explicitement après

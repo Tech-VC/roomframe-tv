@@ -139,8 +139,9 @@ Limites avant production :
 - seul Caddy publie `443/tcp` ;
 - PostgreSQL reste sur le réseau Docker interne ;
 - l’installateur crée le compte système Debian `roomframe`, sans home ni shell
-  de connexion ; l’API et le worker utilisent son UID/GID explicite ;
-- API et worker utilisent une racine en lecture seule, des `tmpfs` bornés,
+  de connexion ; l’API, le worker et le poller utilisent son UID/GID explicite ;
+- API, worker média et poller d’updates utilisent une racine en lecture seule,
+  des `tmpfs` bornés,
   `no-new-privileges`, aucune capacité Linux et des limites CPU/mémoire/PID ;
 - le répertoire de récupération et le magasin de clés publiques sont montés en
   lecture seule dans l’API ;
@@ -170,6 +171,19 @@ La clé privée reste hors du dépôt et du serveur. La requête d’import ne f
 qu’une vérification et une mise en quarantaine ; elle n’exécute ni shell, ni
 migration, ni image. Le vérificateur CLI et le vérificateur Node de l’API
 refusent tous deux les clés JSON dupliquées avant validation du contrat.
+
+Le poller GitHub ne change pas cette frontière : il interroge uniquement le
+dépôt `owner/repo` validé, utilise l’API GitHub versionnée et un ETag, refuse
+les brouillons, exige un unique asset `.rfupdate`, borne sa taille et contrôle
+son éventuel digest SHA-256. Le téléchargement part de l’URL d’asset de
+`api.github.com`; les redirections HTTPS sont limitées à GitHub et à ses hôtes
+de contenu. Le poller n’a ni port entrant, ni secret de session/TOTP, ni accès
+à Docker. Après téléchargement, le même vérificateur Ed25519 que l’import
+manuel décide de l’acceptation. Aucun artefact serveur n’est exécuté.
+
+Les réseaux Docker séparent aussi les chemins : l’API ne rejoint que
+`frontend` et `backend`, tous deux internes ; Caddy porte seul le réseau
+`ingress` publié, tandis que le poller porte seul `update-egress`.
 
 Une clé publique est approuvée uniquement après contrôle d’empreinte :
 

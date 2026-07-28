@@ -16,6 +16,10 @@ x-api-environment: &api-environment
   ROOMFRAME_DEFAULT_BUNDLE_DIR: /defaults/experience
   ROOMFRAME_SERVER_STATE_FILE: /run/roomframe/server-state.json
   ROOMFRAME_UPDATE_TRUST_DIR: /run/roomframe/update-trust
+  ROOMFRAME_UPDATE_GITHUB_REPOSITORY: ${ROOMFRAME_UPDATE_GITHUB_REPOSITORY:-}
+  ROOMFRAME_UPDATE_GITHUB_CHANNEL: ${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-stable}
+  ROOMFRAME_UPDATE_POLL_MINUTES: ${ROOMFRAME_UPDATE_POLL_MINUTES:-360}
+  ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS: ${ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS:-60000}
   ROOMFRAME_RECOVERY_REQUEST_FILE: /run/roomframe/recovery/request.json
   ROOMFRAME_PUBLIC_URL: ${ROOMFRAME_PUBLIC_URL:?ROOMFRAME_PUBLIC_URL requis}
   ROOMFRAME_PREFERRED_URL: ${ROOMFRAME_PREFERRED_URL:?ROOMFRAME_PREFERRED_URL requis}
@@ -57,6 +61,7 @@ services:
     pids_limit: 128
     networks:
       - frontend
+      - ingress
 
   api:
     build: *api-build
@@ -134,6 +139,42 @@ services:
     networks:
       - backend
 
+  update-poller:
+    build: *api-build
+    image: roomframe-api:${ROOMFRAME_VERSION:-dev}
+    command: ["npm", "run", "update-poller"]
+    restart: unless-stopped
+    user: "${ROOMFRAME_RUNTIME_UID:?ROOMFRAME_RUNTIME_UID requis}:${ROOMFRAME_RUNTIME_GID:?ROOMFRAME_RUNTIME_GID requis}"
+    read_only: true
+    environment: *api-environment
+    secrets:
+      - postgres_password
+    volumes:
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/processing:/data/processing
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/releases:/data/releases
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/update-trust:/run/roomframe/update-trust:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.kill(1, 0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROOMFRAME_UPDATE_POLLER_MEMORY_LIMIT:-384m}
+    cpus: ${ROOMFRAME_UPDATE_POLLER_CPU_LIMIT:-0.50}
+    pids_limit: 128
+    networks:
+      - backend
+      - update-egress
+
   postgres:
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     restart: unless-stopped
@@ -162,8 +203,11 @@ services:
 
 networks:
   frontend:
+    internal: true
   backend:
     internal: true
+  ingress:
+  update-egress:
 
 secrets:
   postgres_password:

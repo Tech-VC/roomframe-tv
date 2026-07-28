@@ -18,7 +18,9 @@ import { buildApp } from '../src/app.mjs';
 import { buildTestUpdate } from '../scripts/build-test-update.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { createPool, runMigrations } from '../src/database.mjs';
+import { pollGithubUpdates } from '../src/github-update-poller.mjs';
 import { processOneMediaJob } from '../src/media-worker.mjs';
+import { importReleaseBundle } from '../src/release-importer.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 
@@ -82,6 +84,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     releasesDir: path.join(temporary, 'releases'),
     backupsDir: path.join(temporary, 'backups'),
     updateTrustDir: path.join(temporary, 'trust'),
+    updateGithubRepository: 'example/roomframe',
+    updateGithubChannel: 'stable',
+    updatePollMinutes: 360,
+    updateRequestTimeoutMs: 5_000,
     recoveryRequestFile: path.join(temporary, 'recovery/request.json'),
     dbHost: databaseHost,
     dbPort: Number(process.env.ROOMFRAME_TEST_DB_PORT ?? 5432),
@@ -102,7 +108,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   await resetPool.query('DROP SCHEMA public CASCADE');
   await resetPool.query('CREATE SCHEMA public');
   await resetPool.end();
-  const { app, pool } = await buildApp({ config, logger: false });
+  const { app, pool, validators } = await buildApp({ config, logger: false });
   t.after(() => app.close());
 
   const statusBefore = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
@@ -366,6 +372,64 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     crypto.createHash('sha256').update(quarantinedBundle).digest('hex'),
     importedRelease.bundleSha256,
   );
+  let githubRequests = 0;
+  const githubPoll = await pollGithubUpdates({
+    pool,
+    config,
+    validators,
+    fetchImpl: async (url) => {
+      githubRequests += 1;
+      if (new URL(url).pathname.endsWith('/releases')) {
+        return new Response(JSON.stringify([{
+          id: 5001,
+          tag_name: 'v0.3.1',
+          draft: false,
+          prerelease: false,
+          published_at: '2026-07-28T12:00:00Z',
+          assets: [{
+            id: 5002,
+            name: 'roomframe-tv-v0.3.1.rfupdate',
+            state: 'uploaded',
+            size: quarantinedBundle.length,
+            digest: `sha256:${importedRelease.bundleSha256}`,
+            updated_at: '2026-07-28T12:01:00Z',
+            url: 'https://api.github.com/repos/example/roomframe/releases/assets/5002',
+          }],
+        }]), {
+          status: 200,
+          headers: { etag: '"integration-update"' },
+        });
+      }
+      return new Response(quarantinedBundle, {
+        status: 200,
+        headers: { 'content-length': String(quarantinedBundle.length) },
+      });
+    },
+  });
+  assert.equal(githubPoll.status, 'already-imported');
+  assert.equal(githubPoll.releaseId, importedRelease.releaseId);
+  assert.equal(githubRequests, 2);
+  const releasesAfterPoll = await app.inject({
+    method: 'GET',
+    url: '/api/v1/releases',
+    headers: { cookie },
+  });
+  assert.equal(releasesAfterPoll.statusCode, 200, releasesAfterPoll.body);
+  assert.equal(releasesAfterPoll.json().source.enabled, true);
+  assert.equal(releasesAfterPoll.json().source.repository, 'example/roomframe');
+  assert.equal(releasesAfterPoll.json().source.state.lastResult, 'already-imported');
+  const equalVersionSource = path.join(temporary, 'equal-version.rfupdate');
+  await copyFile(updateFixture.bundlePath, equalVersionSource);
+  const equalVersionImport = await importReleaseBundle({
+    pool,
+    config: { ...config, version: '0.3.1' },
+    validators,
+    source: equalVersionSource,
+    actor: { actorType: 'system' },
+    sourceDetails: { provider: 'manual' },
+  });
+  assert.equal(equalVersionImport.alreadyImported, true);
+  assert.equal(equalVersionImport.releaseId, importedRelease.releaseId);
 
   const invalidUpdateFixture = await buildTestUpdate(
     path.join(temporary, 'api-update-invalid'),

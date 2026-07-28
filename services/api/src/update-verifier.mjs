@@ -233,6 +233,7 @@ export const verifyUpdateBundle = async ({
   validators,
   trustDir,
   currentVersion,
+  allowNonNewer = false,
 }) => {
   const archive = await openZip(file);
   try {
@@ -260,7 +261,9 @@ export const verifyUpdateBundle = async ({
       throw invalidUpdate('invalid_update_signature');
     }
 
-    if (!semver.valid(manifest.version) || !semver.gt(manifest.version, currentVersion)) {
+    const versionIsNewer = semver.valid(manifest.version)
+      && semver.gt(manifest.version, currentVersion);
+    if (!semver.valid(manifest.version) || (!versionIsNewer && !allowNonNewer)) {
       throw invalidUpdate('update_version_not_newer', 409);
     }
     if (
@@ -302,6 +305,7 @@ export const verifyUpdateBundle = async ({
       manifest,
       bundleSha256: await hashFile(file),
       signatureKeyId: keyId,
+      versionIsNewer,
     };
   } finally {
     archive.close();

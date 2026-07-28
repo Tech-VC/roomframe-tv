@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui9";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui9";
+} from "./scene-model.js?v=0.3.0-ui10";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui10";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -104,6 +104,7 @@ const state = {
   powerSchedules: [],
   releases: [],
   deployments: [],
+  releaseSource: null,
   measuredMetrics: null,
   enrollmentTicket: null,
   interaction: null,
@@ -312,6 +313,7 @@ const loadStudio = async (sceneId = null) => {
     state.powerSchedules = Array.isArray(payload.powerSchedules) ? payload.powerSchedules : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+    state.releaseSource = payload.releaseSource ?? null;
     state.measuredMetrics = payload.measuredMetrics ?? null;
     state.preview = null;
     state.previewSelection = "";
@@ -936,6 +938,34 @@ const updateDeploymentTargetControls = () => {
 };
 
 const renderReleases = () => {
+  const source = state.releaseSource;
+  const sourcePanel = $("#automaticReleaseSource");
+  const sourceTitle = make(
+    "h3",
+    "",
+    source?.enabled ? "Veille GitHub signée" : "Veille GitHub désactivée",
+  );
+  const sourceState = source?.state;
+  const sourceDetails = source?.enabled
+    ? [
+      `${source.repository} · canal ${source.channel}`,
+      `Contrôle toutes les ${source.pollIntervalMinutes} minutes`,
+      sourceState?.lastCheckedAt
+        ? `Dernier contrôle ${new Date(sourceState.lastCheckedAt).toLocaleString("fr-FR")}`
+        : "Premier contrôle en attente",
+      sourceState?.lastResult ? `Résultat ${sourceState.lastResult}` : null,
+      sourceState?.lastErrorCode ? `Refus ${sourceState.lastErrorCode}` : null,
+    ]
+    : [
+      "L’import hors ligne .rfupdate reste disponible.",
+      "L’installateur peut activer un dépôt owner/repo sans donner de privilèges système à l’API.",
+    ];
+  sourcePanel.replaceChildren(
+    make("span", "record-kicker", source?.enabled ? "AUTO / GITHUB" : "HORS LIGNE"),
+    sourceTitle,
+    make("p", "", sourceDetails.filter(Boolean).join("\n")),
+  );
+
   const eligible = state.releases.filter(releaseHasHomeApk);
   const releaseSelect = $("#deploymentRelease");
   const selectedRelease = releaseSelect.value;
@@ -1002,6 +1032,7 @@ const refreshReleases = async () => {
   const payload = await api.get("releases");
   state.releases = Array.isArray(payload.releases) ? payload.releases : [];
   state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+  state.releaseSource = payload.source ?? null;
   renderReleases();
 };
 

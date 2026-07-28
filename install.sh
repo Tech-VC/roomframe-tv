@@ -4,11 +4,21 @@ set -Eeuo pipefail
 ROOMFRAME_VERSION="0.3.0"
 DEFAULT_ARCHIVE_URL="__ROOMFRAME_ARCHIVE_URL__"
 DEFAULT_ARCHIVE_SHA256="__ROOMFRAME_ARCHIVE_SHA256__"
+DEFAULT_UPDATE_GITHUB_REPOSITORY="__ROOMFRAME_UPDATE_GITHUB_REPOSITORY__"
 
 INSTALL_DIR="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}"
 CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
 HOST_OVERRIDE="${ROOMFRAME_HOST:-}"
+UPDATE_REPOSITORY_OVERRIDE="${ROOMFRAME_UPDATE_GITHUB_REPOSITORY:-}"
+UPDATE_REPOSITORY_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_GITHUB_REPOSITORY+x}" ]] || UPDATE_REPOSITORY_EXPLICIT=1
+UPDATE_CHANNEL_OVERRIDE="${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-}"
+UPDATE_CHANNEL_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_GITHUB_CHANNEL+x}" ]] || UPDATE_CHANNEL_EXPLICIT=1
+UPDATE_POLL_OVERRIDE="${ROOMFRAME_UPDATE_POLL_MINUTES:-}"
+UPDATE_POLL_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_POLL_MINUTES+x}" ]] || UPDATE_POLL_EXPLICIT=1
 SOURCE_DIR=""
 NO_START=0
 
@@ -17,7 +27,9 @@ usage() {
 Installation locale de RoomFrame TV
 
 Usage:
-  sudo ./install.sh [--host roomframe.exemple.local] [--source /chemin/du/depot] [--no-start]
+  sudo ./install.sh [--host roomframe.exemple.local] [--source /chemin/du/depot]
+                    [--updates-repository owner/repo] [--updates-channel stable|preview]
+                    [--update-poll-minutes 360] [--disable-github-updates] [--no-start]
 
 Le réseau du serveur Debian/CT doit déjà être configuré. RoomFrame détecte son
 IPv4 et son suffixe DNS, mais ne modifie ni IP, ni masque, ni passerelle, ni DNS.
@@ -35,6 +47,29 @@ while (($#)); do
       [[ $# -ge 2 ]] || { echo "Valeur manquante après --source" >&2; exit 2; }
       SOURCE_DIR="$2"
       shift 2
+      ;;
+    --updates-repository)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --updates-repository" >&2; exit 2; }
+      UPDATE_REPOSITORY_OVERRIDE="$2"
+      UPDATE_REPOSITORY_EXPLICIT=1
+      shift 2
+      ;;
+    --updates-channel)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --updates-channel" >&2; exit 2; }
+      UPDATE_CHANNEL_OVERRIDE="$2"
+      UPDATE_CHANNEL_EXPLICIT=1
+      shift 2
+      ;;
+    --update-poll-minutes)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --update-poll-minutes" >&2; exit 2; }
+      UPDATE_POLL_OVERRIDE="$2"
+      UPDATE_POLL_EXPLICIT=1
+      shift 2
+      ;;
+    --disable-github-updates)
+      UPDATE_REPOSITORY_OVERRIDE=""
+      UPDATE_REPOSITORY_EXPLICIT=1
+      shift
       ;;
     --no-start)
       NO_START=1
@@ -127,6 +162,49 @@ normalize_host() {
     return 0
   fi
   return 1
+}
+
+is_github_repository() {
+  local value="$1"
+  [[
+    "$value" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$
+    && "$value" != *".."*
+    && "$value" != *.git
+  ]]
+}
+
+runtime_value() {
+  local file="$1" key="$2"
+  awk -F= -v expected="$key" '
+    $1 == expected {
+      sub(/^[^=]*=/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+github_repository_from_git() {
+  local source="$1" remote=""
+  command -v git >/dev/null 2>&1 || return 1
+  remote="$(git -C "$source" remote get-url origin 2>/dev/null || true)"
+  case "$remote" in
+    https://github.com/*)
+      remote="${remote#https://github.com/}"
+      ;;
+    git@github.com:*)
+      remote="${remote#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      remote="${remote#ssh://git@github.com/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  remote="${remote%.git}"
+  is_github_repository "$remote" || return 1
+  printf '%s\n' "$remote"
 }
 
 if [[ -z "$SOURCE_DIR" && -f "$SCRIPT_DIR/compose.yaml" ]]; then
@@ -374,9 +452,49 @@ elif command -v timedatectl >/dev/null 2>&1; then
 fi
 [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+/-]+$ ]] || TIMEZONE="UTC"
 
+previous_runtime="$CONFIG_DIR/runtime.conf"
+if [[ "$UPDATE_REPOSITORY_EXPLICIT" -eq 0 ]]; then
+  if [[ -r "$previous_runtime" ]] \
+    && grep -q '^ROOMFRAME_UPDATE_GITHUB_REPOSITORY=' "$previous_runtime"; then
+    UPDATE_REPOSITORY_OVERRIDE="$(
+      runtime_value "$previous_runtime" ROOMFRAME_UPDATE_GITHUB_REPOSITORY
+    )"
+  elif [[
+    "$DEFAULT_UPDATE_GITHUB_REPOSITORY" != "__ROOMFRAME_UPDATE_GITHUB_REPOSITORY__"
+  ]]; then
+    UPDATE_REPOSITORY_OVERRIDE="$DEFAULT_UPDATE_GITHUB_REPOSITORY"
+  else
+    UPDATE_REPOSITORY_OVERRIDE="$(github_repository_from_git "$SOURCE_DIR" || true)"
+  fi
+fi
+if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
+  is_github_repository "$UPDATE_REPOSITORY_OVERRIDE" \
+    || fail "Le dépôt d'updates GitHub doit respecter owner/repo."
+fi
+
+if [[ "$UPDATE_CHANNEL_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_UPDATE_GITHUB_CHANNEL=' "$previous_runtime"; then
+  UPDATE_CHANNEL_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_UPDATE_GITHUB_CHANNEL
+  )"
+fi
+UPDATE_CHANNEL_OVERRIDE="${UPDATE_CHANNEL_OVERRIDE:-stable}"
+[[ "$UPDATE_CHANNEL_OVERRIDE" == "stable" || "$UPDATE_CHANNEL_OVERRIDE" == "preview" ]] \
+  || fail "Le canal d'updates doit être stable ou preview."
+
+if [[ "$UPDATE_POLL_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_UPDATE_POLL_MINUTES=' "$previous_runtime"; then
+  UPDATE_POLL_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_UPDATE_POLL_MINUTES
+  )"
+fi
+UPDATE_POLL_OVERRIDE="${UPDATE_POLL_OVERRIDE:-360}"
+[[ "$UPDATE_POLL_OVERRIDE" =~ ^[0-9]+$ ]] \
+  && ((10#$UPDATE_POLL_OVERRIDE >= 15 && 10#$UPDATE_POLL_OVERRIDE <= 10080)) \
+  || fail "La fréquence d'updates doit être comprise entre 15 et 10080 minutes."
+
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
-  previous_runtime="$CONFIG_DIR/runtime.conf"
   previous_backup="$INSTALL_DIR/scripts/roomframe-backup.sh"
   if [[ ! -r "$previous_runtime" || ! -x "$previous_backup" ]]; then
     fail "Des données PostgreSQL existent mais l'outil de sauvegarde RoomFrame est absent; mise à jour refusée."
@@ -431,6 +549,9 @@ ROOMFRAME_API_URL=${API_URL}
 ROOMFRAME_TIMEZONE=${TIMEZONE}
 ROOMFRAME_RUNTIME_UID=${RUNTIME_UID}
 ROOMFRAME_RUNTIME_GID=${RUNTIME_GID}
+ROOMFRAME_UPDATE_GITHUB_REPOSITORY=${UPDATE_REPOSITORY_OVERRIDE}
+ROOMFRAME_UPDATE_GITHUB_CHANNEL=${UPDATE_CHANNEL_OVERRIDE}
+ROOMFRAME_UPDATE_POLL_MINUTES=${UPDATE_POLL_OVERRIDE}
 RUNTIME
 chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
@@ -540,24 +661,29 @@ if [[ "$NO_START" -eq 0 ]]; then
   [[ "$healthy" -eq 1 ]] \
     || fail "Les services ont démarré mais /health ne répond pas. Exécutez: sudo roomframe-diagnose"
 
-  worker_id="$("$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q worker 2>/dev/null || true)"
-  [[ -n "$worker_id" ]] || fail "Le conteneur worker n'a pas été créé."
-  worker_healthy=0
-  for _ in $(seq 1 60); do
-    worker_status="$(
-      docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
-        "$worker_id" 2>/dev/null || true
+  for background_service in worker update-poller; do
+    background_id="$(
+      "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q "$background_service" 2>/dev/null || true
     )"
-    if [[ "$worker_status" == "healthy" ]]; then
-      worker_healthy=1
-      break
-    fi
-    [[ "$worker_status" != "unhealthy" && "$worker_status" != "exited" ]] \
-      || break
-    sleep 1
+    [[ -n "$background_id" ]] \
+      || fail "Le conteneur $background_service n'a pas été créé."
+    background_healthy=0
+    for _ in $(seq 1 60); do
+      background_status="$(
+        docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$background_id" 2>/dev/null || true
+      )"
+      if [[ "$background_status" == "healthy" ]]; then
+        background_healthy=1
+        break
+      fi
+      [[ "$background_status" != "unhealthy" && "$background_status" != "exited" ]] \
+        || break
+      sleep 1
+    done
+    [[ "$background_healthy" -eq 1 ]] \
+      || fail "Le service $background_service n'est pas sain (${background_status:-état inconnu}). Exécutez: sudo roomframe-compose logs $background_service"
   done
-  [[ "$worker_healthy" -eq 1 ]] \
-    || fail "Le worker n'est pas sain (${worker_status:-état inconnu}). Exécutez: sudo roomframe-compose logs worker"
 fi
 
 CA_PATH="$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt"
@@ -573,6 +699,12 @@ printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'
+if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
+  printf 'Updates GitHub signées     : %s · canal %s · toutes les %s min\n' \
+    "$UPDATE_REPOSITORY_OVERRIDE" "$UPDATE_CHANNEL_OVERRIDE" "$UPDATE_POLL_OVERRIDE"
+else
+  printf 'Updates GitHub signées     : désactivées (import .rfupdate disponible)\n'
+fi
 printf 'Vérifier une sauvegarde    : sudo roomframe-verify-backup --latest\n'
 printf 'Jeton initial              : sudo roomframe-bootstrap-token --show\n'
 if [[ "$DNS_WARNING" -eq 1 ]]; then
