@@ -278,12 +278,11 @@ release_row="$(
       --no-align \
       --field-separator=$'\t' \
       --set ON_ERROR_STOP=1 \
-      --set=release_id="$RELEASE_ID" \
-      --command "
-        SELECT version, status, sha256, signature_key_id, storage_path
-        FROM release_history
-        WHERE id = :'release_id'::uuid;
-      "
+      --set=release_id="$RELEASE_ID" <<'SQL'
+SELECT version, status, sha256, signature_key_id, storage_path
+FROM release_history
+WHERE id = :'release_id'::uuid;
+SQL
 )"
 [[ -n "$release_row" && "$(wc -l <<<"$release_row" | tr -d ' ')" == "1" ]] \
   || fail "release importée introuvable ou ambiguë"
