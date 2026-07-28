@@ -306,6 +306,81 @@ const sceneForScreen = async (pool, screen) => {
   return scene.rows[0];
 };
 
+const synchronizedDocumentsForScreen = async (pool, screen) => {
+  const sceneRecord = await sceneForScreen(pool, screen);
+  const [messagesResult, sourcesResult, powerResult, instanceResult] = await Promise.all([
+    pool.query(
+      `SELECT id, title, body, priority, starts_at, ends_at
+       FROM messages
+       WHERE active = true
+         AND (starts_at IS NULL OR starts_at <= now())
+         AND (ends_at IS NULL OR ends_at > now())
+         AND (
+           (target_type = 'instance' AND target_id IS NULL)
+           OR (target_type = 'group' AND target_id = $1)
+           OR (target_type = 'tv' AND target_id = $2)
+         )
+       ORDER BY priority DESC, created_at DESC
+       LIMIT 50`,
+      [screen.group_id, screen.id],
+    ),
+    pool.query(
+      `SELECT DISTINCT ON (source_kind)
+              source_kind, enabled, label, configuration, target_type
+       FROM source_settings
+       WHERE
+         (target_type = 'instance' AND target_id IS NULL)
+         OR (target_type = 'group' AND target_id = $1)
+         OR (target_type = 'tv' AND target_id = $2)
+       ORDER BY source_kind,
+         CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END`,
+      [screen.group_id, screen.id],
+    ),
+    pool.query(
+      `SELECT *
+       FROM power_schedules
+       WHERE
+         (target_type = 'instance' AND target_id IS NULL)
+         OR (target_type = 'group' AND target_id = $1)
+         OR (target_type = 'tv' AND target_id = $2)
+       ORDER BY CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+       LIMIT 1`,
+      [screen.group_id, screen.id],
+    ),
+    pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
+  ]);
+  if (!instanceResult.rows[0]) {
+    throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
+  }
+  const instanceConfig = instanceResult.rows[0].config;
+  const policies = instanceConfig.defaults.policies;
+  const power = powerResult.rows[0];
+  const documents = {
+    scene: sceneRecord.document,
+    messages: { schemaVersion: 1, items: messagesResult.rows },
+    schedule: {
+      schemaVersion: 2,
+      timezone: power?.timezone ?? 'Europe/Paris',
+      sourcePolicies: {
+        returnHomeWhenInactiveMinutes: policies.returnHomeWhenInactiveMinutes,
+        homeSleepMinutes: policies.homeSleepMinutes,
+      },
+      power: {
+        enabled: Boolean(power?.enabled),
+        requireCapabilityProbe: true,
+        rules: power?.rules ?? [],
+      },
+    },
+    sources: { schemaVersion: 1, items: sourcesResult.rows },
+    branding: {
+      schemaVersion: 1,
+      displayName: instanceConfig.displayName,
+      ...instanceConfig.branding,
+    },
+  };
+  return { sceneRecord, documents, instanceConfig };
+};
+
 const referencedAssetUsages = (scene) => {
   const usages = new Map();
   const add = (value, usage) => {
@@ -1542,6 +1617,56 @@ export const registerStudioRoutes = ({
     });
   });
 
+  app.get('/api/v1/studio/preview', {
+    preHandler: [
+      authenticated,
+      requirePermission('studio:read'),
+      requirePermission('fleet:read'),
+    ],
+  }, async (request) => {
+    const targetType = String(request.query?.targetType ?? 'instance');
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    const targetId = targetIdFor(targetType, request.query?.targetId);
+    let screen;
+    let targetName = 'Instance';
+    if (targetType === 'tv') {
+      const result = await pool.query(
+        'SELECT id, group_id, display_name FROM screens WHERE id = $1',
+        [targetId],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error('tv_not_found'), { statusCode: 404 });
+      screen = result.rows[0];
+      targetName = screen.display_name;
+    } else if (targetType === 'group') {
+      const result = await pool.query(
+        'SELECT id, name FROM tv_groups WHERE id = $1',
+        [targetId],
+      );
+      if (!result.rows[0]) throw Object.assign(new Error('group_not_found'), { statusCode: 404 });
+      screen = { id: null, group_id: result.rows[0].id };
+      targetName = result.rows[0].name;
+    } else {
+      screen = { id: null, group_id: null };
+    }
+    const { sceneRecord, documents } = await synchronizedDocumentsForScreen(pool, screen);
+    return {
+      target: {
+        type: targetType,
+        id: targetId,
+        name: targetName,
+      },
+      scene: {
+        id: sceneRecord.id,
+        revision: Number(sceneRecord.published_revision),
+        publishedAt: sceneRecord.published_at,
+        document: documents.scene,
+      },
+      documents,
+    };
+  });
+
   app.get('/api/v1/default-assets/*', async (request, reply) => {
     const { screen, session } = await resolveScreen({
       request,
@@ -1592,74 +1717,11 @@ export const registerStudioRoutes = ({
     }
     if (current === revision) return { upToDate: true, revision };
 
-    const sceneRecord = await sceneForScreen(pool, screen);
-    const [messagesResult, sourcesResult, powerResult, instanceResult] = await Promise.all([
-      pool.query(
-        `SELECT id, title, body, priority, starts_at, ends_at
-         FROM messages
-         WHERE active = true
-           AND (starts_at IS NULL OR starts_at <= now())
-           AND (ends_at IS NULL OR ends_at > now())
-           AND (
-             (target_type = 'instance' AND target_id IS NULL)
-             OR (target_type = 'group' AND target_id = $1)
-             OR (target_type = 'tv' AND target_id = $2)
-           )
-         ORDER BY priority DESC, created_at DESC
-         LIMIT 50`,
-        [screen.group_id, screen.id],
-      ),
-      pool.query(
-        `SELECT DISTINCT ON (source_kind)
-                source_kind, enabled, label, configuration, target_type
-         FROM source_settings
-         WHERE
-           (target_type = 'instance' AND target_id IS NULL)
-           OR (target_type = 'group' AND target_id = $1)
-           OR (target_type = 'tv' AND target_id = $2)
-         ORDER BY source_kind,
-           CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END`,
-        [screen.group_id, screen.id],
-      ),
-      pool.query(
-        `SELECT *
-         FROM power_schedules
-         WHERE
-           (target_type = 'instance' AND target_id IS NULL)
-           OR (target_type = 'group' AND target_id = $1)
-           OR (target_type = 'tv' AND target_id = $2)
-         ORDER BY CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
-         LIMIT 1`,
-        [screen.group_id, screen.id],
-      ),
-      pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
-    ]);
-    const policies = instanceResult.rows[0].config.defaults.policies;
-    const power = powerResult.rows[0];
-    const schedule = {
-      schemaVersion: 2,
-      timezone: power?.timezone ?? 'Europe/Paris',
-      sourcePolicies: {
-        returnHomeWhenInactiveMinutes: policies.returnHomeWhenInactiveMinutes,
-        homeSleepMinutes: policies.homeSleepMinutes,
-      },
-      power: {
-        enabled: Boolean(power?.enabled),
-        requireCapabilityProbe: true,
-        rules: power?.rules ?? [],
-      },
-    };
-    const documents = {
-      scene: sceneRecord.document,
-      messages: { schemaVersion: 1, items: messagesResult.rows },
-      schedule,
-      sources: { schemaVersion: 1, items: sourcesResult.rows },
-      branding: {
-        schemaVersion: 1,
-        displayName: instanceResult.rows[0].config.displayName,
-        ...instanceResult.rows[0].config.branding,
-      },
-    };
+    const {
+      sceneRecord,
+      documents,
+      instanceConfig,
+    } = await synchronizedDocumentsForScreen(pool, screen);
     const documentEntries = [
       jsonDocument('scene.json', documents.scene),
       jsonDocument('messages.json', documents.messages),
@@ -1668,7 +1730,7 @@ export const registerStudioRoutes = ({
       jsonDocument('branding.json', documents.branding),
     ];
 
-    const brandingLogoId = instanceResult.rows[0].config.branding?.logoAssetId;
+    const brandingLogoId = instanceConfig.branding?.logoAssetId;
     const deliveryScene = brandingLogoId
       ? {
         ...sceneRecord.document,

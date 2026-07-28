@@ -357,6 +357,12 @@ body { background: var(--paper); }
 }
 .stage-head { border-top: 4px solid var(--ink); padding-top: 9px; }
 .monitor { container-type: inline-size; box-shadow: 18px 22px 0 color-mix(in srgb, var(--ink) 24%, transparent), 0 0 0 1px var(--ink); }
+.monitor.target-preview {
+  box-shadow:
+    18px 22px 0 color-mix(in srgb, var(--signal) 34%, transparent),
+    0 0 0 4px var(--signal);
+}
+.monitor.target-preview .node { cursor: default; }
 .screen-bg { inset: -8%; transition: filter .12s linear, transform .12s linear; }
 .node.kind-text .node-text, .stage-empty strong { font-family: var(--font-display); }
 .node.kind-source, .node.kind-app {

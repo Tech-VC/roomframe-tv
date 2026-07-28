@@ -513,6 +513,47 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(deviceSync.statusCode, 200);
 
+  const createdGroup = await app.inject({
+    method: 'POST',
+    url: '/api/v1/groups',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      name: 'Groupe aperçu',
+      description: 'Cible sans TV requise pour prévisualiser les règles de groupe.',
+    },
+  });
+  assert.equal(createdGroup.statusCode, 201, createdGroup.body);
+  const groupPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=group&targetId=${createdGroup.json().id}`,
+    headers: { cookie },
+  });
+  assert.equal(groupPreview.statusCode, 200, groupPreview.body);
+  assert.equal(groupPreview.json().target.type, 'group');
+  assert.equal(groupPreview.json().target.name, 'Groupe aperçu');
+  assert.equal(groupPreview.json().scene.document.schemaVersion, 2);
+  assert.equal(groupPreview.json().documents.branding.displayName, 'Atelier de test');
+  const tvPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=tv&targetId=${pendingDevice.id}`,
+    headers: { cookie },
+  });
+  assert.equal(tvPreview.statusCode, 200, tvPreview.body);
+  assert.equal(tvPreview.json().target.id, pendingDevice.id);
+  assert.equal(tvPreview.json().scene.revision, deviceSync.json().manifest.sceneRevision);
+  const previewWithoutFleetPermission = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=tv&targetId=${pendingDevice.id}`,
+    headers: { cookie: contentCookie },
+  });
+  assert.equal(previewWithoutFleetPermission.statusCode, 403);
+  const missingGroupPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=group&targetId=${crypto.randomUUID()}`,
+    headers: { cookie },
+  });
+  assert.equal(missingGroupPreview.statusCode, 404);
+
   const plannedDeployment = await app.inject({
     method: 'POST',
     url: `/api/v1/releases/${importedRelease.releaseId}/deployments`,

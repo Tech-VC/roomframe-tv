@@ -25,3 +25,11 @@ test("la récupération locale est utilisable et efface les secrets affichés", 
   assert.match(source, /\$\("#recoveryTotpSecret"\)\.textContent = ""/);
   assert.match(source, /\$\("#recoveryTotpCode"\)\.required = false/);
 });
+
+test("l’aperçu TV ou groupe reste séparé du brouillon modifiable", () => {
+  assert.match(markup, /id="targetSelect"/);
+  assert.match(source, /api\.get\(`studio\/preview\?\$\{query\}`\)/);
+  assert.match(source, /const displayedScene = \(\) => state\.preview\?\.scene \?\? state\.scene/);
+  assert.match(source, /if \(!state\.scene \|\| state\.preview\) return;/);
+  assert.match(source, /state\.preview = null;[\s\S]*state\.selectedId = state\.scene\?\.nodes\[0\]\?\.id/);
+});

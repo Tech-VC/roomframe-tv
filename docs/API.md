@@ -56,6 +56,7 @@ compte sont révoquées après succès.
 GET  /api/v1/instance
 PUT  /api/v1/instance/branding
 GET  /api/v1/studio
+GET  /api/v1/studio/preview?targetType=tv|group&targetId=<uuid>
 POST /api/v1/scenes/:sceneId/revisions
 POST /api/v1/scenes/:sceneId/publish
 GET  /api/v1/media
@@ -103,9 +104,11 @@ jugé ambigu.
 
 Le Studio web consomme directement ces routes : état de bootstrap,
 TOTP/complete, login/session/logout, chargement `scene.document`, création
-d’une révision numérique et publication. La cible reste l’instance dans ce
-jalon ; le contrôle TV/groupe est affiché désactivé plutôt que de simuler une
-affectation non prise en charge.
+d’une révision numérique et publication. L’aperçu TV/groupe résout côté
+serveur la scène publiée et les messages, sources, horaires et éléments de
+charte effectivement hérités par cette cible. Il est strictement en lecture
+seule dans le Studio et exige à la fois `studio:read` et `fleet:read` ; le
+brouillon local reste intact lorsqu’on entre ou sort de l’aperçu.
 
 ## Enrôlement et synchronisation TV
 

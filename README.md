@@ -165,8 +165,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 17 tests Studio/synchronisation TV et
-20 tests API, contrôle de syntaxe serveur inclus, soit 37 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 18 tests Studio/synchronisation TV et
+20 tests API, contrôle de syntaxe serveur inclus, soit 38 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -183,9 +183,9 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - l’import `.rfupdate`, le téléchargement APK affecté et les vagues
   canari/progressives sont implémentés ; le poller GitHub et le moteur
   privilégié qui applique le code serveur restent à livrer ;
-- le Studio édite actuellement la scène d’instance ; la sélection TV/groupe
-  reste explicitement désactivée tant que l’API ne fournit pas l’affectation
-  d’aperçu correspondante ;
+- le Studio édite actuellement la scène d’instance et peut prévisualiser en
+  lecture seule l’affectation publiée d’une TV ou d’un groupe ; l’édition de
+  plusieurs scènes et l’assignation visuelle restent à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,
   synchronise en HTTPS, conserve la révision précédente et contrôle les APK
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse

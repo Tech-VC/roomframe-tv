@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui5";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui5";
+} from "./scene-model.js?v=0.3.0-ui6";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui6";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -88,6 +88,8 @@ const state = {
   deployments: [],
   enrollmentTicket: null,
   interaction: null,
+  preview: null,
+  previewSelection: "",
   totpSetupId: null,
   recoveryChallengeId: null,
   studioLoaded: false,
@@ -142,8 +144,8 @@ const setStatus = (kind, text, retry = false) => {
 
 const setBusy = (busy) => {
   refs.app.setAttribute("aria-busy", String(busy));
-  $("#saveButton").disabled = busy;
-  $("#publishButton").disabled = busy;
+  $("#saveButton").disabled = busy || Boolean(state.preview);
+  $("#publishButton").disabled = busy || Boolean(state.preview);
 };
 
 const showGate = (panel) => {
@@ -270,13 +272,23 @@ const loadStudio = async () => {
     state.media = Array.isArray(payload.media) ? payload.media : [];
     state.messages = Array.isArray(payload.messages) ? payload.messages : [];
     state.targets = [
-      ...(Array.isArray(payload.groups) ? payload.groups.map((group) => ({ ...group, name: `Groupe · ${group.name}` })) : []),
-      ...(Array.isArray(payload.tvs) ? payload.tvs.map((tv) => ({ ...tv, name: `TV · ${tv.display_name ?? tv.displayName ?? tv.id}` })) : []),
+      ...(Array.isArray(payload.groups) ? payload.groups.map((group) => ({
+        ...group,
+        targetType: "group",
+        name: `Groupe · ${group.name}`,
+      })) : []),
+      ...(Array.isArray(payload.tvs) ? payload.tvs.map((tv) => ({
+        ...tv,
+        targetType: "tv",
+        name: `TV · ${tv.display_name ?? tv.displayName ?? tv.id}`,
+      })) : []),
     ];
     state.televisions = Array.isArray(payload.televisions) ? payload.televisions : Array.isArray(payload.tvs) ? payload.tvs : [];
     state.groups = Array.isArray(payload.groups) ? payload.groups : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+    state.preview = null;
+    state.previewSelection = "";
     state.selectedId = state.scene.nodes[0]?.id ?? null;
     state.studioLoaded = true;
     renderStudio();
@@ -284,6 +296,8 @@ const loadStudio = async () => {
   } catch (error) {
     state.studioLoaded = false;
     state.scene = null;
+    state.preview = null;
+    state.previewSelection = "";
     renderStudio();
     setStatus("error", `Chargement du studio impossible : ${error.message}`, true);
   } finally {
@@ -291,10 +305,36 @@ const loadStudio = async () => {
   }
 };
 
-const selectedNode = () => state.scene?.nodes.find((node) => node.id === state.selectedId) ?? null;
+const displayedScene = () => state.preview?.scene ?? state.scene;
+
+const selectedNode = () => (
+  state.preview
+    ? null
+    : state.scene?.nodes.find((node) => node.id === state.selectedId) ?? null
+);
+
+const applyPreviewMode = () => {
+  const previewing = Boolean(state.preview);
+  for (const control of [
+    refs.sceneName,
+    refs.greetingInput,
+    refs.backgroundBlur,
+    $("#backgroundFile"),
+    $("#deleteNodeButton"),
+  ]) {
+    control.disabled = previewing;
+  }
+  $$("[data-fit], [data-add-kind]").forEach((button) => {
+    button.disabled = previewing;
+  });
+  refs.monitor.classList.toggle("target-preview", previewing);
+  $("#saveButton").disabled = previewing || refs.app.getAttribute("aria-busy") === "true";
+  $("#publishButton").disabled = previewing || refs.app.getAttribute("aria-busy") === "true";
+};
 
 const renderStudio = () => {
-  const hasScene = Boolean(state.scene);
+  const scene = displayedScene();
+  const hasScene = Boolean(scene);
   populateBrandForm();
   refs.stageEmpty.classList.toggle("hidden", hasScene);
   refs.monitor.classList.toggle("hidden", !hasScene);
@@ -307,15 +347,17 @@ const renderStudio = () => {
     renderReleases();
     return;
   }
-  refs.sceneName.value = state.scene.name;
-  const greeting = state.scene.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
+  refs.sceneName.value = scene.name;
+  const greeting = scene.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
   refs.greetingInput.value = greeting?.props.text ?? "";
-  refs.stageTitle.textContent = state.scene.name;
-  refs.stageMeta.textContent = `1920 × 1080 · ${state.currentRevisionId ? `révision ${state.currentRevisionId}` : "brouillon non enregistré"}`;
-  refs.backgroundBlur.value = String(state.scene.canvas.background.blur ?? 0);
-  refs.backgroundBlurValue.value = `${Math.round(state.scene.canvas.background.blur ?? 0)} px`;
+  refs.stageTitle.textContent = scene.name;
+  refs.stageMeta.textContent = state.preview
+    ? `1920 × 1080 · aperçu publié ${state.preview.target.name} · révision ${state.preview.revision}`
+    : `1920 × 1080 · ${state.currentRevisionId ? `révision ${state.currentRevisionId}` : "brouillon non enregistré"}`;
+  refs.backgroundBlur.value = String(scene.canvas.background.blur ?? 0);
+  refs.backgroundBlurValue.value = `${Math.round(scene.canvas.background.blur ?? 0)} px`;
   refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
-  $$("[data-fit]").forEach((button) => button.classList.toggle("on", button.dataset.fit === state.scene.canvas.background.mode));
+  $$("[data-fit]").forEach((button) => button.classList.toggle("on", button.dataset.fit === scene.canvas.background.mode));
   renderTargets();
   renderBackground();
   renderNodes();
@@ -324,13 +366,70 @@ const renderStudio = () => {
   renderCollections();
   renderEnrollmentTicket();
   renderReleases();
+  applyPreviewMode();
 };
 
 const renderTargets = () => {
-  const option = make("option", "", "Simulateur local · affectation non modifiée");
-  option.value = "";
-  refs.targetSelect.replaceChildren(option);
+  const options = [make("option", "", "Brouillon local · édition")];
+  options[0].value = "";
+  for (const target of state.targets) {
+    const option = make("option", "", target.name);
+    option.value = `${target.targetType}:${target.id}`;
+    options.push(option);
+  }
+  refs.targetSelect.replaceChildren(...options);
+  refs.targetSelect.value = state.previewSelection;
+  refs.targetSelect.disabled = state.targets.length === 0;
+};
+
+const loadTargetPreview = async (selection) => {
+  if (!selection) {
+    state.preview = null;
+    state.previewSelection = "";
+    state.selectedId = state.scene?.nodes[0]?.id ?? null;
+    renderStudio();
+    setStatus("ok", "Brouillon local prêt à être modifié");
+    return;
+  }
+  const [targetType, targetId] = selection.split(":");
+  if (!["group", "tv"].includes(targetType) || !targetId) {
+    toast("Cible d’aperçu invalide.", true);
+    return;
+  }
+  setBusy(true);
   refs.targetSelect.disabled = true;
+  setStatus("loading", "Chargement de l’affectation publiée…");
+  try {
+    const query = new URLSearchParams({ targetType, targetId });
+    const payload = await api.get(`studio/preview?${query}`);
+    if (!payload.scene?.document || !payload.target?.name) {
+      throw new Error("Réponse d’aperçu incomplète.");
+    }
+    state.preview = {
+      target: payload.target,
+      revision: payload.scene?.revision,
+      scene: normalizeScene(payload.scene?.document),
+      documents: payload.documents,
+    };
+    state.previewSelection = selection;
+    state.selectedId = null;
+    renderStudio();
+    const messageCount = state.preview.documents?.messages?.items?.length ?? 0;
+    setStatus(
+      "ok",
+      `Aperçu publié · ${state.preview.target.name} · ${messageCount} message${messageCount > 1 ? "s" : ""} actif${messageCount > 1 ? "s" : ""}`,
+    );
+  } catch (error) {
+    state.preview = null;
+    state.previewSelection = "";
+    state.selectedId = state.scene?.nodes[0]?.id ?? null;
+    renderStudio();
+    toast(`Aperçu indisponible : ${error.message}`, true);
+    setStatus("error", `Aperçu impossible : ${error.message}`, false);
+  } finally {
+    setBusy(false);
+    refs.targetSelect.disabled = state.targets.length === 0;
+  }
 };
 
 const assetUrl = (asset, preferredVariant = null) => {
@@ -360,7 +459,7 @@ const logoAssetForNode = (node) => {
 };
 
 const renderBackground = () => {
-  const background = state.scene.canvas.background;
+  const background = displayedScene().canvas.background;
   const url = assetUrl(background.asset);
   const position = `${background.focusX * 100}% ${background.focusY * 100}%`;
   $("#screenBg").style.backgroundColor = background.color || "#132323";
@@ -382,14 +481,19 @@ const applyNodeGeometry = (element, node) => {
 };
 
 const renderNodes = () => {
+  const scene = displayedScene();
   const nodes = [];
-  for (const node of [...state.scene.nodes].sort((a, b) => a.zIndex - b.zIndex)) {
+  for (const node of [...scene.nodes].sort((a, b) => a.zIndex - b.zIndex)) {
     const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
-    const element = make("div", `node kind-${node.kind}${roleClass}${node.id === state.selectedId ? " selected" : ""}`);
+    const selected = !state.preview && node.id === state.selectedId;
+    const element = make("div", `node kind-${node.kind}${roleClass}${selected ? " selected" : ""}`);
     element.dataset.nodeId = node.id;
-    element.tabIndex = 0;
+    element.tabIndex = state.preview ? -1 : 0;
     element.setAttribute("role", "group");
-    element.setAttribute("aria-label", `${nodeLabel(node)}, objet de scène`);
+    element.setAttribute(
+      "aria-label",
+      `${nodeLabel(node)}, ${state.preview ? "objet de l’aperçu publié" : "objet de scène"}`,
+    );
     applyNodeGeometry(element, node);
 
     if (["image", "video", "logo"].includes(node.kind)) {
@@ -415,7 +519,7 @@ const renderNodes = () => {
       element.append(make("span", "node-text", nodeDisplayText(node)));
     }
 
-    if (node.id === state.selectedId) {
+    if (selected) {
       for (const edge of ["nw", "ne", "sw", "se"]) {
         const handle = make("span", "resize-handle");
         handle.dataset.edge = edge;
@@ -430,13 +534,14 @@ const renderNodes = () => {
 };
 
 const renderObjectList = () => {
-  const rows = state.scene.nodes
+  const rows = displayedScene().nodes
     .slice()
     .sort((a, b) => b.zIndex - a.zIndex)
     .map((node) => {
       const row = make("button", `object${node.id === state.selectedId ? " on" : ""}`);
       row.type = "button";
       row.dataset.selectNode = node.id;
+      row.disabled = Boolean(state.preview);
       row.append(make("i"), make("span", "", nodeLabel(node)), make("small", "", `${Math.round(node.x)},${Math.round(node.y)}`));
       return row;
     });
@@ -709,6 +814,7 @@ const renderSecurity = () => {
 };
 
 const selectNode = (id, focus = false) => {
+  if (state.preview) return;
   state.selectedId = id;
   renderNodes();
   renderProperties();
@@ -725,7 +831,7 @@ const scenePoint = (event) => {
 
 const beginInteraction = (event) => {
   const element = event.target.closest("[data-node-id]");
-  if (!element || !state.scene) return;
+  if (!element || !state.scene || state.preview) return;
   const node = state.scene.nodes.find((item) => item.id === element.dataset.nodeId);
   if (!node) return;
   event.preventDefault();
@@ -803,7 +909,7 @@ const nudgeSelected = (event) => {
 };
 
 const deleteSelectedNode = () => {
-  if (!state.scene || !state.selectedId) return;
+  if (!state.scene || !state.selectedId || state.preview) return;
   const index = state.scene.nodes.findIndex((node) => node.id === state.selectedId);
   if (index < 0) return;
   state.scene.nodes.splice(index, 1);
@@ -832,7 +938,7 @@ const updateSelectedProperties = () => {
 };
 
 const saveRevision = async () => {
-  if (!state.scene) return;
+  if (!state.scene || state.preview) return;
   setBusy(true);
   try {
     state.scene = validateScene(state.scene);
@@ -859,7 +965,7 @@ const saveRevision = async () => {
 };
 
 const publishRevision = async () => {
-  if (!state.scene) return;
+  if (!state.scene || state.preview) return;
   if (!state.currentRevisionId) {
     toast("Enregistrez d’abord une révision.", true);
     return;
@@ -1095,6 +1201,8 @@ refs.logoutButton.addEventListener("click", async () => {
     api.csrfToken = "";
     state.session = null;
     state.scene = null;
+    state.preview = null;
+    state.previewSelection = "";
     $("#loginForm").reset();
     showGate("login");
   }
@@ -1105,6 +1213,9 @@ $("#reloadStudioButton").addEventListener("click", loadStudio);
 $("#saveButton").addEventListener("click", saveRevision);
 $("#publishButton").addEventListener("click", publishRevision);
 $("#deleteNodeButton").addEventListener("click", deleteSelectedNode);
+refs.targetSelect.addEventListener("change", () => {
+  loadTargetPreview(refs.targetSelect.value);
+});
 
 $$(".section").forEach((button) => button.addEventListener("click", () => {
   $$(".section").forEach((item) => {
@@ -1117,28 +1228,30 @@ $$(".section").forEach((button) => button.addEventListener("click", () => {
 }));
 
 refs.sceneName.addEventListener("input", () => {
-  if (!state.scene) return;
+  if (!state.scene || state.preview) return;
   state.scene.name = refs.sceneName.value.slice(0, 100);
   refs.stageTitle.textContent = state.scene.name || "Scène sans titre";
 });
 refs.greetingInput.addEventListener("input", () => {
+  if (state.preview) return;
   const greeting = state.scene?.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
   if (!greeting) return;
   setNodeDisplayText(greeting, refs.greetingInput.value.slice(0, 220));
   renderNodes();
 });
 refs.greetingInput.addEventListener("blur", () => {
+  if (state.preview) return;
   const greeting = state.scene?.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
   if (greeting) refs.greetingInput.value = greeting.props.text;
 });
 $("#backgroundModes").addEventListener("click", (event) => {
   const button = event.target.closest("[data-fit]");
-  if (!button || !state.scene) return;
+  if (!button || !state.scene || state.preview) return;
   state.scene.canvas.background.mode = button.dataset.fit;
   renderStudio();
 });
 refs.backgroundBlur.addEventListener("input", () => {
-  if (!state.scene) return;
+  if (!state.scene || state.preview) return;
   state.scene.canvas.background.blur = Number(refs.backgroundBlur.value);
   refs.backgroundBlurValue.value = `${refs.backgroundBlur.value} px`;
   refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
@@ -1210,7 +1323,7 @@ $("#hideEnrollmentButton").addEventListener("click", () => {
 });
 $("#palette").addEventListener("click", (event) => {
   const button = event.target.closest("[data-add-kind]");
-  if (!button) return;
+  if (!button || state.preview) return;
   if (!state.scene) state.scene = normalizeScene({ ...cloneScene(DEFAULT_SCENE), nodes: [] });
   const node = createNode(button.dataset.addKind, button.dataset.source);
   node.zIndex = Math.min(10000, Math.max(0, ...state.scene.nodes.map((item) => item.zIndex)) + 1);
@@ -1270,6 +1383,7 @@ $("#brandForm").addEventListener("submit", async (event) => {
   }
 });
 refs.objectList.addEventListener("click", (event) => {
+  if (state.preview) return;
   const button = event.target.closest("[data-select-node]");
   if (button) selectNode(button.dataset.selectNode, true);
 });
@@ -1286,7 +1400,7 @@ $("#propertiesForm").addEventListener("input", updateSelectedProperties);
 
 $("#backgroundFile").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
-  if (!file || !state.scene) return;
+  if (!file || !state.scene || state.preview) return;
   const form = new FormData();
   form.append("file", file);
   form.append("purpose", "scene-background");
