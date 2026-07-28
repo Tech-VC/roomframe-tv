@@ -263,7 +263,11 @@ docker info >/dev/null 2>&1 || fail "le démon Docker ne répond pas"
 
 mkdir -p /run/lock
 exec 9>"${ROOMFRAME_MAINTENANCE_LOCK_FILE:-/run/lock/roomframe-install.lock}"
-flock -n 9 || fail "une autre opération de maintenance RoomFrame est active"
+if ! flock -n 9; then
+  printf '%s\n' "Une autre opération de maintenance RoomFrame est active." >&2
+  trap - ERR HUP INT TERM
+  exit 75
+fi
 
 release_row="$(
   "$COMPOSE_COMMAND" exec -T postgres \

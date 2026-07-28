@@ -308,6 +308,10 @@ fi
 SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
 [[ -f "$SOURCE_DIR/compose.yaml" ]] || fail "compose.yaml introuvable dans $SOURCE_DIR"
 [[ -f "$SOURCE_DIR/infra/Caddyfile" ]] || fail "infra/Caddyfile introuvable dans $SOURCE_DIR"
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-update-broker.service" ]] \
+  || fail "Unité systemd du courtier d'updates absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-update-broker.timer" ]] \
+  || fail "Timer systemd du courtier d'updates absent."
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
 [[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
   || fail "Liste d’exclusion des sources introuvable."
@@ -491,9 +495,10 @@ if [[ "$UPDATE_POLL_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
   )"
 fi
 UPDATE_POLL_OVERRIDE="${UPDATE_POLL_OVERRIDE:-360}"
-[[ "$UPDATE_POLL_OVERRIDE" =~ ^[0-9]+$ ]] \
-  && ((10#$UPDATE_POLL_OVERRIDE >= 15 && 10#$UPDATE_POLL_OVERRIDE <= 10080)) \
-  || fail "La fréquence d'updates doit être comprise entre 15 et 10080 minutes."
+if [[ ! "$UPDATE_POLL_OVERRIDE" =~ ^[0-9]+$ ]] \
+  || ((10#$UPDATE_POLL_OVERRIDE < 15 || 10#$UPDATE_POLL_OVERRIDE > 10080)); then
+  fail "La fréquence d'updates doit être comprise entre 15 et 10080 minutes."
+fi
 
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
@@ -648,7 +653,8 @@ chmod 0640 "$CONFIG_DIR/server-state.json"
 if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
     roomframe-verify-backup roomframe-restore roomframe-apply-update \
-    roomframe-bootstrap-token roomframe-recover-admin roomframe-trust-update-key; do
+    roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
+    roomframe-trust-update-key; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -657,6 +663,19 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
     fi
     ln -sfn "$source_name" "$target_name"
   done
+fi
+
+if command -v systemctl >/dev/null 2>&1 \
+  && [[ -d /run/systemd/system ]] \
+  && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-update-broker.service" \
+    /etc/systemd/system/roomframe-update-broker.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-update-broker.timer" \
+    /etc/systemd/system/roomframe-update-broker.timer
+  systemctl daemon-reload
+  systemctl enable roomframe-update-broker.timer >/dev/null
 fi
 
 if [[ "$NO_START" -eq 0 ]]; then
@@ -707,6 +726,11 @@ if [[ "$NO_START" -eq 0 ]]; then
     [[ "$background_healthy" -eq 1 ]] \
       || fail "Le service $background_service n'est pas sain (${background_status:-état inconnu}). Exécutez: sudo roomframe-compose logs $background_service"
   done
+
+  if [[ -d /run/systemd/system ]] \
+    && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
+    systemctl start roomframe-update-broker.timer
+  fi
 fi
 
 CA_PATH="$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt"
@@ -715,7 +739,7 @@ if [[ "$NO_START" -eq 0 ]]; then
 else
   printf '\n\033[1;33mPréparation terminée (--no-start); services non démarrés.\033[0m\n'
 fi
-printf 'Interface d’administration : %s\n' "$PREFERRED_URL"
+printf "Interface d'administration : %s\n" "$PREFERRED_URL"
 printf 'API locale TV             : %s\n' "$API_URL"
 printf 'URL de secours par IP     : %s\n' "$FALLBACK_URL"
 printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
@@ -724,6 +748,9 @@ printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'
 printf 'Restauration               : sudo roomframe-restore --help\n'
 printf 'Appliquer une release      : sudo roomframe-apply-update --help\n'
+if [[ -d /run/systemd/system ]]; then
+  printf "File d'updates serveur     : roomframe-update-broker.timer\n"
+fi
 if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
   printf 'Updates GitHub signées     : %s · canal %s · toutes les %s min\n' \
     "$UPDATE_REPOSITORY_OVERRIDE" "$UPDATE_CHANNEL_OVERRIDE" "$UPDATE_POLL_OVERRIDE"

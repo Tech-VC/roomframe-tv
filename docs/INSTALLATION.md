@@ -205,6 +205,7 @@ sudo roomframe-restore \
 sudo roomframe-apply-update \
   --release-id 00000000-0000-4000-8000-000000000000 \
   --confirm 0.3.1
+sudo systemctl status roomframe-update-broker.timer
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -293,6 +294,14 @@ Les migrations restent additives et ne sont pas supprimées lors d’un retour
 au code précédent. La sauvegarde complète permet une restauration explicite
 si une intervention sur la base est nécessaire. L’API web ne lance jamais
 cette commande et ne reçoit ni socket Docker ni privilège root.
+
+L’installateur déploie aussi `roomframe-update-broker.service` et son timer
+systemd. Depuis le Studio, une demande serveur écrit uniquement une ligne en
+base après permission, CSRF et confirmation de version. Le service oneshot root
+la prend au passage suivant, au plus une par exécution, puis appelle la même
+commande de revalidation. Si le verrou de maintenance est occupé, la demande
+retourne en file. `roomframe-diagnose` contrôle le timer et affiche le nombre de
+demandes `pending|running`.
 
 ## Approuver une clé de mise à jour
 

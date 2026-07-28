@@ -56,4 +56,9 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(markup, /id="automaticReleaseSource"/);
   assert.match(source, /state\.releaseSource = payload\.source \?\? null/);
   assert.match(source, /Aucun déploiement n’a été lancé automatiquement/);
+  assert.match(markup, /id="serverUpdateForm"/);
+  assert.match(markup, /Retaper la version/);
+  assert.match(markup, /sans donner root au web/);
+  assert.match(source, /server-update-requests/);
+  assert.match(source, /state\.serverUpdateRequests/);
 });

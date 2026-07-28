@@ -99,6 +99,35 @@ if [[ -x "$COMPOSE_COMMAND" ]]; then
       *) bad "service $service_name: ${service_status:-état inconnu}" ;;
     esac
   done
+  server_update_counts="$(
+    "$COMPOSE_COMMAND" exec -T postgres \
+      psql \
+        --username=roomframe \
+        --dbname=roomframe \
+        --tuples-only \
+        --no-align \
+        --set ON_ERROR_STOP=1 \
+        --command "
+          SELECT
+            count(*) FILTER (WHERE status = 'pending'),
+            count(*) FILTER (WHERE status = 'running')
+          FROM server_update_requests;
+        " 2>/dev/null || true
+  )"
+  if [[ "$server_update_counts" =~ ^[0-9]+\|[0-9]+$ ]]; then
+    note "Demandes serveur en attente/en cours: $server_update_counts"
+  else
+    bad "impossible de lire la file de mises à jour serveur"
+  fi
+fi
+
+if [[ -d /run/systemd/system ]]; then
+  if systemctl is-enabled roomframe-update-broker.timer >/dev/null 2>&1 \
+    && systemctl is-active roomframe-update-broker.timer >/dev/null 2>&1; then
+    ok "timer du courtier de mises à jour actif"
+  else
+    bad "timer du courtier de mises à jour inactif"
+  fi
 fi
 
 if [[ -n "${ROOMFRAME_PRIMARY_HOST:-}" && -n "${ROOMFRAME_PUBLIC_URL:-}" ]]; then

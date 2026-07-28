@@ -142,6 +142,10 @@ Le test `apply-update` doit utiliser une clé de développement éphémère, une
 release strictement supérieure et le CT jetable. Il doit confirmer la
 préconstruction, le point de retour, la bascule, les cinq services, l’audit et
 l’archive root-only de l’ancien code.
+Le parcours Studio doit aussi créer une ligne `pending`, refuser une seconde
+demande active, puis laisser `roomframe-update-broker.service` la faire passer
+à `completed` ou `rolled-back`. L’API et ses conteneurs ne doivent jamais
+recevoir `/var/run/docker.sock`.
 
 ## Bundles
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll RoomFrame server update requests
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=roomframe-update-broker.service
+
+[Install]
+WantedBy=timers.target

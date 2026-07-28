@@ -148,8 +148,27 @@ Le poller ne possède ni accès Docker, ni secret de session/TOTP, ni port
 entrant. Il importe et historise uniquement. Il ne lance pas de déploiement TV
 et n’applique pas le code serveur.
 
-Avant toute future application de release, une sauvegarde peut être éprouvée
-sans toucher à l’instance :
+## Demande depuis l’administration
+
+Le Studio propose uniquement les releases vérifiées contenant une archive
+serveur. L’administrateur doit retaper la version ; l’API crée alors une ligne
+`server_update_requests` et une trace d’audit. Une contrainte SQL interdit deux
+demandes `pending`/`running` simultanées.
+
+`roomframe-update-broker.timer` réveille chaque minute un service oneshot root.
+Le courtier prend au plus une ligne puis appelle `roomframe-apply-update` avec
+son UUID et la version confirmée. Il ne fait confiance ni à un chemin venant de
+la base, ni au statut de vérification initial : le moteur recalcule le hash,
+retrouve la clé approuvée et revalide Ed25519. Si une autre maintenance détient
+le verrou, la demande retourne en file ; un processus interrompu devient un
+échec contrôlé au passage suivant.
+
+Le conteneur API n’a ni socket Docker, ni sudo, ni montage du courtier. Sa seule
+capacité supplémentaire est l’écriture de la demande en base, déjà limitée par
+la permission `releases:write` et CSRF.
+
+Avant toute application de release, une sauvegarde peut être éprouvée sans
+toucher à l’instance :
 
 ```bash
 sudo roomframe-backup
@@ -201,8 +220,6 @@ du serveur.
 
 Le jalon ne comprend pas encore :
 
-- un courtier local minimal qui permette à l’administration de demander une
-  application root sans lui exposer Docker ni un shell ;
 - une politique d’application serveur entièrement automatique et
   explicitement activable après import GitHub ;
 - la matérialisation d’images OCI lorsqu’un bundle en fournit ;
@@ -215,8 +232,8 @@ Deux frontières restent particulièrement importantes :
   d’exploitation versionnées ;
 - `roomframe-apply-update` est un composant privilégié minimal, séparé de
   l’API web. Aucun endpoint HTTP ne reçoit directement le droit de remplacer
-  le code, de contrôler Docker ou de restaurer une base. Le futur courtier
-  devra préserver cette séparation.
+  le code, de contrôler Docker ou de restaurer une base. Le courtier systemd
+  ne consomme que des releases signées déjà importées et revalidées.
 
 La séquence serveur actuellement exécutable est :
 
@@ -230,7 +247,8 @@ La séquence serveur actuellement exécutable est :
 8. conserver la restauration explicite déjà disponible.
 
 Les vagues canari et progressives concernent l’APK TV. L’application serveur
-reste une commande root explicite tant que le courtier local n’est pas livré.
+peut être demandée depuis le Studio ou lancée manuellement par la commande
+root ; elle n’est jamais déclenchée par le simple téléchargement GitHub.
 
 ## Migrations et seed
 

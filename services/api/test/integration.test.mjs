@@ -335,6 +335,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
 
   const updateFixture = await buildTestUpdate(path.join(temporary, 'api-update'), {
     includeHomeApk: true,
+    serverArtifactKind: 'server-archive',
   });
   await mkdir(config.updateTrustDir, { recursive: true, mode: 0o700 });
   await copyFile(
@@ -363,6 +364,28 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.match(importedRelease.bundleSha256, /^[a-f0-9]{64}$/);
   assert.equal(importedRelease.apkArtifacts.length, 1);
   assert.equal(importedRelease.apkArtifacts[0].packageName, 'org.roomframe.tv');
+  const wrongServerConfirmation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/server-update-requests`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmVersion: '0.3.2' },
+  });
+  assert.equal(wrongServerConfirmation.statusCode, 400);
+  const queuedServerUpdate = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/server-update-requests`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmVersion: updateFixture.manifest.version },
+  });
+  assert.equal(queuedServerUpdate.statusCode, 202, queuedServerUpdate.body);
+  assert.equal(queuedServerUpdate.json().status, 'pending');
+  const duplicateServerUpdate = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/server-update-requests`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmVersion: updateFixture.manifest.version },
+  });
+  assert.equal(duplicateServerUpdate.statusCode, 409);
   const quarantinedBundle = await readFile(path.join(
     config.releasesDir,
     'verified',
@@ -418,6 +441,9 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(releasesAfterPoll.json().source.enabled, true);
   assert.equal(releasesAfterPoll.json().source.repository, 'example/roomframe');
   assert.equal(releasesAfterPoll.json().source.state.lastResult, 'already-imported');
+  assert.equal(releasesAfterPoll.json().serverUpdateRequests.length, 1);
+  assert.equal(releasesAfterPoll.json().serverUpdateRequests[0].status, 'pending');
+  assert.equal(releasesAfterPoll.json().releases[0].has_server_archive, true);
   const equalVersionSource = path.join(temporary, 'equal-version.rfupdate');
   await copyFile(updateFixture.bundlePath, equalVersionSource);
   const equalVersionImport = await importReleaseBundle({
@@ -498,6 +524,14 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.deepEqual(contentStudio.json().tvs, []);
   assert.deepEqual(contentStudio.json().sourceSettings, []);
   assert.deepEqual(contentStudio.json().releases, []);
+  assert.deepEqual(contentStudio.json().serverUpdateRequests, []);
+  const forbiddenServerUpdateRequest = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/server-update-requests`,
+    headers: { cookie: contentCookie },
+    payload: { confirmVersion: updateFixture.manifest.version },
+  });
+  assert.equal(forbiddenServerUpdateRequest.statusCode, 403);
   const securityCookie = await makeRoleSession('security', 'security-test');
   const forbiddenPreview = await app.inject({
     method: 'GET',

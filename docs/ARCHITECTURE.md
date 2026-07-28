@@ -32,6 +32,12 @@ Poller GitHub ── HTTPS sortant ── release `.rfupdate`
       │
       ├── vérificateur Ed25519 commun
       └── releases vérifiées + historique PostgreSQL
+
+Administration ── demande SQL sans privilège ── PostgreSQL
+                                                │
+Timer systemd root ── courtier local ───────────┘
+       │
+       └── revalidation Ed25519 + sauvegarde + bascule du code
 ```
 
 - Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
@@ -49,13 +55,18 @@ Poller GitHub ── HTTPS sortant ── release `.rfupdate`
 - l’API, le worker et le poller appliquent les migrations sous verrou advisory ;
 - un seul worker média détient le verrou global de traitement ;
 - un seul poller GitHub détient son propre verrou global ;
+- l’administration peut écrire une demande d’application serveur, mais seul
+  le courtier systemd root peut la prendre ; l’API ne possède ni socket Docker,
+  ni sudo, ni chemin de bundle fourni par le navigateur ;
+- le courtier délègue au moteur root, qui revalide le bundle signé et partage
+  le verrou global des sauvegardes, restaurations et installations ;
 - code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
   séparés.
 
 Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions,
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
-déploiements et l’audit.
+déploiements TV, les demandes d’application serveur et l’audit.
 
 ## Une seule origine HTTPS
 

@@ -240,3 +240,13 @@ liens, périphériques ni traversée, dans un staging root-only placé sur le m�
 système de fichiers que le code. La commande préconstruit, sauvegarde, vérifie
 le point de retour puis bascule. L’API, le worker et le poller ne possèdent ni
 socket Docker, ni mécanisme sudo permettant de lancer cette commande.
+
+Le courtier systemd n’est pas un serveur réseau. L’API écrit une demande
+strictement typée en base après permission `releases:write`, CSRF et
+confirmation exacte de version. L’unité root prend une seule demande sous
+verrou, puis appelle le moteur avec l’UUID ; elle n’accepte aucun argument
+HTTP, chemin ou clé. Une API compromise pourrait demander l’application d’une
+release déjà signée et importée, mais ne pourrait ni fournir un autre fichier,
+ni choisir une clé privée, ni contourner la revalidation/downgrade, ni obtenir
+un shell root. Les actions demandées, démarrées, terminées ou annulées par
+rollback restent dans l’audit.

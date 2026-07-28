@@ -125,6 +125,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - application root explicite d’une archive serveur : nouvelle vérification
   Ed25519, staging, préconstruction, sauvegarde vérifiée, bascule du code et
   retour automatique au code précédent sur healthcheck négatif ;
+- mise en file depuis le Studio via PostgreSQL et courtier systemd root, sans
+  monter Docker dans l’API ni lui donner sudo ;
 - distribution d’APK par canari ou vagues progressives avec état par TV ;
 - état du parc alimenté par la dernière télémétrie technique autorisée, sans
   contenu consulté ni identifiant d’appareil personnel ;
@@ -203,11 +205,11 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- l’import `.rfupdate`, le poller GitHub, l’application root contrôlée du
-  serveur, le téléchargement APK affecté et les vagues canari/progressives
-  sont implémentés ; le courtier local permettant de demander l’application
-  serveur depuis l’administration, sans donner de privilèges à l’API, reste à
-  livrer ;
+- l’import `.rfupdate`, le poller GitHub, la demande depuis le Studio, le
+  courtier root, le téléchargement APK affecté et les vagues
+  canari/progressives sont implémentés ; l’application serveur entièrement
+  automatique sans validation d’un administrateur reste volontairement
+  désactivée ;
 - le Studio gère plusieurs scènes et leurs affectations publiées ; la
   programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,

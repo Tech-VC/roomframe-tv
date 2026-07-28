@@ -106,8 +106,9 @@ sudo roomframe-trust-update-key \
 ```
 
 Publier un asset signé ne signifie pas qu’il sera appliqué sans décision
-locale. Le poller peut le récupérer et l’importer ; l’application serveur reste
-une commande root explicite :
+locale. Le poller peut le récupérer et l’importer. L’application serveur peut
+ensuite être demandée dans le Studio, où la version doit être retapée, ou
+lancée par la commande root explicite :
 
 ```bash
 sudo roomframe-apply-update \

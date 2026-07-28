@@ -176,6 +176,7 @@ la rotation de clé et le mTLS doivent être finalisés avant production.
 ```text
 GET  /api/v1/releases
 POST /api/v1/releases/import
+POST /api/v1/releases/:releaseId/server-update-requests
 POST /api/v1/releases/:releaseId/deployments
 POST /api/v1/deployments/:deploymentId/advance
 POST /api/v1/deployments/:deploymentId/retry
@@ -190,6 +191,18 @@ tailles et les hashes avant de ranger l’archive dans la quarantaine des
 releases. Les clés JSON dupliquées sont refusées avant la validation du
 contrat, y compris lorsque le manifeste est correctement signé. Aucun
 artefact n’est exécuté par la requête web.
+
+Une release vérifiée qui contient exactement un `server-archive` peut recevoir
+une demande d’application serveur. Le corps doit répéter sa version dans
+`confirmVersion`. La route exige `releases:write`, une session et CSRF, refuse
+une seconde demande active et écrit seulement `server_update_requests` avec
+une trace d’audit. Elle ne reçoit jamais de chemin, n’extrait rien et ne lance
+ni Docker ni processus root.
+
+Le timer Debian prend au plus une demande, puis la commande root revalide le
+fichier quarantainé par son hash et sa signature. `GET /releases` et
+`GET /studio` exposent le statut contrôlé `pending`, `running`, `completed`,
+`failed` ou `rolled-back`, sans journal système ni chemin interne.
 
 `GET /releases` et `GET /studio` exposent également l’état non sensible de la
 source automatique : dépôt public, canal, fréquence, dernier contrôle,
@@ -208,6 +221,5 @@ accès qu’à la cible correspondante. L’APK est servi sans cache et les
 transitions de statut sont strictes. Un état `installed` dont la version ne
 correspond pas à la release est refusé. Une relance administrative remet
 explicitement les cibles `failed` ou `deferred` dans la vague active.
-L’installation du code serveur et
-l’installation silencieuse Android sans Device Owner ne sont pas déduites de
-ce statut.
+L’application du code serveur suit sa file séparée. L’installation silencieuse
+Android sans Device Owner n’est pas déduite du statut de vague TV.

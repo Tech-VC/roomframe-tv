@@ -604,6 +604,7 @@ export const registerStudioRoutes = ({
       powerResult,
       releasesResult,
       deploymentsResult,
+      serverUpdateRequestsResult,
       releaseSource,
       syncResult,
     ] = await Promise.all([
@@ -661,10 +662,23 @@ export const registerStudioRoutes = ({
       pool.query('SELECT * FROM source_settings ORDER BY source_kind'),
       pool.query('SELECT * FROM power_schedules ORDER BY created_at'),
       pool.query(
-        `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at
+        `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at,
+                EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(manifest -> 'artifacts') artifact
+                  WHERE artifact ->> 'kind' = 'server-archive'
+                ) AS has_server_archive
          FROM release_history ORDER BY imported_at DESC LIMIT 100`,
       ),
       pool.query('SELECT * FROM deployments ORDER BY created_at DESC LIMIT 100'),
+      pool.query(
+        `SELECT request.id, request.release_id, release.version,
+                request.status, request.attempt_count, request.last_error_code,
+                request.requested_at, request.started_at, request.completed_at
+         FROM server_update_requests request
+         JOIN release_history release ON release.id = request.release_id
+         ORDER BY request.requested_at DESC LIMIT 100`,
+      ),
       readReleaseSource(pool, config),
       pool.query('SELECT revision, updated_at FROM sync_state WHERE singleton = true'),
     ]);
@@ -706,6 +720,7 @@ export const registerStudioRoutes = ({
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
       releases: can('releases:read') ? releasesResult.rows.map(serializeRelease) : [],
       deployments: can('releases:read') ? deploymentsResult.rows : [],
+      serverUpdateRequests: can('releases:read') ? serverUpdateRequestsResult.rows : [],
       releaseSource: can('releases:read') ? releaseSource : null,
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
       measuredMetrics: can('fleet:read') ? {
@@ -1335,17 +1350,31 @@ export const registerStudioRoutes = ({
   app.get('/api/v1/releases', {
     preHandler: [authenticated, requirePermission('releases:read')],
   }, async () => {
-    const [releases, deployments, source] = await Promise.all([
+    const [releases, deployments, serverUpdateRequests, source] = await Promise.all([
       pool.query(
-        `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at
+        `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at,
+                EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(manifest -> 'artifacts') artifact
+                  WHERE artifact ->> 'kind' = 'server-archive'
+                ) AS has_server_archive
          FROM release_history ORDER BY imported_at DESC LIMIT 100`,
       ),
       pool.query('SELECT * FROM deployments ORDER BY created_at DESC LIMIT 100'),
+      pool.query(
+        `SELECT request.id, request.release_id, release.version,
+                request.status, request.attempt_count, request.last_error_code,
+                request.requested_at, request.started_at, request.completed_at
+         FROM server_update_requests request
+         JOIN release_history release ON release.id = request.release_id
+         ORDER BY request.requested_at DESC LIMIT 100`,
+      ),
       readReleaseSource(pool, config),
     ]);
     return {
       releases: releases.rows.map(serializeRelease),
       deployments: deployments.rows,
+      serverUpdateRequests: serverUpdateRequests.rows,
       source,
     };
   });
@@ -1391,10 +1420,87 @@ export const registerStudioRoutes = ({
         bundleSha256: imported.bundleSha256,
         apkArtifacts: imported.apkArtifacts,
         alreadyImported: imported.alreadyImported,
-        nextStep: 'Planifier explicitement une vague canari. Aucun artefact n’a été exécuté.',
+        nextStep: 'Choisir explicitement une mise à jour serveur ou une vague TV. Aucun artefact n’a été exécuté.',
       });
     } catch (error) {
       await unlink(temporary).catch(() => {});
+      throw error;
+    }
+  });
+
+  app.post('/api/v1/releases/:releaseId/server-update-requests', {
+    preHandler: [authenticated, requirePermission('releases:write'), csrf],
+  }, async (request, reply) => {
+    const releaseId = optionalUuid(request.params.releaseId);
+    const confirmedVersion = cleanText(
+      request.body?.confirmVersion,
+      'confirmed_version',
+      64,
+    );
+    const requestId = crypto.randomUUID();
+    try {
+      const queued = await withTransaction(pool, async (client) => {
+        const release = await client.query(
+          `SELECT id, version, status, manifest, deployed_at
+           FROM release_history
+           WHERE id = $1
+           FOR UPDATE`,
+          [releaseId],
+        );
+        const selected = release.rows[0];
+        if (!selected || selected.status !== 'verified') {
+          throw Object.assign(new Error('verified_release_not_found'), { statusCode: 404 });
+        }
+        if (selected.version !== confirmedVersion) {
+          throw Object.assign(new Error('server_update_version_confirmation_mismatch'), {
+            statusCode: 400,
+          });
+        }
+        const serverArtifacts = (selected.manifest?.artifacts ?? [])
+          .filter((artifact) => artifact?.kind === 'server-archive');
+        if (serverArtifacts.length !== 1) {
+          throw Object.assign(new Error('server_archive_artifact_required'), {
+            statusCode: 409,
+          });
+        }
+        if (selected.deployed_at) {
+          throw Object.assign(new Error('server_release_already_applied'), {
+            statusCode: 409,
+          });
+        }
+        await client.query(
+          `INSERT INTO server_update_requests (
+             id, release_id, requested_by, confirmed_version
+           ) VALUES ($1, $2, $3, $4)`,
+          [
+            requestId,
+            releaseId,
+            request.roomframeSession.user_id,
+            confirmedVersion,
+          ],
+        );
+        await writeAudit(
+          client,
+          request,
+          'release.server_apply_requested',
+          'release',
+          releaseId,
+          { requestId, version: confirmedVersion },
+        );
+        return {
+          id: requestId,
+          releaseId,
+          version: confirmedVersion,
+          status: 'pending',
+        };
+      });
+      return reply.code(202).send(queued);
+    } catch (error) {
+      if (error?.code === '23505') {
+        throw Object.assign(new Error('server_update_request_already_active'), {
+          statusCode: 409,
+        });
+      }
       throw error;
     }
   });

@@ -45,6 +45,12 @@ grep -Fq "n'est jamais appelée directement par l'API web" <<<"$apply_help" || {
   exit 1
 }
 
+broker_help="$(bash scripts/roomframe-update-broker.sh --help)"
+grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {
+  echo "L'aide du courtier doit documenter sa frontière root/API." >&2
+  exit 1
+}
+
 while IFS= read -r -d '' document; do
   python3 -m json.tool "$document" >/dev/null
 done < <(find contracts defaults examples -type f -name '*.json' -print0)
@@ -70,6 +76,11 @@ if rg --line-number \
   'innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function' \
   prototype/admin prototype/tv; then
   echo "Les interfaces ne doivent pas interpréter de contenu dynamique comme HTML ou JavaScript." >&2
+  exit 1
+fi
+
+if rg --fixed-strings --line-number '/var/run/docker.sock' compose.yaml; then
+  echo "Le socket Docker ne doit jamais être monté dans les conteneurs applicatifs." >&2
   exit 1
 fi
 

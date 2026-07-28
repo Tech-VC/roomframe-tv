@@ -104,6 +104,7 @@ const state = {
   powerSchedules: [],
   releases: [],
   deployments: [],
+  serverUpdateRequests: [],
   releaseSource: null,
   measuredMetrics: null,
   enrollmentTicket: null,
@@ -313,6 +314,9 @@ const loadStudio = async (sceneId = null) => {
     state.powerSchedules = Array.isArray(payload.powerSchedules) ? payload.powerSchedules : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+    state.serverUpdateRequests = Array.isArray(payload.serverUpdateRequests)
+      ? payload.serverUpdateRequests
+      : [];
     state.releaseSource = payload.releaseSource ?? null;
     state.measuredMetrics = payload.measuredMetrics ?? null;
     state.preview = null;
@@ -980,6 +984,27 @@ const renderReleases = () => {
   $("#deploymentForm").querySelector('button[type="submit"]').disabled = eligible.length === 0;
   updateDeploymentTargetControls();
 
+  const activeServerRequest = state.serverUpdateRequests.find(
+    (request) => request.status === "pending" || request.status === "running",
+  );
+  const serverEligible = state.releases.filter((release) => (
+    release.status === "verified"
+    && release.has_server_archive === true
+    && !release.deployed_at
+  ));
+  const serverSelect = $("#serverUpdateRelease");
+  const selectedServerRelease = serverSelect.value;
+  serverSelect.replaceChildren(...serverEligible.map((release) => {
+    const option = make("option", "", `v${release.version} · archive signée`);
+    option.value = release.id;
+    return option;
+  }));
+  if (serverEligible.some((release) => release.id === selectedServerRelease)) {
+    serverSelect.value = selectedServerRelease;
+  }
+  const serverSubmit = $("#serverUpdateForm").querySelector('button[type="submit"]');
+  serverSubmit.disabled = serverEligible.length === 0 || Boolean(activeServerRequest);
+
   const releaseRows = state.releases.map((release) => {
     const row = make("article", "release-record");
     const apk = release.verification?.apkArtifacts?.find((artifact) => artifact.kind === "home-apk");
@@ -988,6 +1013,11 @@ const renderReleases = () => {
       make("h3", "", `RoomFrame ${release.version}`),
       make("p", "", [
         release.status ?? "statut inconnu",
+        release.deployed_at
+          ? `Serveur appliqué le ${new Date(release.deployed_at).toLocaleString("fr-FR")}`
+          : release.has_server_archive === true
+            ? "Archive serveur disponible"
+            : null,
         apk ? `${apk.packageName} · code ${apk.versionCode}` : "Aucun APK Home dans ce bundle",
         release.imported_at ? new Date(release.imported_at).toLocaleString("fr-FR") : null,
       ].filter(Boolean).join("\n")),
@@ -1021,9 +1051,28 @@ const renderReleases = () => {
     }
     return row;
   });
+  const serverRequestRows = state.serverUpdateRequests.map((request) => {
+    const row = make("article", "deployment-record");
+    row.append(
+      make("span", "record-kicker", `SERVEUR · ${request.status ?? "inconnu"}`),
+      make("h3", "", `RoomFrame ${request.version}`),
+      make("p", "", [
+        request.status === "pending" ? "En attente du courtier Debian" : null,
+        request.status === "running" ? "Sauvegarde ou bascule en cours" : null,
+        request.status === "completed" ? "Healthchecks réussis" : null,
+        request.status === "rolled-back" ? "Ancien code rétabli automatiquement" : null,
+        request.status === "failed" ? `Échec contrôlé · ${request.last_error_code ?? "voir diagnostic"}` : null,
+        request.requested_at
+          ? new Date(request.requested_at).toLocaleString("fr-FR")
+          : null,
+      ].filter(Boolean).join("\n")),
+    );
+    return row;
+  });
   const board = $("#releaseBoard");
   board.replaceChildren(
     ...(releaseRows.length ? releaseRows : [make("p", "empty-copy", "Aucune version vérifiée.")]),
+    ...serverRequestRows,
     ...(deploymentRows.length ? deploymentRows : []),
   );
 };
@@ -1032,6 +1081,9 @@ const refreshReleases = async () => {
   const payload = await api.get("releases");
   state.releases = Array.isArray(payload.releases) ? payload.releases : [];
   state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+  state.serverUpdateRequests = Array.isArray(payload.serverUpdateRequests)
+    ? payload.serverUpdateRequests
+    : [];
   state.releaseSource = payload.source ?? null;
   renderReleases();
 };
@@ -1960,6 +2012,29 @@ $("#releaseForm").addEventListener("submit", (event) => {
 });
 $("#deploymentStrategy").addEventListener("change", updateDeploymentTargetControls);
 $("#deploymentTargetType").addEventListener("change", updateDeploymentTargetControls);
+$("#serverUpdateForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("serverUpdateError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const releaseId = String(data.get("releaseId") || "");
+  const confirmVersion = String(data.get("confirmVersion") || "").trim();
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const request = await api.post(
+      `releases/${encodeURIComponent(releaseId)}/server-update-requests`,
+      { confirmVersion },
+    );
+    form.reset();
+    await refreshReleases();
+    toast(`RoomFrame ${request.version} est en file. Le courtier Debian revalidera tout avant la bascule.`);
+  } catch (error) {
+    formError("serverUpdateError", error.message);
+  } finally {
+    renderReleases();
+  }
+});
 $("#deploymentForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("deploymentError");

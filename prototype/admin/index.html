@@ -359,6 +359,19 @@
             <h3>Lecture de la source signée…</h3>
             <p>La configuration est chargée depuis le serveur.</p>
           </article>
+          <section class="deployment-console" aria-labelledby="serverUpdateTitle">
+            <div class="console-index">
+              <span>SERVEUR / FILE LOCALE</span>
+              <h2 id="serverUpdateTitle">Appliquer sans donner root au web</h2>
+              <p>L’administration dépose une demande. Le courtier Debian revalide la signature, sauvegarde, puis bascule le code hors du processus web.</p>
+            </div>
+            <form id="serverUpdateForm">
+              <label for="serverUpdateRelease">Archive serveur vérifiée<select id="serverUpdateRelease" name="releaseId" required></select></label>
+              <label for="serverUpdateConfirm">Retaper la version<input id="serverUpdateConfirm" name="confirmVersion" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="0.3.1" required></label>
+              <button class="tool primary" type="submit">Mettre en file</button>
+              <p class="form-error hidden" id="serverUpdateError" role="alert"></p>
+            </form>
+          </section>
           <section class="deployment-console" aria-labelledby="deploymentTitle">
             <div class="console-index">
               <span>VAGUES CONTRÔLÉES</span>

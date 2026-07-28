@@ -29,6 +29,7 @@ export const buildTestUpdate = async (outputDirectory, {
   extraEntries = [],
   manifestTextTransform = (value) => value,
   includeHomeApk = false,
+  serverArtifactKind = 'oci-images',
 } = {}) => {
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -47,7 +48,7 @@ export const buildTestUpdate = async (outputDirectory, {
     path: artifactPath,
     sha256: crypto.createHash('sha256').update(artifact).digest('hex'),
     size: artifact.length,
-    kind: 'oci-images',
+    kind: serverArtifactKind,
   }];
   const homeApkPath = 'android/roomframe-home-test.apk';
   const homeApk = Buffer.from('RoomFrame local test APK placeholder\n', 'utf8');
