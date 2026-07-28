@@ -116,6 +116,8 @@ const state = {
   serverUpdatePolicy: null,
   measuredMetrics: null,
   enrollmentTicket: null,
+  tvCredentialAction: null,
+  tvCredentialReturnFocus: null,
   interaction: null,
   preview: null,
   previewSelection: "",
@@ -937,6 +939,20 @@ const renderCollections = () => {
       `Mise à jour : ${metric.updateState ?? "inconnue"}`,
       ...(metric.errorCode ? [`Erreur : ${metric.errorCode}`] : []),
     ] : ["Mesures techniques : en attente"];
+    const credentialGeneration = Number(
+      tv.credentialGeneration ?? tv.credential_generation ?? 1,
+    );
+    const credentialRotatedAt = tv.credentialRotatedAt ?? tv.device_key_rotated_at;
+    const credentialsRevokedAt = tv.credentialsRevokedAt ?? tv.credentials_revoked_at;
+    const credentialLines = [
+      `Identité : génération ${Number.isSafeInteger(credentialGeneration) ? credentialGeneration : "inconnue"}`,
+      credentialRotatedAt
+        ? `Rotation : ${new Date(credentialRotatedAt).toLocaleString("fr-FR")}`
+        : "Rotation : jamais observée",
+      ...(credentialsRevokedAt
+        ? [`Révocation : ${new Date(credentialsRevokedAt).toLocaleString("fr-FR")}`]
+        : []),
+    ];
     card.append(
       signal,
       make("h3", "", tv.displayName ?? tv.display_name ?? tv.name ?? tv.id),
@@ -944,9 +960,38 @@ const renderCollections = () => {
         connectionState,
         `Source : ${tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"}`,
         `Version : ${tv.version ?? tv.home_version ?? "inconnue"}`,
+        ...credentialLines,
         ...metricLines,
       ].join("\n")),
     );
+    if (enrollmentState !== "simulated") {
+      const actions = make("div", "tv-credential-actions");
+      if (enrollmentState !== "revoked") {
+        const revoke = make("button", "danger-link", "Révoquer");
+        revoke.type = "button";
+        revoke.dataset.tvCredentialAction = "revoke";
+        revoke.dataset.tvId = tv.id;
+        revoke.setAttribute(
+          "aria-label",
+          `Révoquer l’accès de ${tv.displayName ?? tv.display_name ?? tv.id}`,
+        );
+        actions.append(revoke);
+      }
+      const reenroll = make(
+        "button",
+        "text-button",
+        enrollmentState === "active" ? "Réenrôler" : "Créer une nouvelle clé",
+      );
+      reenroll.type = "button";
+      reenroll.dataset.tvCredentialAction = "reenrollment";
+      reenroll.dataset.tvId = tv.id;
+      reenroll.setAttribute(
+        "aria-label",
+        `Réenrôler ${tv.displayName ?? tv.display_name ?? tv.id}`,
+      );
+      actions.append(reenroll);
+      card.append(actions);
+    }
     return card;
   });
   const fleetSummary = state.measuredMetrics
@@ -978,6 +1023,58 @@ const renderEnrollmentTicket = () => {
   $("#enrollmentDeviceId").value = ticket.id;
   $("#enrollmentSecret").value = ticket.enrollmentKey;
   $("#enrollmentExpiry").textContent = `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. Après échange, cette clé ne fonctionne plus.`;
+};
+
+const setEnrollmentTicket = (ticket) => {
+  state.enrollmentTicket = ticket;
+  renderEnrollmentTicket();
+  const delay = Math.max(
+    0,
+    Math.min(30 * 60 * 1000, new Date(ticket.expiresAt).getTime() - Date.now()),
+  );
+  setTimeout(() => {
+    if (state.enrollmentTicket?.id === ticket.id) {
+      state.enrollmentTicket = null;
+      renderEnrollmentTicket();
+    }
+  }, delay);
+};
+
+const tvCredentialActionSpec = {
+  revoke: {
+    title: "Révoquer l’accès de la TV",
+    phrase: "REVOQUER LA TV",
+    submit: "Révoquer maintenant",
+    description: (name) => (
+      `${name} perdra immédiatement l’accès à l’API. Son cache local restera affichable, `
+      + "mais un nouvel enrôlement sera nécessaire pour reprendre la synchronisation."
+    ),
+  },
+  reenrollment: {
+    title: "Créer un nouvel enrôlement",
+    phrase: "REINITIALISER L ENROLEMENT",
+    submit: "Créer la nouvelle clé",
+    description: (name) => (
+      `La clé actuelle de ${name} sera invalidée. La nouvelle clé à usage unique `
+      + "ne sera affichée que dans cette session et expirera après 30 minutes."
+    ),
+  },
+};
+
+const openTvCredentialDialog = (tv, action) => {
+  const spec = tvCredentialActionSpec[action];
+  if (!spec) return;
+  const name = tv.displayName ?? tv.display_name ?? tv.id;
+  state.tvCredentialAction = { action, tvId: tv.id };
+  state.tvCredentialReturnFocus = document.activeElement;
+  $("#tvCredentialDialogTitle").textContent = spec.title;
+  $("#tvCredentialDialogDescription").textContent = spec.description(name);
+  $("#tvCredentialConfirmationPhrase").textContent = spec.phrase;
+  $("#tvCredentialSubmit").textContent = spec.submit;
+  $("#tvCredentialConfirmation").value = "";
+  formError("tvCredentialError");
+  $("#tvCredentialDialog").showModal();
+  $("#tvCredentialConfirmation").focus();
 };
 
 const releaseHasHomeApk = (release) => (
@@ -1999,7 +2096,6 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
     ) {
       throw new Error("Réponse d’enrôlement incomplète.");
     }
-    state.enrollmentTicket = ticket;
     if (!state.televisions.some((tv) => (tv.id ?? tv.deviceId) === ticket.id)) {
       state.televisions.unshift({
         id: ticket.id,
@@ -2010,14 +2106,7 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
     }
     form.reset();
     renderCollections();
-    renderEnrollmentTicket();
-    const delay = Math.max(0, Math.min(30 * 60 * 1000, new Date(ticket.expiresAt).getTime() - Date.now()));
-    setTimeout(() => {
-      if (state.enrollmentTicket?.id === ticket.id) {
-        state.enrollmentTicket = null;
-        renderEnrollmentTicket();
-      }
-    }, delay);
+    setEnrollmentTicket(ticket);
     toast("Enrôlement créé. La clé ne sera plus réaffichée après masquage.");
   } catch (error) {
     formError("enrollmentError", error.message);
@@ -2043,6 +2132,91 @@ $("#hideEnrollmentButton").addEventListener("click", () => {
   state.enrollmentTicket = null;
   renderEnrollmentTicket();
   toast("Clé masquée. Créez un nouvel enrôlement si elle n’a pas été utilisée.");
+});
+$("#fleetList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-tv-credential-action]");
+  if (!button) return;
+  const tv = state.televisions.find((item) => item.id === button.dataset.tvId);
+  if (tv) openTvCredentialDialog(tv, button.dataset.tvCredentialAction);
+});
+$("#tvCredentialCancel").addEventListener("click", () => {
+  $("#tvCredentialDialog").close();
+});
+$("#tvCredentialDialog").addEventListener("close", () => {
+  const returnFocus = state.tvCredentialReturnFocus;
+  state.tvCredentialAction = null;
+  state.tvCredentialReturnFocus = null;
+  $("#tvCredentialConfirmation").value = "";
+  formError("tvCredentialError");
+  returnFocus?.focus();
+});
+$("#tvCredentialDialog").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#tvCredentialDialog").close();
+  }
+});
+$("#tvCredentialForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const pending = state.tvCredentialAction;
+  const spec = pending ? tvCredentialActionSpec[pending.action] : null;
+  if (!pending || !spec) return;
+  const confirmation = $("#tvCredentialConfirmation").value;
+  if (confirmation !== spec.phrase) {
+    formError("tvCredentialError", `Retapez exactement « ${spec.phrase} ».`);
+    return;
+  }
+  const submit = $("#tvCredentialSubmit");
+  submit.disabled = true;
+  formError("tvCredentialError");
+  try {
+    const payload = await api.post(
+      `tvs/${encodeURIComponent(pending.tvId)}/${
+        pending.action === "revoke" ? "revoke" : "reenrollment"
+      }`,
+      { confirmation },
+    );
+    if (pending.action === "revoke") {
+      state.televisions = state.televisions.map((tv) => (
+        tv.id === pending.tvId
+          ? {
+              ...tv,
+              enrollmentState: payload.tv.enrollmentState,
+              enrollment_state: payload.tv.enrollmentState,
+              credentialGeneration: payload.tv.credentialGeneration,
+              credential_generation: payload.tv.credentialGeneration,
+              credentialsRevokedAt: payload.tv.credentialsRevokedAt,
+              credentials_revoked_at: payload.tv.credentialsRevokedAt,
+              online: null,
+            }
+          : tv
+      ));
+      toast("Accès TV révoqué. Son cache local n’a pas été effacé.");
+    } else {
+      state.televisions = state.televisions.map((tv) => (
+        tv.id === pending.tvId
+          ? {
+              ...tv,
+              enrollmentState: "pending",
+              enrollment_state: "pending",
+              credentialGeneration: payload.credentialGeneration,
+              credential_generation: payload.credentialGeneration,
+              credentialsRevokedAt: null,
+              credentials_revoked_at: null,
+              online: null,
+            }
+          : tv
+      ));
+      setEnrollmentTicket(payload);
+      toast("Nouvel enrôlement créé. L’ancienne clé ne fonctionne plus.");
+    }
+    $("#tvCredentialDialog").close();
+    renderCollections();
+  } catch (error) {
+    formError("tvCredentialError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
 });
 $("#palette").addEventListener("click", (event) => {
   const button = event.target.closest("[data-add-kind]");

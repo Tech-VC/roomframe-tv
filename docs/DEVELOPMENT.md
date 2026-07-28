@@ -7,10 +7,18 @@
 - Python 3 ;
 - Bash et ripgrep ;
 - Docker avec Docker Compose pour les tests PostgreSQL et la validation de la
-  pile.
+  pile ;
+- JDK 17 et Android SDK Platform 35 pour le client TV natif.
 
 Les dépendances applicatives sont verrouillées dans
 `services/api/package-lock.json`.
+
+Le client Android se contrôle séparément :
+
+```bash
+cd apps/tv-android
+./gradlew --no-daemon clean :app:testDebugUnitTest :app:assembleDebug
+```
 
 ## Vérification complète
 
@@ -42,12 +50,14 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 20 scénarios : modèle Studio, salutation mono-ligne, flou borné et
+Ils comptent 23 scénarios : modèle Studio, salutation mono-ligne, flou borné et
 compatibilité avec le validateur API, normalisation du vrai manifeste TV,
 réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
 sûr des réponses API non JSON ou malformées, ainsi que la conservation des
-références de formulaire au-delà des appels asynchrones, ainsi que la présence
-et le nettoyage du flux de récupération locale. Ce lot passe `20/20`.
+références de formulaire au-delà des appels asynchrones, la présence et le
+nettoyage du flux de récupération locale, la politique d’update opt-in, les
+scènes temporaires et les confirmations du cycle d’identité TV. Ce lot passe
+`23/23`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -79,7 +89,7 @@ Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-22 tests UI, soit 45 tests sur un clone frais. Les workflows GitHub de
+23 tests UI, soit 46 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -90,7 +100,8 @@ donc ce même ensemble. Les scénarios comprennent notamment :
   document `branding.json` hashé pour les TV ;
 - bibliothèque de scènes, révision, conflit, publication, affectation ciblée
   et manifeste de synchronisation ;
-- enrôlement temporaire puis clé TV à remise unique ;
+- enrôlement temporaire, rotation TV en deux phases, confirmation idempotente,
+  révocation et réenrôlement protégés par permission/CSRF ;
 - isolation des assets d’une TV ;
 - seed appliqué une seule fois et migrations rejouables ;
 - récupération liée au bon compte, consommation unique et refus du rejeu ;
@@ -250,10 +261,13 @@ dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
 client HTTPS, de la distribution APK et des métriques techniques minimales est
 maintenant codée et testée hors matériel. Le provisionnement Device Owner,
-l’installation silencieuse réelle et la PKI individuelle restent à valider.
+l’installation silencieuse réelle, la rotation 0.3.2 et la PKI individuelle
+restent à valider.
 Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
 peut être déduit des adaptateurs `unsupported` ou des tests JVM.
 
-La build suivante est `0.3.1` / `versionCode 4`, afin de tester une vraie
-montée de version depuis l’APK `0.3.0` / code 3 déjà installé. Elle n’est pas
-considérée installée tant que la TV n’a pas été reconnectée et contrôlée.
+La candidate courante est `0.3.2` / `versionCode 5`. Elle inclut le cache,
+la synchronisation, la distribution APK et la rotation de credential ; elle
+n’est pas considérée installée tant que la TV n’a pas été reconnectée et
+contrôlée. La candidate intermédiaire `0.3.1` / code 4 a seulement été
+construite hors matériel.

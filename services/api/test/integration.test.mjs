@@ -763,6 +763,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(claimed.statusCode, 201);
   const deviceCredential = claimed.json();
   assert.equal(deviceCredential.credentialDelivery, 'one-time');
+  assert.equal(deviceCredential.credentialGeneration, 1);
   const deviceSync = await app.inject({
     method: 'GET',
     url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
@@ -772,6 +773,74 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(deviceSync.statusCode, 200);
+  const rotatedDeviceKey = token();
+  const preparedRotation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/rotate',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: {
+      nextKey: rotatedDeviceKey,
+      currentGeneration: deviceCredential.credentialGeneration,
+    },
+  });
+  assert.equal(preparedRotation.statusCode, 200, preparedRotation.body);
+  assert.equal(preparedRotation.json().nextGeneration, 2);
+  const activeKeyDuringRotation = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(activeKeyDuringRotation.statusCode, 200, activeKeyDuringRotation.body);
+  const wrongRotationGeneration = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': rotatedDeviceKey,
+    },
+    payload: { generation: 3 },
+  });
+  assert.equal(wrongRotationGeneration.statusCode, 401, wrongRotationGeneration.body);
+  const confirmedRotation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': rotatedDeviceKey,
+    },
+    payload: { generation: 2 },
+  });
+  assert.equal(confirmedRotation.statusCode, 200, confirmedRotation.body);
+  assert.equal(confirmedRotation.json().credentialGeneration, 2);
+  assert.equal(confirmedRotation.json().idempotent, false);
+  const retiredDeviceKey = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(retiredDeviceKey.statusCode, 401, retiredDeviceKey.body);
+  const duplicateConfirmation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': rotatedDeviceKey,
+    },
+    payload: { generation: 2 },
+  });
+  assert.equal(duplicateConfirmation.statusCode, 200, duplicateConfirmation.body);
+  assert.equal(duplicateConfirmation.json().idempotent, true);
+  deviceCredential.deviceKey = rotatedDeviceKey;
+  deviceCredential.credentialGeneration = 2;
 
   const createdGroup = await app.inject({
     method: 'POST',
@@ -973,6 +1042,73 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(foreignApkDownload.statusCode, 403, foreignApkDownload.body);
+  const forbiddenRevocation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${otherPendingDevice.id}/revoke`,
+    headers: { cookie: contentCookie, 'x-csrf-token': contentCsrfToken },
+    payload: { confirmation: 'REVOQUER LA TV' },
+  });
+  assert.equal(forbiddenRevocation.statusCode, 403, forbiddenRevocation.body);
+  const revocationWithoutCsrf = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${otherPendingDevice.id}/revoke`,
+    headers: { cookie },
+    payload: { confirmation: 'REVOQUER LA TV' },
+  });
+  assert.equal(revocationWithoutCsrf.statusCode, 403, revocationWithoutCsrf.body);
+  const revokedTv = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${otherPendingDevice.id}/revoke`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'REVOQUER LA TV' },
+  });
+  assert.equal(revokedTv.statusCode, 200, revokedTv.body);
+  assert.equal(revokedTv.json().tv.enrollmentState, 'revoked');
+  assert.equal(revokedTv.json().tv.credentialGeneration, 2);
+  const revokedCredential = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${otherPendingDevice.id}`,
+    headers: {
+      'x-roomframe-device-id': otherPendingDevice.id,
+      'x-roomframe-device-key': otherDeviceCredential.deviceKey,
+    },
+  });
+  assert.equal(revokedCredential.statusCode, 401, revokedCredential.body);
+  const duplicateRevocation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${otherPendingDevice.id}/revoke`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'REVOQUER LA TV' },
+  });
+  assert.equal(duplicateRevocation.statusCode, 409, duplicateRevocation.body);
+  const reenrollment = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${otherPendingDevice.id}/reenrollment`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'REINITIALISER L ENROLEMENT' },
+  });
+  assert.equal(reenrollment.statusCode, 200, reenrollment.body);
+  assert.equal(reenrollment.json().enrollmentState, 'pending');
+  assert.equal(reenrollment.json().credentialGeneration, 3);
+  const reenrolledTv = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enroll',
+    payload: {
+      deviceId: otherPendingDevice.id,
+      enrollmentKey: reenrollment.json().enrollmentKey,
+    },
+  });
+  assert.equal(reenrolledTv.statusCode, 201, reenrolledTv.body);
+  assert.equal(reenrolledTv.json().credentialGeneration, 3);
+  const reauthenticated = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${otherPendingDevice.id}`,
+    headers: {
+      'x-roomframe-device-id': otherPendingDevice.id,
+      'x-roomframe-device-key': reenrolledTv.json().deviceKey,
+    },
+  });
+  assert.equal(reauthenticated.statusCode, 200, reauthenticated.body);
 
   const updateOffer = await app.inject({
     method: 'GET',
@@ -1595,6 +1731,43 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.deepEqual(
     Object.fromEntries(schedulesAfterMigrations.rows.map((row) => [row.status, row.count])),
     { cancelled: 1, completed: 1 },
+  );
+  const credentialsAfterMigrations = await pool.query(
+    `SELECT id, enrollment_state, credential_generation,
+            device_key_pending, device_key_pending_expires_at
+     FROM screens
+     WHERE id = ANY($1::uuid[])
+     ORDER BY id`,
+    [[pendingDevice.id, otherPendingDevice.id]],
+  );
+  const credentialStateById = Object.fromEntries(
+    credentialsAfterMigrations.rows.map((row) => [row.id, row]),
+  );
+  assert.equal(credentialStateById[pendingDevice.id].enrollment_state, 'active');
+  assert.equal(credentialStateById[pendingDevice.id].credential_generation, '2');
+  assert.equal(credentialStateById[pendingDevice.id].device_key_pending, null);
+  assert.equal(credentialStateById[otherPendingDevice.id].enrollment_state, 'active');
+  assert.equal(credentialStateById[otherPendingDevice.id].credential_generation, '3');
+  assert.equal(credentialStateById[otherPendingDevice.id].device_key_pending, null);
+  const credentialAudit = await pool.query(
+    `SELECT action, count(*)::integer AS count
+     FROM audit_log
+     WHERE action IN (
+       'tv.credential.rotation.prepared',
+       'tv.credential.rotation.confirmed',
+       'tv.credential.revoked',
+       'tv.reenrollment.created'
+     )
+     GROUP BY action`,
+  );
+  assert.deepEqual(
+    Object.fromEntries(credentialAudit.rows.map((row) => [row.action, row.count])),
+    {
+      'tv.credential.revoked': 1,
+      'tv.credential.rotation.confirmed': 1,
+      'tv.credential.rotation.prepared': 1,
+      'tv.reenrollment.created': 1,
+    },
   );
   const groupPolicyAfterMigrations = await pool.query(
     `SELECT return_home_when_inactive_minutes, home_sleep_minutes, rules

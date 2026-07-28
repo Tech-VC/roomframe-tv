@@ -3,6 +3,7 @@ package org.roomframe.tv.sync
 import java.io.ByteArrayOutputStream
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import javax.net.ssl.HttpsURLConnection
 import org.json.JSONObject
 
@@ -47,6 +48,11 @@ class TvEnrollmentClient {
                 serverUrl = normalizedUrl,
                 deviceId = normalizedId,
                 deviceKey = response.getString("deviceKey").also(DeviceCredentialStore::validateDeviceKey),
+                credentialGeneration = response.optLong("credentialGeneration", 1)
+                    .also(DeviceCredentialStore::validateCredentialGeneration),
+                credentialRotatedAtEpochMs = runCatching {
+                    Instant.parse(response.getString("credentialRotatedAt")).toEpochMilli()
+                }.getOrDefault(System.currentTimeMillis()),
             )
         } finally {
             connection.disconnect()

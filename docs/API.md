@@ -70,6 +70,8 @@ PATCH /api/v1/media/:assetId
 POST /api/v1/messages
 GET  /api/v1/tvs
 POST /api/v1/tvs/enrollment
+POST /api/v1/tvs/:tvId/revoke
+POST /api/v1/tvs/:tvId/reenrollment
 GET  /api/v1/groups
 POST /api/v1/groups
 PUT  /api/v1/settings/sources
@@ -145,6 +147,8 @@ héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 
 ```text
 POST /api/v1/tv/enroll
+POST /api/v1/tv/credentials/rotate
+POST /api/v1/tv/credentials/confirm
 GET  /api/v1/tv/sync
 POST /api/v1/tv/metrics
 POST /api/v1/tv/events
@@ -157,12 +161,38 @@ Un administrateur crée d’abord un enrôlement valable 30 minutes avec
 fois sur `POST /api/v1/tv/enroll`; l’API lui remet alors une nouvelle clé
 d’appareil. Une TV encore en attente ne peut pas synchroniser.
 
+La réponse d’enrôlement fournit aussi la génération de credential et sa date
+de rotation. La clé brute n’est jamais conservée par l’API : PostgreSQL ne
+reçoit que son SHA-256 et Android la chiffre avec une clé non exportable du
+Keystore.
+
 Les appels d’un appareil actif utilisent :
 
 ```text
 x-roomframe-device-id: <UUID de la TV>
 x-roomframe-device-key: <clé remise une fois>
 ```
+
+La rotation est volontairement en deux phases afin de résister à une réponse
+HTTP perdue. Les deux requêtes sont fermées par
+`contracts/tv-credential.schema.json` :
+
+1. la TV génère localement une nouvelle clé aléatoire, la chiffre dans son
+   stockage privé puis appelle `/tv/credentials/rotate` avec son ancienne clé ;
+2. le serveur conserve uniquement le hash de la clé en attente pendant
+   24 heures et garde l’ancienne clé active ;
+3. la TV appelle `/tv/credentials/confirm` avec la nouvelle clé ;
+4. le serveur la promeut atomiquement et rend la confirmation idempotente ;
+5. la TV promeut ensuite sa copie locale. Si la réponse a été perdue, elle
+   peut répéter la confirmation sans perdre l’accès.
+
+Le client tente cette rotation tous les 30 jours et reprend d’abord toute
+transition inachevée. `POST /tvs/:tvId/revoke` invalide immédiatement
+l’identité sans effacer le cache local de la TV. `POST
+/tvs/:tvId/reenrollment` invalide aussi l’ancienne identité et remet une
+nouvelle clé temporaire de 30 minutes. Ces deux actions exigent
+`fleet:write`, le CSRF de session, une phrase de confirmation exacte et
+laissent une trace d’audit.
 
 Le manifeste de synchronisation suit `contracts/tv-sync.schema.json`. Il
 contient la révision globale, la révision de scène publiée, les documents
@@ -183,8 +213,9 @@ actualise aussi la présence de la TV. `GET /studio` expose uniquement sa
 dernière mesure et un résumé parc ; l’historique brut reste côté base pour le
 diagnostic et la future politique de rétention.
 
-La clé d’appareil reste une étape intermédiaire. Les certificats individuels,
-la rotation de clé et le mTLS doivent être finalisés avant production.
+La clé d’appareil rotative reste une étape intermédiaire avant la PKI
+individuelle. Les certificats clients et le mTLS doivent encore être finalisés
+avant production.
 
 ## Releases
 

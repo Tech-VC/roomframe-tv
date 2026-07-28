@@ -23,6 +23,7 @@ export const buildApp = async ({ config, logger = true }) => {
           'req.body.bootstrapToken',
           'req.body.recoveryToken',
           'req.body.enrollmentKey',
+          'req.body.nextKey',
           'req.body.totpCode',
         ],
         censor: '[REDACTED]',

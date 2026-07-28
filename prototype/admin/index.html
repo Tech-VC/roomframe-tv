@@ -362,6 +362,23 @@
         </div>
       </section>
 
+      <dialog class="credential-dialog" id="tvCredentialDialog" aria-labelledby="tvCredentialDialogTitle" aria-describedby="tvCredentialDialogDescription">
+        <form id="tvCredentialForm">
+          <span class="record-kicker">IDENTITÉ TV / ACTION SENSIBLE</span>
+          <h2 id="tvCredentialDialogTitle">Gérer l’identité de la TV</h2>
+          <p id="tvCredentialDialogDescription"></p>
+          <label for="tvCredentialConfirmation">Confirmation exacte
+            <input id="tvCredentialConfirmation" name="confirmation" autocomplete="off" spellcheck="false" aria-describedby="tvCredentialConfirmationPhrase tvCredentialError" required>
+          </label>
+          <p class="credential-confirmation-help">Retaper : <b id="tvCredentialConfirmationPhrase"></b></p>
+          <p class="form-error hidden" id="tvCredentialError" role="alert"></p>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="tvCredentialCancel" type="button">Annuler</button>
+            <button class="tool primary" id="tvCredentialSubmit" type="submit">Confirmer</button>
+          </div>
+        </form>
+      </dialog>
+
       <section class="workspace-panel full-panel" id="view-releases" aria-labelledby="releasesTitle">
         <aside class="panel-index"><div class="eyebrow">Distribution locale</div><h1 class="editorial-title" id="releasesTitle">Mettre à<br>jour sans<br>effacer.</h1><p class="note">Le serveur vérifie le bundle avant de proposer tout déploiement.</p></aside>
         <div class="panel-content">

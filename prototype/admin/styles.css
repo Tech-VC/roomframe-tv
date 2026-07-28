@@ -289,7 +289,33 @@ textarea { min-height: 58px; resize: vertical; }
 .tv-cell[data-health="offline"] .tv-signal { background: var(--danger); }
 .tv-cell[data-health="pending"] .tv-signal { background: #b88210; }
 .tv-cell h3 { font-family: Georgia, serif; font-size: 22px; margin: 26px 0 8px; }
-.tv-cell p { color: var(--muted); font-size: 10px; line-height: 1.5; }
+.tv-cell p { color: var(--muted); font-size: 10px; line-height: 1.5; white-space: pre-line; }
+.tv-credential-actions {
+  display: flex; align-items: center; gap: 14px; margin-top: 16px; padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.credential-dialog {
+  width: min(620px, calc(100vw - 36px)); padding: 0; border: 1px solid var(--ink);
+  color: var(--ink); background: var(--paper); box-shadow: var(--shadow);
+}
+.credential-dialog::backdrop { background: rgba(7, 10, 9, .72); backdrop-filter: blur(5px); }
+.credential-dialog form { display: grid; gap: 18px; padding: 28px; border-left: 12px solid var(--signal); }
+.credential-dialog h2 { margin: 4px 0 0; font: 500 34px/.98 Georgia, serif; }
+.credential-dialog p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.credential-dialog label {
+  color: var(--muted); font: 900 9px/1.2 var(--mono, monospace);
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.credential-dialog input {
+  display: block; width: 100%; margin-top: 8px; border: 0;
+  border-bottom: 2px solid var(--ink); background: transparent; padding: 10px 0;
+}
+.credential-dialog .credential-confirmation-help {
+  padding: 11px 13px; border-left: 5px solid var(--signal);
+  font: 600 10px/1.55 var(--mono, monospace);
+}
+.credential-confirmation-help b { color: var(--ink); overflow-wrap: anywhere; }
+.credential-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .release-result { margin-top: 20px; }
 .release-line { display: grid; grid-template-columns: 160px 1fr; border-bottom: 1px solid var(--line); padding: 12px 0; font-size: 12px; }
 .release-source { margin-top: 28px; padding: 20px 22px; border: 1px solid var(--ink); border-left: 10px solid var(--signal); background: color-mix(in srgb, var(--paper) 88%, var(--brand)); }

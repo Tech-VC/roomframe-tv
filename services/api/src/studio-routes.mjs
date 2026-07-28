@@ -24,6 +24,7 @@ import {
   hasPermission,
   randomToken,
   sha256,
+  timingSafeTextEqual,
 } from './security.mjs';
 import {
   importReleaseBundle,
@@ -34,7 +35,11 @@ import {
 } from './update-source.mjs';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const deviceKeyPattern = /^[A-Za-z0-9_-]{32,200}$/;
 const serverUpdateAutomaticConfirmation = 'ACTIVER LES MISES A JOUR AUTOMATIQUES';
+const tvRevokeConfirmation = 'REVOQUER LA TV';
+const tvReenrollmentConfirmation = 'REINITIALISER L ENROLEMENT';
+const tvCredentialPendingLifetimeMs = 24 * 60 * 60 * 1000;
 
 const cleanText = (value, field, maximum, minimum = 1) => {
   const text = String(value ?? '').trim();
@@ -49,6 +54,18 @@ const optionalUuid = (value) => {
   if (!uuidPattern.test(String(value))) throw Object.assign(new Error('invalid_uuid'), { statusCode: 400 });
   return String(value);
 };
+
+const deviceKeyValue = (value, field = 'device_key') => {
+  const key = String(value ?? '');
+  if (!deviceKeyPattern.test(key)) {
+    throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
+  }
+  return key;
+};
+
+const credentialGeneration = (value, field = 'credential_generation') => (
+  integerInRange(value, field, 1, Number.MAX_SAFE_INTEGER)
+);
 
 const brandColor = (value, field) => {
   const color = String(value ?? '').trim().toLowerCase();
@@ -328,6 +345,48 @@ const writeAudit = (client, request, action, targetType, targetId, details = {})
   details,
 });
 
+const tvCredentialHeaders = (request) => {
+  let deviceId;
+  try {
+    deviceId = optionalUuid(
+      request.headers['x-roomframe-device-id']
+      ?? request.query?.deviceId,
+    );
+  } catch {
+    throw Object.assign(new Error('tv_authentication_required'), { statusCode: 401 });
+  }
+  const deviceKey = request.headers['x-roomframe-device-key'];
+  if (
+    !deviceId
+    || typeof deviceKey !== 'string'
+    || !deviceKeyPattern.test(deviceKey)
+  ) {
+    throw Object.assign(new Error('tv_authentication_required'), { statusCode: 401 });
+  }
+  return {
+    deviceId,
+    deviceKey,
+    deviceKeyHash: sha256(deviceKey),
+  };
+};
+
+const activeTvFromRequest = async (connection, request, { lock = false } = {}) => {
+  const credentials = tvCredentialHeaders(request);
+  const result = await connection.query(
+    `SELECT *
+     FROM screens
+     WHERE id = $1
+       AND device_key = $2
+       AND enrollment_state = 'active'
+     ${lock ? 'FOR UPDATE' : ''}`,
+    [credentials.deviceId, credentials.deviceKeyHash],
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
+  }
+  return { screen: result.rows[0], credentials };
+};
+
 const resolveScreen = async ({
   request,
   pool,
@@ -352,16 +411,8 @@ const resolveScreen = async ({
     if (!result.rows[0]) throw Object.assign(new Error('tv_not_found'), { statusCode: 404 });
     return { screen: result.rows[0], session };
   }
-  const deviceKey = request.headers['x-roomframe-device-key'];
-  if (typeof deviceKey !== 'string' || deviceKey.length < 20 || !uuidPattern.test(requestedId)) {
-    throw Object.assign(new Error('tv_authentication_required'), { statusCode: 401 });
-  }
-  const result = await pool.query(
-    "SELECT * FROM screens WHERE id = $1 AND device_key = $2 AND enrollment_state = 'active'",
-    [requestedId, sha256(deviceKey)],
-  );
-  if (!result.rows[0]) throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
-  return { screen: result.rows[0], session: null };
+  const authenticated = await activeTvFromRequest(pool, request);
+  return { screen: authenticated.screen, session: null };
 };
 
 const sceneForScreen = async (pool, screen) => {
@@ -720,6 +771,8 @@ export const registerStudioRoutes = ({
                 screen.enrollment_state, screen.agent_version, screen.home_version,
                 screen.active_revision, screen.capabilities, screen.source_state,
                 screen.last_seen_at, screen.enrollment_expires_at,
+                screen.device_key_rotated_at, screen.credential_generation,
+                screen.device_key_pending_expires_at, screen.credentials_revoked_at,
                 CASE
                   WHEN screen.enrollment_state <> 'active' THEN NULL
                   WHEN screen.last_seen_at >= now() - interval '2 minutes' THEN true
@@ -1289,7 +1342,8 @@ export const registerStudioRoutes = ({
     const result = await pool.query(
       `SELECT id, display_name, room_name, group_id, enrollment_state, agent_version,
               home_version, active_revision, capabilities, source_state, last_seen_at,
-              enrollment_expires_at
+              enrollment_expires_at, device_key_rotated_at, credential_generation,
+              device_key_pending_expires_at, credentials_revoked_at
        FROM screens ORDER BY display_name`,
     );
     return { tvs: result.rows };
@@ -1354,9 +1408,12 @@ export const registerStudioRoutes = ({
         `UPDATE screens
          SET device_key = $2, enrollment_state = 'active',
              enrollment_expires_at = NULL, device_key_rotated_at = now(),
+             device_key_pending = NULL, device_key_pending_expires_at = NULL,
+             credentials_revoked_at = NULL,
              last_seen_at = now(), updated_at = now()
          WHERE id = $1
-         RETURNING id, display_name, room_name`,
+         RETURNING id, display_name, room_name, credential_generation,
+                   device_key_rotated_at`,
         [deviceId, sha256(deviceKey)],
       );
       await appendAudit(client, {
@@ -1371,8 +1428,239 @@ export const registerStudioRoutes = ({
     return reply.code(201).send({
       device: enrolled,
       deviceKey,
+      credentialGeneration: Number(enrolled.credential_generation),
+      credentialRotatedAt: enrolled.device_key_rotated_at,
       apiUrl: config.apiUrl,
       credentialDelivery: 'one-time',
+    });
+  });
+
+  app.post('/api/v1/tv/credentials/rotate', {
+    config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+  }, async (request) => {
+    validators.assertTvCredential(request.body);
+    const nextKey = deviceKeyValue(request.body?.nextKey, 'next_device_key');
+    const currentGeneration = credentialGeneration(request.body?.currentGeneration);
+    const nextKeyHash = sha256(nextKey);
+    return withTransaction(pool, async (client) => {
+      const { screen } = await activeTvFromRequest(client, request, { lock: true });
+      const storedGeneration = Number(screen.credential_generation);
+      if (currentGeneration !== storedGeneration) {
+        throw Object.assign(new Error('credential_generation_mismatch'), {
+          statusCode: 409,
+        });
+      }
+      if (nextKeyHash === screen.device_key) {
+        throw Object.assign(new Error('credential_rotation_reuses_active_key'), {
+          statusCode: 400,
+        });
+      }
+      const expiresAt = new Date(Date.now() + tvCredentialPendingLifetimeMs);
+      await client.query(
+        `UPDATE screens
+         SET device_key_pending = $2,
+             device_key_pending_expires_at = $3,
+             updated_at = now()
+         WHERE id = $1`,
+        [screen.id, nextKeyHash, expiresAt],
+      );
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: 'tv.credential.rotation.prepared',
+        targetType: 'tv',
+        targetId: screen.id,
+        remoteAddress: request.ip,
+        details: {
+          currentGeneration: storedGeneration,
+          nextGeneration: storedGeneration + 1,
+          expiresAt,
+        },
+      });
+      return {
+        prepared: true,
+        nextGeneration: storedGeneration + 1,
+        expiresAt,
+      };
+    });
+  });
+
+  app.post('/api/v1/tv/credentials/confirm', {
+    config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+  }, async (request) => {
+    validators.assertTvCredential(request.body);
+    const supplied = tvCredentialHeaders(request);
+    const requestedGeneration = credentialGeneration(request.body?.generation);
+    return withTransaction(pool, async (client) => {
+      const current = await client.query(
+        `SELECT *
+         FROM screens
+         WHERE id = $1 AND enrollment_state = 'active'
+         FOR UPDATE`,
+        [supplied.deviceId],
+      );
+      const screen = current.rows[0];
+      if (!screen) {
+        throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
+      }
+      const storedGeneration = Number(screen.credential_generation);
+      if (
+        timingSafeTextEqual(supplied.deviceKeyHash, screen.device_key)
+        && requestedGeneration === storedGeneration
+      ) {
+        return {
+          confirmed: true,
+          credentialGeneration: storedGeneration,
+          credentialRotatedAt: screen.device_key_rotated_at,
+          idempotent: true,
+        };
+      }
+      if (
+        !screen.device_key_pending
+        || !timingSafeTextEqual(supplied.deviceKeyHash, screen.device_key_pending)
+        || !screen.device_key_pending_expires_at
+        || new Date(screen.device_key_pending_expires_at) <= new Date()
+        || requestedGeneration !== storedGeneration + 1
+      ) {
+        throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
+      }
+      const promoted = await client.query(
+        `UPDATE screens
+         SET device_key = device_key_pending,
+             device_key_pending = NULL,
+             device_key_pending_expires_at = NULL,
+             credential_generation = credential_generation + 1,
+             device_key_rotated_at = now(),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING credential_generation, device_key_rotated_at`,
+        [screen.id],
+      );
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: 'tv.credential.rotation.confirmed',
+        targetType: 'tv',
+        targetId: screen.id,
+        remoteAddress: request.ip,
+        details: {
+          previousGeneration: storedGeneration,
+          credentialGeneration: requestedGeneration,
+        },
+      });
+      return {
+        confirmed: true,
+        credentialGeneration: Number(promoted.rows[0].credential_generation),
+        credentialRotatedAt: promoted.rows[0].device_key_rotated_at,
+        idempotent: false,
+      };
+    });
+  });
+
+  app.post('/api/v1/tvs/:tvId/revoke', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request) => {
+    if (request.body?.confirmation !== tvRevokeConfirmation) {
+      throw Object.assign(new Error('tv_revocation_confirmation_required'), {
+        statusCode: 400,
+      });
+    }
+    const tvId = optionalUuid(request.params.tvId);
+    return withTransaction(pool, async (client) => {
+      const current = await client.query(
+        'SELECT * FROM screens WHERE id = $1 FOR UPDATE',
+        [tvId],
+      );
+      const screen = current.rows[0];
+      if (!screen) throw Object.assign(new Error('tv_not_found'), { statusCode: 404 });
+      if (screen.enrollment_state === 'simulated') {
+        throw Object.assign(new Error('simulator_credentials_not_managed'), {
+          statusCode: 409,
+        });
+      }
+      if (screen.enrollment_state === 'revoked') {
+        throw Object.assign(new Error('tv_already_revoked'), { statusCode: 409 });
+      }
+      const updated = await client.query(
+        `UPDATE screens
+         SET enrollment_state = 'revoked',
+             device_key = $2,
+             device_key_pending = NULL,
+             device_key_pending_expires_at = NULL,
+             enrollment_expires_at = NULL,
+             credential_generation = credential_generation + 1,
+             credentials_revoked_at = now(),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, enrollment_state, credential_generation,
+                   credentials_revoked_at`,
+        [tvId, sha256(randomToken(32))],
+      );
+      await writeAudit(client, request, 'tv.credential.revoked', 'tv', tvId, {
+        previousState: screen.enrollment_state,
+        previousGeneration: Number(screen.credential_generation),
+        credentialGeneration: Number(updated.rows[0].credential_generation),
+      });
+      return {
+        tv: {
+          id: updated.rows[0].id,
+          enrollmentState: updated.rows[0].enrollment_state,
+          credentialGeneration: Number(updated.rows[0].credential_generation),
+          credentialsRevokedAt: updated.rows[0].credentials_revoked_at,
+        },
+      };
+    });
+  });
+
+  app.post('/api/v1/tvs/:tvId/reenrollment', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request) => {
+    if (request.body?.confirmation !== tvReenrollmentConfirmation) {
+      throw Object.assign(new Error('tv_reenrollment_confirmation_required'), {
+        statusCode: 400,
+      });
+    }
+    const tvId = optionalUuid(request.params.tvId);
+    const enrollmentKey = randomToken(32);
+    const enrollmentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    return withTransaction(pool, async (client) => {
+      const current = await client.query(
+        'SELECT * FROM screens WHERE id = $1 FOR UPDATE',
+        [tvId],
+      );
+      const screen = current.rows[0];
+      if (!screen) throw Object.assign(new Error('tv_not_found'), { statusCode: 404 });
+      if (screen.enrollment_state === 'simulated') {
+        throw Object.assign(new Error('simulator_credentials_not_managed'), {
+          statusCode: 409,
+        });
+      }
+      const updated = await client.query(
+        `UPDATE screens
+         SET enrollment_state = 'pending',
+             device_key = $2,
+             device_key_pending = NULL,
+             device_key_pending_expires_at = NULL,
+             enrollment_expires_at = $3,
+             credential_generation = credential_generation + 1,
+             credentials_revoked_at = NULL,
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, enrollment_state, credential_generation`,
+        [tvId, sha256(enrollmentKey), enrollmentExpiresAt],
+      );
+      await writeAudit(client, request, 'tv.reenrollment.created', 'tv', tvId, {
+        previousState: screen.enrollment_state,
+        previousGeneration: Number(screen.credential_generation),
+        credentialGeneration: Number(updated.rows[0].credential_generation),
+        expiresAt: enrollmentExpiresAt,
+      });
+      return {
+        id: updated.rows[0].id,
+        enrollmentState: updated.rows[0].enrollment_state,
+        credentialGeneration: Number(updated.rows[0].credential_generation),
+        enrollmentKey,
+        expiresAt: enrollmentExpiresAt,
+        expiresNote: 'À remettre une seule fois à la TV pendant un enrôlement local contrôlé.',
+      };
     });
   });
 

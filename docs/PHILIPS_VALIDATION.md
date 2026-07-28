@@ -243,11 +243,12 @@ provisionne pas Device Owner et ne valide pas encore l’installation silencieus
 depuis l’administration. Une clé de release durable, conservée hors dépôt,
 devra remplacer la clé debug avant tout vrai canal de mise à jour.
 
-La build `0.3.1` (`versionCode` 4) ajoute le renderer alimenté par le cache,
-l’enrôlement HTTPS, la distribution APK vérifiée et l’envoi borné des mesures
-techniques autorisées après chaque cycle de synchronisation. Elle sert de
-candidate à la montée de version depuis le code 3, mais n’est pas encore
-installée ni validée sur cette Philips.
+La candidate courante `0.3.2` (`versionCode` 5) ajoute le renderer alimenté par
+le cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
+mesures techniques et la rotation de credential en deux phases. Elle doit
+servir à la montée de version depuis le code 3, mais n’est pas encore installée
+ni validée sur cette Philips. La candidate intermédiaire `0.3.1` / code 4 a
+uniquement été construite hors matériel.
 
 ## HDMI et sources
 

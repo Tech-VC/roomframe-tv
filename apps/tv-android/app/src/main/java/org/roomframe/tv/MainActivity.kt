@@ -27,9 +27,11 @@ import org.roomframe.tv.cache.FileExperienceStore
 import org.roomframe.tv.experience.ExperienceRepository
 import org.roomframe.tv.experience.ExperienceSnapshot
 import org.roomframe.tv.sync.DeviceCredentialStore
+import org.roomframe.tv.sync.CredentialRotationResult
 import org.roomframe.tv.sync.HttpExperienceSyncClient
 import org.roomframe.tv.sync.HttpTvMetricsClient
 import org.roomframe.tv.sync.SyncResult
+import org.roomframe.tv.sync.TvCredentialRotationClient
 import org.roomframe.tv.sync.TvMetricSnapshot
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
@@ -159,6 +161,7 @@ class MainActivity : Activity() {
                 runCatching { HttpTvMetricsClient(credentials).send(metric) }
                     .onFailure { recordMetricState("failed") }
                     .onSuccess { recordMetricState("accepted") }
+                recordCredentialRotationState(synchronizeCredentialRotation())
                 syncRunning.set(false)
             }
         }
@@ -195,6 +198,24 @@ class MainActivity : Activity() {
         getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
             .edit()
             .putString("last_metric_delivery", value)
+            .apply()
+    }
+
+    private fun synchronizeCredentialRotation(): String = runCatching {
+        when (val result = TvCredentialRotationClient(credentialStore).rotateIfDue()) {
+            CredentialRotationResult.NotEnrolled -> "not-enrolled"
+            CredentialRotationResult.NotDue -> "current"
+            is CredentialRotationResult.Rotated -> "rotated:g${result.generation}"
+            is CredentialRotationResult.Pending -> "pending:${result.reason}"
+        }
+    }.getOrElse { error ->
+        "failed:${error.message?.take(120) ?: "internal"}"
+    }
+
+    private fun recordCredentialRotationState(value: String) {
+        getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
+            .edit()
+            .putString("last_credential_rotation", value.take(180))
             .apply()
     }
 

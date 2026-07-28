@@ -12,6 +12,7 @@ const schemaNames = [
   'experience-bundle.schema.json',
   'update-bundle.schema.json',
   'tv-sync.schema.json',
+  'tv-credential.schema.json',
 ];
 
 const allowedProps = {
@@ -210,5 +211,6 @@ export const createValidators = async (contractsDir) => {
     assertExperienceBundle: (value) => assert('experience-bundle.schema.json', value),
     assertUpdateBundle: (value) => assert('update-bundle.schema.json', value),
     assertTvSync: (value) => assert('tv-sync.schema.json', value),
+    assertTvCredential: (value) => assert('tv-credential.schema.json', value),
   });
 };

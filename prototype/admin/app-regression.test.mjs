@@ -84,3 +84,16 @@ test("les scènes programmées gardent un retour explicite vers l’affectation 
   assert.match(source, /scene-schedules\/\$\{encodeURIComponent\(scheduleId\)\}\/cancel/);
   assert.match(source, /Le worker activera la révision à l’heure prévue/);
 });
+
+test("le cycle d’identité TV exige une confirmation et conserve le cache local", () => {
+  assert.match(markup, /id="tvCredentialDialog"/);
+  assert.match(markup, /IDENTITÉ TV \/ ACTION SENSIBLE/);
+  assert.match(markup, /id="tvCredentialConfirmation"[^>]*required/);
+  assert.match(source, /REVOQUER LA TV/);
+  assert.match(source, /REINITIALISER L ENROLEMENT/);
+  assert.match(source, /api\.post\([\s\S]*tvs\/\$\{encodeURIComponent\(pending\.tvId\)\}/);
+  assert.match(source, /Son cache local n’a pas été effacé/);
+  assert.match(source, /L’ancienne clé ne fonctionne plus/);
+  assert.match(source, /if \(event\.key === "Escape"\)/);
+  assert.match(source, /state\.tvCredentialReturnFocus/);
+});

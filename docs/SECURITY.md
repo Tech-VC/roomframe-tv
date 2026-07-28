@@ -136,10 +136,24 @@ statut fermé de la programmation et la révision de synchronisation.
 
 Limites avant production :
 
-- clés TV bearer sans rotation administrée ;
 - pas encore de certificat client individuel ni mTLS ;
 - découverte locale authentifiée non implémentée ;
-- gestion de révocation et renouvellement PKI à ajouter.
+- gestion du renouvellement PKI à ajouter.
+
+Les clés bearer actuelles ont néanmoins un cycle complet : génération locale
+aléatoire, stockage chiffré Android, rotation automatique tous les 30 jours,
+promotion serveur en deux phases, révocation administrateur et réenrôlement
+one-shot. L’ancienne clé reste valide seulement jusqu’à la confirmation de la
+nouvelle ; une confirmation répétée est idempotente afin qu’une coupure réseau
+ne bloque pas définitivement la TV. PostgreSQL et l’audit ne reçoivent jamais
+la valeur brute d’une clé active ou en attente.
+
+Révoquer ou réenrôler exige `fleet:write`, une session, le CSRF et une phrase
+de confirmation exacte. La révocation remplace le hash actif par un tombstone
+aléatoire non divulgué, efface toute rotation en attente et conserve
+l’historique. Elle ne prétend pas effacer le cache local de la TV : ce cache
+reste nécessaire au fonctionnement hors ligne et cesse seulement de se
+synchroniser.
 
 ## Conteneurs et base
 
@@ -213,9 +227,12 @@ répertoire privé, recalcule le hash, lit les métadonnées de l’archive avec
 l’application installée avant tout appel à `PackageInstaller`.
 
 La clé d’appareil conservée par l’APK est chiffrée en AES-256-GCM avec une clé
-non exportable de l’Android Keystore. L’origine HTTPS et l’identifiant de la TV
-sont liés comme données authentifiées. Cette protection locale ne remplace pas
-encore les certificats individuels et le mTLS prévus avant production.
+non exportable de l’Android Keystore. L’origine HTTPS, l’identifiant de la TV
+et le rôle actif/en attente sont liés comme données authentifiées. Le lecteur
+reste compatible avec les credentials 0.3.0/0.3.1, puis les réécrit dans la
+nouvelle enveloppe lors de la première rotation. Cette protection locale et la
+rotation ne remplacent pas encore les certificats individuels et le mTLS
+prévus avant production.
 
 ## Sauvegardes
 

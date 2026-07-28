@@ -15,8 +15,10 @@ sur chaque instance après l’installation.
 > et le client Android conservent la dernière révision valide hors ligne ; le
 > client natif rend la scène sans WebView et contrôle les APK distribués par
 > vagues. Un poller non privilégié peut aussi importer automatiquement une
-> release GitHub signée. Device Owner, installation silencieuse, application
-> du code serveur, HDMI, veille/réveil, Cast et AirPlay restent à valider.
+> release GitHub signée. Les clés TV tournent par un protocole à deux phases
+> et peuvent être révoquées ou réenrôlées depuis la régie. Device Owner,
+> installation silencieuse, HDMI, veille/réveil, Cast et AirPlay restent à
+> valider.
 
 ## Installation Debian
 
@@ -116,7 +118,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
   prudente pour les logos sur fond clair uniforme ;
-- enrôlement TV à identifiant temporaire puis clé d’appareil à remise unique ;
+- enrôlement TV à clé temporaire puis identité chiffrée dans Android Keystore,
+  rotation automatique à deux phases, révocation et réenrôlement administrés ;
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
@@ -197,8 +200,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 22 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 45 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 23 tests Studio/synchronisation TV et
+23 tests API, contrôle de syntaxe serveur inclus, soit 46 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -211,6 +214,13 @@ le contrôle des redirections, l’import automatique idempotent, la sélection
 bornée d’une release serveur par la politique opt-in et les transitions
 temporelles de scènes sans réponse `upToDate` périmée.
 
+Le client Android se vérifie séparément avec JDK 17 et le SDK 35 :
+
+```bash
+cd apps/tv-android
+./gradlew --no-daemon clean :app:testDebugUnitTest :app:assembleDebug
+```
+
 Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
@@ -219,7 +229,8 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   synchronise en HTTPS, conserve la révision précédente et contrôle les APK
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse
   doivent encore être validés sur la TV réelle ;
-- les certificats individuels TV et le mTLS restent à finaliser ;
+- la rotation et la révocation des clés TV sont actives ; les certificats
+  clients individuels et le mTLS restent à finaliser avant production ;
 - le rôle PostgreSQL initial cumule propriété, migrations et accès runtime ;
   le moteur root est séparé de l’API web, mais le rôle de migration PostgreSQL
   doit encore être séparé du rôle runtime ;

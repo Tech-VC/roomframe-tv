@@ -67,7 +67,8 @@ Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
-automatique opt-in, les programmations de scènes et l’audit.
+automatique opt-in, les programmations de scènes, les générations de
+credential TV et l’audit.
 
 ## Une seule origine HTTPS
 
@@ -115,6 +116,15 @@ embarquée en secours, puis synchronise l’origine HTTPS en arrière-plan. Il
 vérifie le manifeste canonique, chaque document et chaque média, active le
 staging par renommage atomique et revient au pointeur précédent si l’actif est
 corrompu. Les identifiants TV sont chiffrés via Android Keystore.
+
+Le client possède au plus une clé active et une clé de rotation en attente,
+chiffrées avec des données authentifiées distinctes. Il prépare localement la
+nouvelle clé avant l’appel réseau ; le serveur ne stocke que son hash et garde
+l’ancienne active jusqu’à une confirmation idempotente. La promotion côté
+Android intervient seulement après la promotion transactionnelle côté
+PostgreSQL. Ce protocole permet de reprendre une coupure à chacune des étapes.
+La régie peut révoquer une génération ou créer un nouvel enrôlement, sans
+effacer le cache d’expérience local-first.
 
 `NativeSceneRenderer` rend la scène logique 1920 × 1080 avec des vues Android,
 sans WebView : fonds image/vidéo, flou Android 12, textes, heure, messages,
