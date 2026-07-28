@@ -389,12 +389,12 @@ RUNTIME_SHELL="$(getent passwd "$RUNTIME_USER" | awk -F: '{print $7}')"
   || fail "Le compte existant $RUNTIME_USER possède un shell interactif; installation refusée."
 
 SERVER_IP="$(
-  ip -4 route get 1.1.1.1 2>/dev/null \
+  { ip -4 route get 1.1.1.1 2>/dev/null || true; } \
     | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 )"
 if [[ -z "$SERVER_IP" ]]; then
   SERVER_IP="$(
-    ip -o -4 addr show scope global 2>/dev/null \
+    { ip -o -4 addr show scope global 2>/dev/null || true; } \
       | awk '{sub(/\/.*/, "", $4); print $4; exit}'
   )"
 fi
