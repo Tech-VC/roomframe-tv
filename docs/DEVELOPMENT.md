@@ -42,10 +42,11 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 14 scénarios : modèle Studio, salutation mono-ligne et
+Ils comptent 15 scénarios : modèle Studio, salutation mono-ligne et
 compatibilité avec le validateur API, normalisation du vrai manifeste TV,
 réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
-sûr des réponses API non JSON ou malformées. Ce lot passe `14/14`.
+sûr des réponses API non JSON ou malformées, ainsi que la conservation des
+références de formulaire au-delà des appels asynchrones. Ce lot passe `15/15`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -77,7 +78,7 @@ Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
 La suite API couvre actuellement 19 scénarios Node, auxquels s’ajoutent les
-14 tests UI, soit 33 tests sur un clone frais. Les workflows GitHub de
+15 tests UI, soit 34 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 

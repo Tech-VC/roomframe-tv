@@ -615,8 +615,9 @@ const uploadForm = async (endpoint, form, success) => {
 $("#loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("loginError");
-  const data = new FormData(event.currentTarget);
-  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
     const payload = await api.post("auth/login", {
@@ -626,7 +627,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     }, false);
     state.session = payload.session ?? payload;
     if (!sessionIsAuthenticated(state.session) && !payload.authenticated) throw new Error("Session non créée.");
-    event.currentTarget.reset();
+    form.reset();
     await enterStudio();
   } catch (error) {
     formError("loginError", error.message);
@@ -672,7 +673,8 @@ $("#prepareTotpButton").addEventListener("click", async () => {
 $("#bootstrapForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("bootstrapError");
-  const data = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const data = new FormData(form);
   if (data.get("password") !== data.get("passwordConfirm")) {
     formError("bootstrapError", "Les phrases de passe ne correspondent pas.");
     return;
@@ -681,7 +683,7 @@ $("#bootstrapForm").addEventListener("submit", async (event) => {
     formError("bootstrapError", "Préparez le TOTP avant de verrouiller l’instance.");
     return;
   }
-  const submit = event.currentTarget.querySelector('button[type="submit"]');
+  const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
     await api.post("bootstrap/complete", {
@@ -701,7 +703,7 @@ $("#bootstrapForm").addEventListener("submit", async (event) => {
       },
     }, false);
     const completedSession = await api.get("auth/session");
-    event.currentTarget.reset();
+    form.reset();
     state.totpSetupId = null;
     $("#totpDetails").classList.add("hidden");
     state.session = completedSession;
