@@ -222,3 +222,21 @@ liens, entrées inattendues, permissions trop ouvertes, archives dangereuses et
 checksums invalides. Le dump est réellement restauré dans un conteneur
 PostgreSQL éphémère avec `--network none`; aucune donnée de production n’est
 écrite ou remplacée.
+
+`roomframe-restore` partage le verrou de maintenance avec l’installateur et les
+sauvegardes. Il exige un enfant direct du répertoire de sauvegardes et une
+confirmation égale à son identifiant ; `--latest` est refusé. Il impose une
+sauvegarde complète de la même version, contrôle strictement les racines des
+archives et le `runtime.conf`, puis crée et vérifie un point de retour avant
+toute bascule. PostgreSQL est restauré dans une base temporaire et renommé
+seulement après contrôle d’intégrité. Un échec de démarrage ou de HTTPS
+réactive automatiquement la configuration, les données et la base précédentes.
+
+`roomframe-apply-update` partage ce même verrou et n’accepte qu’un UUID de
+release déjà importée accompagné d’une confirmation de version. Il exige le
+chemin par hash sous `releases/verified`, recalcule le SHA-256 et revalide la
+signature Ed25519 avant toute extraction. L’archive serveur est extraite sans
+liens, périphériques ni traversée, dans un staging root-only placé sur le même
+système de fichiers que le code. La commande préconstruit, sauvegarde, vérifie
+le point de retour puis bascule. L’API, le worker et le poller ne possèdent ni
+socket Docker, ni mécanisme sudo permettant de lancer cette commande.

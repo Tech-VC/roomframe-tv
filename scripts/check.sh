@@ -29,6 +29,22 @@ while IFS= read -r -d '' script; do
   bash -n "$script"
 done < <(find scripts -maxdepth 1 -type f -name '*.sh' -print0)
 
+restore_help="$(bash scripts/roomframe-restore.sh --help)"
+grep -Fq 'Aucun raccourci --latest' <<<"$restore_help" || {
+  echo "L'aide de restauration doit annoncer le refus de --latest." >&2
+  exit 1
+}
+if bash scripts/roomframe-restore.sh --latest >/dev/null 2>&1; then
+  echo "La restauration ne doit jamais accepter --latest." >&2
+  exit 1
+fi
+
+apply_help="$(bash scripts/roomframe-apply-update.sh --help)"
+grep -Fq "n'est jamais appelée directement par l'API web" <<<"$apply_help" || {
+  echo "L'aide d'application doit documenter sa frontière root/API." >&2
+  exit 1
+}
+
 while IFS= read -r -d '' document; do
   python3 -m json.tool "$document" >/dev/null
 done < <(find contracts defaults examples -type f -name '*.json' -print0)

@@ -10,7 +10,8 @@ usage() {
 Usage: sudo roomframe-backup [--without-media]
 
 Crée une sauvegarde cohérente de PostgreSQL, de la configuration, de la PKI et
-des données persistantes. L'API et le worker sont brièvement mis en pause.
+des données persistantes. Caddy, l'API, le worker et le poller d'updates sont
+brièvement mis en pause.
 USAGE
 }
 
@@ -26,6 +27,17 @@ done
   echo "Exécutez la sauvegarde avec sudo/root." >&2
   exit 1
 }
+
+if [[ "${ROOMFRAME_MAINTENANCE_LOCK_HELD:-0}" != "1" ]]; then
+  MAINTENANCE_LOCK_FILE="${ROOMFRAME_MAINTENANCE_LOCK_FILE:-/run/lock/roomframe-install.lock}"
+  mkdir -p "$(dirname "$MAINTENANCE_LOCK_FILE")"
+  exec 8>"$MAINTENANCE_LOCK_FILE"
+  flock -n 8 || {
+    echo "Une opération de maintenance RoomFrame est déjà en cours." >&2
+    exit 1
+  }
+fi
+
 [[ -r "$RUNTIME_CONFIG" ]] || {
   echo "Configuration runtime introuvable: $RUNTIME_CONFIG" >&2
   exit 1
@@ -67,7 +79,7 @@ running_services="$(
     || "$COMPOSE_COMMAND" ps --services --filter status=running 2>/dev/null \
     || true
 )"
-for service_name in api worker; do
+for service_name in caddy api worker update-poller; do
   if grep -Fqx "$service_name" <<<"$running_services"; then
     PAUSED_SERVICES+=("$service_name")
   fi

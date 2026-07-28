@@ -22,10 +22,25 @@ dans ce jalon. Si PostgreSQL existe :
 5. l’API applique les nouvelles migrations additives sous verrou ;
 6. les healthchecks HTTPS et worker doivent réussir.
 
-La copie actuelle est additive et non destructive, mais pas encore atomique
-par répertoire de release. Un fichier ancien absent de la nouvelle archive
-peut donc rester sous `/opt/roomframe`; il ne doit jamais contenir de données
-d’instance.
+Pour une release signée déjà importée, le chemin privilégié est désormais :
+
+```bash
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
+```
+
+La commande n’accepte pas de chemin arbitraire. Elle relit la quarantaine
+adressée par SHA-256, revalide la signature Ed25519 et la compatibilité, extrait
+l’unique `server-archive` dans un staging root-only, contrôle les versions et
+la liste de migrations, puis préconstruit les images.
+
+Après création et vérification d’une sauvegarde complète, le répertoire de code
+est basculé sous le même parent `/opt`. Le nouvel installateur applique les
+migrations additives et exige les healthchecks HTTPS, API, worker et poller.
+Un échec rétablit et réinstalle automatiquement le code précédent. La
+sauvegarde reste disponible pour une restauration explicite de la base ; les
+migrations ne sont pas supprimées automatiquement.
 
 ## Format `.rfupdate`
 
@@ -142,8 +157,23 @@ sudo roomframe-verify-backup --latest
 ```
 
 La seconde commande contrôle l’enveloppe puis restaure réellement le dump dans
-un PostgreSQL temporaire sans réseau. Elle ne constitue pas encore la
-procédure de restauration complète de production.
+un PostgreSQL temporaire sans réseau.
+
+Une restauration complète de la même version est disponible avec un
+identifiant répété explicitement :
+
+```bash
+backup_id=20260101T120000Z
+sudo roomframe-restore \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id"
+```
+
+Elle vérifie d’abord la sauvegarde visée, crée et vérifie un point de retour de
+l’état courant, restaure les fichiers par bascule de répertoires, charge le
+dump dans une base temporaire, renomme les bases, puis exige un healthcheck
+complet et HTTPS. Un échec déclenche le retour automatique. Les sauvegardes
+sans médias et les changements de version sont refusés.
 
 ## Plans canari et progressifs
 
@@ -171,34 +201,36 @@ du serveur.
 
 Le jalon ne comprend pas encore :
 
-- un moteur privilégié, séparé de l’API web, qui extrait et applique le bundle ;
-- l’association obligatoire d’une sauvegarde à une release importée ;
-- l’import des images, le redémarrage orchestré et le healthcheck de rollback ;
+- un courtier local minimal qui permette à l’administration de demander une
+  application root sans lui exposer Docker ni un shell ;
+- une politique d’application serveur entièrement automatique et
+  explicitement activable après import GitHub ;
+- la matérialisation d’images OCI lorsqu’un bundle en fournit ;
 - la validation physique de l’installation silencieuse APK en Device Owner ;
-- une commande documentée de restauration complète.
 
 Deux frontières restent particulièrement importantes :
 
 - le rôle PostgreSQL `roomframe` initial cumule propriété, migration et accès
   applicatif ; sa séparation exigera une migration et une procédure
   d’exploitation versionnées ;
-- le futur `apply-update` devra être un composant privilégié minimal, séparé de
-  l’API web. Aucun endpoint HTTP ne doit recevoir directement le droit de
-  remplacer le code, de contrôler Docker ou de restaurer une base.
+- `roomframe-apply-update` est un composant privilégié minimal, séparé de
+  l’API web. Aucun endpoint HTTP ne reçoit directement le droit de remplacer
+  le code, de contrôler Docker ou de restaurer une base. Le futur courtier
+  devra préserver cette séparation.
 
-La séquence cible est donc :
+La séquence serveur actuellement exécutable est :
 
 1. vérifier et quarantainer ;
 2. sauvegarder ;
 3. appliquer dans un staging ;
 4. exécuter les migrations ;
-5. basculer atomiquement ;
+5. basculer le répertoire de code ;
 6. vérifier ;
-7. canari ;
-8. vagues progressives ;
-9. conserver une restauration explicite.
+7. revenir au code précédent sur échec ;
+8. conserver la restauration explicite déjà disponible.
 
-Il ne faut pas présenter cette séquence cible comme déjà automatisée.
+Les vagues canari et progressives concernent l’APK TV. L’application serveur
+reste une commande root explicite tant que le courtier local n’est pas livré.
 
 ## Migrations et seed
 

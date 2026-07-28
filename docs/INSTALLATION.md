@@ -147,9 +147,10 @@ uniquement lorsqu’ils sont absents. Une seconde exécution conserve les fichie
 existants ; aucun secret n’est régénéré silencieusement.
 
 Un verrou local `/run/lock/roomframe-install.lock` refuse une seconde
-installation tant que la première est active. Il protège la sauvegarde, la
-copie du code, les migrations et la recréation des conteneurs contre deux
-exécutions concurrentes.
+installation, sauvegarde, restauration ou application de release tant qu’une
+opération de maintenance est active. Il protège la sauvegarde, la copie du
+code, les migrations, la restauration et la recréation des conteneurs contre
+deux exécutions concurrentes.
 
 Après construction réussie des images applicatives, l’installateur arrête
 brièvement la pile sans supprimer aucun volume, puis recrée les réseaux
@@ -198,6 +199,12 @@ sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-verify-backup --latest
+sudo roomframe-restore \
+  /var/lib/roomframe/backups/20260101T120000Z \
+  --confirm 20260101T120000Z
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -207,9 +214,10 @@ Les mêmes outils sont présents sous `/opt/roomframe/scripts/`. La commande
 Compose charge uniquement `/etc/roomframe/runtime.conf` et monte les secrets
 comme fichiers Docker sous `/run/secrets`.
 
-Une sauvegarde met brièvement l’API et le worker en pause, produit un dump
-PostgreSQL au format custom, archive la configuration et les données
-persistantes, puis écrit les SHA-256. Pour exclure les médias volumineux :
+Une sauvegarde met brièvement Caddy, l’API, le worker et le poller d’updates en
+pause, produit un dump PostgreSQL au format custom, archive la configuration et
+les données persistantes, puis écrit les SHA-256. Pour exclure les médias
+volumineux :
 
 ```bash
 sudo roomframe-backup --without-media
@@ -223,6 +231,68 @@ des fichiers, les SHA-256, les métadonnées, la sûreté des archives et restau
 le dump dans un PostgreSQL 17 temporaire sans réseau ni port publié. Cette
 validation ne modifie jamais la base installée. Un chemin explicite vers un
 enfant direct de `/var/lib/roomframe/backups` peut remplacer `--latest`.
+
+## Restauration complète
+
+Une restauration est une action root explicite. Elle n’accepte pas `--latest` :
+le nom du répertoire doit être répété après `--confirm`.
+
+```bash
+backup_id=20260101T120000Z
+sudo roomframe-restore \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id"
+```
+
+Avant d’arrêter la pile, la commande vérifie la sauvegarde dans un PostgreSQL
+isolé, prépare les archives dans des répertoires privés, crée une sauvegarde de
+sécurité de l’état courant et la vérifie elle aussi. La configuration, les
+secrets, la PKI et les données sont ensuite basculés par répertoires ; le dump
+est chargé dans une base temporaire puis renommé. La pile complète et son URL
+HTTPS doivent redevenir saines avant la suppression de l’ancienne base.
+
+Tout échec après la première bascule déclenche le retour à la configuration,
+aux données et à la base précédentes. Le chemin de la sauvegarde de sécurité
+reste affiché et conservé. Une trace `backup.restored` est ajoutée au journal
+d’audit après succès.
+
+Pour éviter une base qui référencerait des fichiers absents, une sauvegarde
+créée avec `--without-media` ne peut pas servir à cette restauration complète.
+La version du code installée doit également correspondre à
+`softwareVersion` dans la sauvegarde. Un changement de version passe par
+`roomframe-apply-update`, qui associe le code signé, la sauvegarde et les
+migrations.
+
+## Application d’une release serveur importée
+
+Une release `.rfupdate` valide et déjà importée peut être appliquée par sa
+référence et sa version :
+
+```bash
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
+```
+
+La commande root relit uniquement une release `verified` de PostgreSQL et
+refuse un chemin de bundle fourni par l’opérateur. Elle exige que le fichier
+soit exactement celui de la quarantaine adressée par hash, recalcule son
+SHA-256, revalide Ed25519 avec la clé publique approuvée, puis contrôle
+l’identité, la version, l’archive serveur et la liste des migrations.
+
+Les images sont préconstruites avant l’interruption. Une sauvegarde complète
+est ensuite créée et restaurée dans le PostgreSQL isolé de vérification. Le
+code courant et le staging sont basculés sous `/opt` sur le même système de
+fichiers, puis l’installateur idempotent exécute les migrations et les
+healthchecks. Un échec après la bascule réinstalle automatiquement le code
+précédent avec le point de retour déjà vérifié. Après succès, l’ancien code est
+archivé avec son SHA-256 sous
+`/var/lib/roomframe/app/server-rollbacks/`.
+
+Les migrations restent additives et ne sont pas supprimées lors d’un retour
+au code précédent. La sauvegarde complète permet une restauration explicite
+si une intervention sur la base est nécessaire. L’API web ne lance jamais
+cette commande et ne reçoit ni socket Docker ni privilège root.
 
 ## Approuver une clé de mise à jour
 

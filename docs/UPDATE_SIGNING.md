@@ -105,8 +105,15 @@ sudo roomframe-trust-update-key \
   --sha256 EMPREINTE_SHA256
 ```
 
-Publier un asset signé ne signifie pas que les instances le récupèrent
-automatiquement : le poller et le moteur d’application restent à implémenter.
+Publier un asset signé ne signifie pas qu’il sera appliqué sans décision
+locale. Le poller peut le récupérer et l’importer ; l’application serveur reste
+une commande root explicite :
+
+```bash
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
+```
 
 ## Bundle de test local
 
@@ -140,6 +147,6 @@ Les vérificateurs refusent notamment :
 - artefact absent ou non listé ;
 - archive excessivement grande ou fortement compressée.
 
-L’API d’import ne fait aucune extraction exécutable. Une sauvegarde et une
-planification canari explicites restent obligatoires avant le futur moteur
-d’application.
+L’API d’import ne fait aucune extraction exécutable. Pour le serveur,
+`roomframe-apply-update` revalide et sauvegarde avant la bascule. Pour l’APK,
+une planification canari ou progressive reste explicite.

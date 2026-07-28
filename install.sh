@@ -358,9 +358,11 @@ install_dependencies
 
 INSTALL_LOCK_FILE="/run/lock/roomframe-install.lock"
 mkdir -p "$(dirname "$INSTALL_LOCK_FILE")"
-exec 9>"$INSTALL_LOCK_FILE"
-flock -n 9 \
-  || fail "Une installation ou mise à jour RoomFrame est déjà en cours."
+if [[ "${ROOMFRAME_MAINTENANCE_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"$INSTALL_LOCK_FILE"
+  flock -n 9 \
+    || fail "Une installation ou mise à jour RoomFrame est déjà en cours."
+fi
 
 RUNTIME_USER="roomframe"
 if ! getent passwd "$RUNTIME_USER" >/dev/null 2>&1; then
@@ -496,13 +498,30 @@ UPDATE_POLL_OVERRIDE="${UPDATE_POLL_OVERRIDE:-360}"
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
   previous_backup="$INSTALL_DIR/scripts/roomframe-backup.sh"
-  if [[ ! -r "$previous_runtime" || ! -x "$previous_backup" ]]; then
+  previous_verify="$INSTALL_DIR/scripts/roomframe-verify-backup.sh"
+  if [[ ! -r "$previous_runtime" || ! -x "$previous_backup" || ! -x "$previous_verify" ]]; then
     fail "Des données PostgreSQL existent mais l'outil de sauvegarde RoomFrame est absent; mise à jour refusée."
   fi
-  log "Sauvegarde pré-migration de l'instance existante…"
-  ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
-  ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
-    "$previous_backup"
+  if [[ -n "${ROOMFRAME_PREVERIFIED_BACKUP:-}" ]]; then
+    [[ "${ROOMFRAME_MAINTENANCE_LOCK_HELD:-0}" == "1" ]] \
+      || fail "Une sauvegarde pré-vérifiée n'est acceptée que par le moteur de maintenance verrouillé."
+    backup_root_real="$(realpath -e "$DATA_DIR/backups")"
+    preverified_real="$(realpath -e "$ROOMFRAME_PREVERIFIED_BACKUP")"
+    [[
+      "$(dirname "$preverified_real")" == "$backup_root_real"
+      && "$(basename "$preverified_real")" =~ ^[0-9]{8}T[0-9]{6}Z$
+    ]] || fail "Le point de retour pré-vérifié doit être un enfant direct du répertoire de sauvegardes."
+    log "Nouvelle vérification du point de retour pré-migration…"
+    ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+    ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+      "$previous_verify" "$preverified_real"
+  else
+    log "Sauvegarde pré-migration de l'instance existante…"
+    ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+    ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+    ROOMFRAME_MAINTENANCE_LOCK_HELD=1 \
+      "$previous_backup"
+  fi
 fi
 
 log "Copie non destructive du code…"
@@ -628,8 +647,8 @@ chmod 0640 "$CONFIG_DIR/server-state.json"
 
 if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
-    roomframe-verify-backup roomframe-bootstrap-token roomframe-recover-admin \
-    roomframe-trust-update-key; do
+    roomframe-verify-backup roomframe-restore roomframe-apply-update \
+    roomframe-bootstrap-token roomframe-recover-admin roomframe-trust-update-key; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -703,6 +722,8 @@ printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'
+printf 'Restauration               : sudo roomframe-restore --help\n'
+printf 'Appliquer une release      : sudo roomframe-apply-update --help\n'
 if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
   printf 'Updates GitHub signées     : %s · canal %s · toutes les %s min\n' \
     "$UPDATE_REPOSITORY_OVERRIDE" "$UPDATE_CHANNEL_OVERRIDE" "$UPDATE_POLL_OVERRIDE"

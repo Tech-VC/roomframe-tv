@@ -124,10 +124,24 @@ sudo ./install.sh --host roomframe.example.local
 sudo /opt/roomframe/scripts/roomframe-diagnose.sh
 sudo /opt/roomframe/scripts/roomframe-backup.sh
 sudo /opt/roomframe/scripts/roomframe-verify-backup.sh --latest
+backup_id="$(find /var/lib/roomframe/backups -mindepth 1 -maxdepth 1 \
+  -type d -name '????????T??????Z' -printf '%f\n' | sort | tail -n 1)"
+sudo /opt/roomframe/scripts/roomframe-restore.sh \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id"
+sudo roomframe-apply-update \
+  --release-id UUID_RELEASE_DE_TEST \
+  --confirm VERSION_RELEASE_DE_TEST
 ```
 
 La seconde exécution doit conserver les secrets, la base, les médias, la PKI,
-le seed figé et toute personnalisation.
+le seed figé et toute personnalisation. Le test de restauration doit être
+réservé au CT jetable : il crée un point de retour, restaure la sauvegarde
+choisie, redémarre les cinq services et vérifie HTTPS.
+Le test `apply-update` doit utiliser une clé de développement éphémère, une
+release strictement supérieure et le CT jetable. Il doit confirmer la
+préconstruction, le point de retour, la bascule, les cinq services, l’audit et
+l’archive root-only de l’ancien code.
 
 ## Bundles
 

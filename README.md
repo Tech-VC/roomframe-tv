@@ -122,12 +122,16 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - découverte GitHub `stable` ou `preview`, ETag, téléchargement borné,
   redirections GitHub contrôlées et import automatique idempotent sans
   exécution de l’artefact ;
+- application root explicite d’une archive serveur : nouvelle vérification
+  Ed25519, staging, préconstruction, sauvegarde vérifiée, bascule du code et
+  retour automatique au code précédent sur healthcheck négatif ;
 - distribution d’APK par canari ou vagues progressives avec état par TV ;
 - état du parc alimenté par la dernière télémétrie technique autorisée, sans
   contenu consulté ni identifiant d’appareil personnel ;
 - accueil Android natif, cache atomique, synchronisation HTTPS, enrôlement et
   contrôle de l’APK avant `PackageInstaller` ;
-- diagnostic et sauvegarde cohérente avant migration.
+- diagnostic, sauvegarde cohérente avant migration et restauration complète
+  avec point de retour automatique.
 
 ## Exploitation
 
@@ -140,6 +144,12 @@ sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup --without-media
 sudo roomframe-verify-backup --latest
+sudo roomframe-restore \
+  /var/lib/roomframe/backups/20260101T120000Z \
+  --confirm 20260101T120000Z
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -162,7 +172,9 @@ Les données sont séparées du code :
 
 Une seconde exécution de `install.sh` conserve les secrets et les données. Si
 une base existe, l’installateur exige et lance une sauvegarde avant de recopier
-le code.
+le code. `roomframe-restore` exige un identifiant explicite, vérifie deux fois
+les données avant la bascule, restaure PostgreSQL par changement de base et
+revient automatiquement au point de sécurité si le healthcheck échoue.
 
 ## Développement et tests
 
@@ -191,9 +203,11 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- l’import `.rfupdate`, le poller GitHub, le téléchargement APK affecté et les
-  vagues canari/progressives sont implémentés ; le moteur privilégié qui
-  sauvegarde puis applique atomiquement le code serveur reste à livrer ;
+- l’import `.rfupdate`, le poller GitHub, l’application root contrôlée du
+  serveur, le téléchargement APK affecté et les vagues canari/progressives
+  sont implémentés ; le courtier local permettant de demander l’application
+  serveur depuis l’administration, sans donner de privilèges à l’API, reste à
+  livrer ;
 - le Studio gère plusieurs scènes et leurs affectations publiées ; la
   programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,
@@ -202,7 +216,8 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   doivent encore être validés sur la TV réelle ;
 - les certificats individuels TV et le mTLS restent à finaliser ;
 - le rôle PostgreSQL initial cumule propriété, migrations et accès runtime ;
-  le futur moteur d’application devra être séparé de l’API web ;
+  le moteur root est séparé de l’API web, mais le rôle de migration PostgreSQL
+  doit encore être séparé du rôle runtime ;
 - HDMI, Cast, AirPlay, puissance et retour automatique sont des contrats
   d’adaptateurs, pas des capacités Philips annoncées comme fonctionnelles ;
 - PhairPlay n’est pas intégré avant validation de la version Android, de l’ABI
