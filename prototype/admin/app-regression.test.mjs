@@ -62,3 +62,14 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(source, /server-update-requests/);
   assert.match(source, /state\.serverUpdateRequests/);
 });
+
+test("l’automatisation serveur reste un opt-in éditorial et explicite", () => {
+  assert.match(markup, /id="serverUpdatePolicyForm"/);
+  assert.match(markup, /Manuel · validation humaine/);
+  assert.match(markup, /Automatique · GitHub signé/);
+  assert.match(markup, /ACTIVER LES MISES A JOUR AUTOMATIQUES/);
+  assert.match(markup, /id="serverUpdatePolicyError" role="alert"/);
+  assert.match(source, /api\.put\("settings\/server-updates"/);
+  assert.match(source, /state\.serverUpdatePolicy = payload\.policy/);
+  assert.match(source, /Un échec exige ensuite une décision humaine/);
+});

@@ -79,7 +79,7 @@ Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-20 tests UI, soit 43 tests sur un clone frais. Les workflows GitHub de
+21 tests UI, soit 44 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -105,7 +105,10 @@ donc ce même ensemble. Les scénarios comprennent notamment :
 - mise à jour Ed25519 valide et refus des altérations, artefacts non listés et
   downgrades, ainsi que remplacement sûr d’une quarantaine corrompue ;
 - sélection GitHub `stable`/`preview`, ETag, refus d’assets ambigus,
-  redirections limitées, contrôle taille/digest et réimport idempotent.
+  redirections limitées, contrôle taille/digest et réimport idempotent ;
+- politique serveur manuelle par défaut, activation protégée, fenêtre
+  traversant minuit, refus des imports manuels et absence de relance
+  automatique après échec.
 
 ## Installateur
 

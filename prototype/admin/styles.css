@@ -294,6 +294,9 @@ textarea { min-height: 58px; resize: vertical; }
 .deployment-console label { font: 900 9px/1.2 var(--mono, monospace); letter-spacing: .12em; text-transform: uppercase; }
 .deployment-console input, .deployment-console select { display: block; width: 100%; margin-top: 8px; }
 .deployment-console .form-error { grid-column: 1 / -1; }
+.update-policy-console { border-top-color: var(--signal); }
+.policy-confirmation-help { grid-column: 1 / -1; margin: -4px 0 0; padding: 11px 13px; border-left: 5px solid var(--signal); color: var(--muted); font: 600 10px/1.55 var(--mono, monospace); }
+.policy-confirmation-help b { color: var(--ink); overflow-wrap: anywhere; }
 .release-board { display: grid; grid-template-columns: repeat(3, minmax(210px, 1fr)); gap: 1px; margin-top: 28px; border: 1px solid var(--ink); background: var(--ink); }
 .release-record, .deployment-record { min-height: 176px; padding: 18px; background: var(--paper); }
 .deployment-record { background: color-mix(in srgb, var(--brand) 90%, #fff); color: #fff; }

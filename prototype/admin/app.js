@@ -106,6 +106,7 @@ const state = {
   deployments: [],
   serverUpdateRequests: [],
   releaseSource: null,
+  serverUpdatePolicy: null,
   measuredMetrics: null,
   enrollmentTicket: null,
   interaction: null,
@@ -318,6 +319,7 @@ const loadStudio = async (sceneId = null) => {
       ? payload.serverUpdateRequests
       : [];
     state.releaseSource = payload.releaseSource ?? null;
+    state.serverUpdatePolicy = payload.serverUpdatePolicy ?? null;
     state.measuredMetrics = payload.measuredMetrics ?? null;
     state.preview = null;
     state.previewSelection = "";
@@ -941,7 +943,47 @@ const updateDeploymentTargetControls = () => {
   if (strategy === "canary") $("#deploymentBatchSize").value = "1";
 };
 
+const updateServerUpdatePolicyControls = () => {
+  const policy = state.serverUpdatePolicy;
+  const mode = $("#serverUpdatePolicyMode").value;
+  const activating = policy?.mode !== "automatic" && mode === "automatic";
+  const confirmationField = $("#serverUpdatePolicyConfirmationField");
+  const confirmationHelp = $("#serverUpdatePolicyConfirmationHelp");
+  const confirmation = $("#serverUpdatePolicyConfirmation");
+  confirmationField.classList.toggle("hidden", !activating);
+  confirmationHelp.classList.toggle("hidden", !activating);
+  confirmation.disabled = !activating;
+  confirmation.required = activating;
+  if (!activating) confirmation.value = "";
+};
+
+const renderServerUpdatePolicy = () => {
+  const policy = state.serverUpdatePolicy;
+  const form = $("#serverUpdatePolicyForm");
+  const summary = $("#serverUpdatePolicySummary");
+  if (!policy) {
+    summary.textContent = "Cette session ne peut pas consulter la politique de mise à jour serveur.";
+    [...form.elements].forEach((control) => {
+      control.disabled = true;
+    });
+    return;
+  }
+  $("#serverUpdatePolicyMode").value = policy.mode ?? "manual";
+  $("#serverUpdatePolicyDelay").value = String(policy.minimumImportAgeMinutes ?? 60);
+  $("#serverUpdateWindowStart").value = policy.windowStart ?? "02:00";
+  $("#serverUpdateWindowEnd").value = policy.windowEnd ?? "05:00";
+  $("#serverUpdateTimezone").value = policy.timezone ?? "UTC";
+  [...form.elements].forEach((control) => {
+    control.disabled = false;
+  });
+  summary.textContent = policy.mode === "automatic"
+    ? `Automatique : uniquement les imports GitHub signés, âgés d’au moins ${policy.minimumImportAgeMinutes} minutes, entre ${policy.windowStart} et ${policy.windowEnd} (${policy.timezone}). Un échec exige ensuite une décision humaine.`
+    : `Manuel : chaque bascule serveur exige une demande explicite. La fenêtre ${policy.windowStart}–${policy.windowEnd} (${policy.timezone}) est mémorisée mais inactive.`;
+  updateServerUpdatePolicyControls();
+};
+
 const renderReleases = () => {
+  renderServerUpdatePolicy();
   const source = state.releaseSource;
   const sourcePanel = $("#automaticReleaseSource");
   const sourceTitle = make(
@@ -1085,6 +1127,7 @@ const refreshReleases = async () => {
     ? payload.serverUpdateRequests
     : [];
   state.releaseSource = payload.source ?? null;
+  state.serverUpdatePolicy = payload.policy ?? null;
   renderReleases();
 };
 
@@ -2012,6 +2055,37 @@ $("#releaseForm").addEventListener("submit", (event) => {
 });
 $("#deploymentStrategy").addEventListener("change", updateDeploymentTargetControls);
 $("#deploymentTargetType").addEventListener("change", updateDeploymentTargetControls);
+$("#serverUpdatePolicyMode").addEventListener("change", updateServerUpdatePolicyControls);
+$("#serverUpdatePolicyForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("serverUpdatePolicyError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const payload = await api.put("settings/server-updates", {
+      mode: String(data.get("mode") || "manual"),
+      minimumImportAgeMinutes: Number(data.get("minimumImportAgeMinutes")),
+      windowStart: String(data.get("windowStart") || ""),
+      windowEnd: String(data.get("windowEnd") || ""),
+      timezone: String(data.get("timezone") || "").trim(),
+      confirmation: String(data.get("confirmation") || ""),
+    });
+    state.serverUpdatePolicy = payload.policy;
+    renderServerUpdatePolicy();
+    toast(
+      payload.policy.mode === "automatic"
+        ? "Automatisation serveur activée dans la fenêtre choisie."
+        : "Mises à jour serveur maintenues en validation manuelle.",
+    );
+  } catch (error) {
+    formError("serverUpdatePolicyError", error.message);
+  } finally {
+    submit.disabled = false;
+    updateServerUpdatePolicyControls();
+  }
+});
 $("#serverUpdateForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("serverUpdateError");

@@ -161,6 +161,30 @@ Le poller ne possède ni accès Docker, ni secret de session/TOTP, ni port
 entrant. Il importe et historise uniquement. Il ne lance pas de déploiement TV
 et n’applique pas le code serveur.
 
+## Application automatique opt-in
+
+L’import GitHub et l’application serveur restent deux étapes distinctes. Par
+défaut, `server_update_policy.mode` vaut `manual` et aucun téléchargement ne
+déclenche une bascule.
+
+Un administrateur doté de `releases:write` peut activer dans le Studio une
+politique `automatic` après avoir retapé
+`ACTIVER LES MISES A JOUR AUTOMATIQUES`. Il choisit :
+
+- un délai minimal de 15 minutes à 7 jours après l’import ;
+- une fenêtre de maintenance, y compris lorsqu’elle traverse minuit ;
+- un fuseau IANA validé par PostgreSQL.
+
+À chaque réveil, le courtier root évalue cette politique avant de prendre la
+file. Il ne sélectionne qu’une release `verified`, non déployée, contenant
+exactement un `server-archive`, importée par le poller GitHub et assez ancienne.
+Les imports manuels `.rfupdate` restent soumis à une demande humaine.
+
+Une release ayant déjà produit une demande, quel qu’en soit le résultat,
+n’est jamais remise en file automatiquement. Un échec, une interruption ou un
+rollback exige donc une décision humaine explicite. La contrainte d’unicité
+continue d’interdire deux opérations `pending`/`running`.
+
 ## Demande depuis l’administration
 
 Le Studio propose uniquement les releases vérifiées contenant une archive
@@ -233,8 +257,6 @@ du serveur.
 
 Le jalon ne comprend pas encore :
 
-- une politique d’application serveur entièrement automatique et
-  explicitement activable après import GitHub ;
 - la matérialisation d’images OCI lorsqu’un bundle en fournit ;
 - la validation physique de l’installation silencieuse APK en Device Owner ;
 
@@ -260,8 +282,10 @@ La séquence serveur actuellement exécutable est :
 8. conserver la restauration explicite déjà disponible.
 
 Les vagues canari et progressives concernent l’APK TV. L’application serveur
-peut être demandée depuis le Studio ou lancée manuellement par la commande
-root ; elle n’est jamais déclenchée par le simple téléchargement GitHub.
+peut être demandée depuis le Studio, lancée manuellement par la commande root
+ou mise en file par la politique opt-in. Le simple téléchargement GitHub ne
+suffit jamais : délai, fenêtre, provenance et absence de tentative antérieure
+doivent tous être validés par le courtier.
 
 ## Migrations et seed
 

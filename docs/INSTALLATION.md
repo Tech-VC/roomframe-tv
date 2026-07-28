@@ -170,6 +170,12 @@ que le secret PostgreSQL, le magasin de clés publiques en lecture seule et les
 volumes `processing`/`releases`. Il ne publie aucun port. Lui seul rejoint un
 réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau interne.
 
+Le poller importe seulement. L’application automatique du serveur reste
+`manual` par défaut et se configure ensuite dans le Studio. Lorsqu’elle est
+explicitement activée, le courtier systemd root vérifie le délai, la fenêtre,
+le fuseau, la provenance GitHub et l’absence de tentative antérieure avant de
+mettre au plus une release en file. L’API ne reçoit toujours ni Docker ni sudo.
+
 `runtime.conf` mémorise également l’UID/GID du compte `roomframe`. Les médias,
 traitements et releases lui appartiennent. La demande de récupération reste
 écrite par root, lisible par le groupe runtime et montée en lecture seule dans

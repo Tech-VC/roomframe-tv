@@ -34,6 +34,7 @@ import {
 } from './update-source.mjs';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const serverUpdateAutomaticConfirmation = 'ACTIVER LES MISES A JOUR AUTOMATIQUES';
 
 const cleanText = (value, field, maximum, minimum = 1) => {
   const text = String(value ?? '').trim();
@@ -245,6 +246,36 @@ const readReleaseSource = async (pool, config) => {
     [sourceKey],
   );
   return serializeReleaseSource(config, result.rows[0] ?? null);
+};
+
+const serializeServerUpdatePolicy = (row) => ({
+  mode: row.mode,
+  minimumImportAgeMinutes: Number(row.minimum_import_age_minutes),
+  windowStart: String(row.window_start).slice(0, 5),
+  windowEnd: String(row.window_end).slice(0, 5),
+  timezone: row.timezone,
+  updatedAt: row.updated_at,
+});
+
+const readServerUpdatePolicy = async (queryable) => {
+  const result = await queryable.query(
+    `SELECT mode, minimum_import_age_minutes, window_start, window_end,
+            timezone, updated_at
+     FROM server_update_policy
+     WHERE singleton = true`,
+  );
+  if (!result.rows[0]) {
+    throw Object.assign(new Error('server_update_policy_not_configured'), { statusCode: 409 });
+  }
+  return serializeServerUpdatePolicy(result.rows[0]);
+};
+
+const serverUpdateWindowTime = (value, field) => {
+  const time = String(value ?? '').trim();
+  if (!/^(?:[01][0-9]|2[0-3]):[0-5][0-9]$/.test(time)) {
+    throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
+  }
+  return time;
 };
 
 const saveUpload = async (part, target, maximum) => {
@@ -606,6 +637,7 @@ export const registerStudioRoutes = ({
       deploymentsResult,
       serverUpdateRequestsResult,
       releaseSource,
+      serverUpdatePolicy,
       syncResult,
     ] = await Promise.all([
       pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
@@ -680,6 +712,7 @@ export const registerStudioRoutes = ({
          ORDER BY request.requested_at DESC LIMIT 100`,
       ),
       readReleaseSource(pool, config),
+      readServerUpdatePolicy(pool),
       pool.query('SELECT revision, updated_at FROM sync_state WHERE singleton = true'),
     ]);
     if (!instanceResult.rows[0]) throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
@@ -722,6 +755,7 @@ export const registerStudioRoutes = ({
       deployments: can('releases:read') ? deploymentsResult.rows : [],
       serverUpdateRequests: can('releases:read') ? serverUpdateRequestsResult.rows : [],
       releaseSource: can('releases:read') ? releaseSource : null,
+      serverUpdatePolicy: can('releases:read') ? serverUpdatePolicy : null,
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
       measuredMetrics: can('fleet:read') ? {
         totalScreens: screensResult.rows.length,
@@ -1319,6 +1353,87 @@ export const registerStudioRoutes = ({
     return { updated: true, capabilityProbeRequired: true };
   });
 
+  app.put('/api/v1/settings/server-updates', {
+    preHandler: [authenticated, requirePermission('releases:write'), csrf],
+  }, async (request) => withTransaction(pool, async (client) => {
+    const mode = String(request.body?.mode ?? '');
+    if (!['manual', 'automatic'].includes(mode)) {
+      throw Object.assign(new Error('invalid_server_update_mode'), { statusCode: 400 });
+    }
+    const minimumImportAgeMinutes = integerInRange(
+      request.body?.minimumImportAgeMinutes,
+      'minimum_import_age_minutes',
+      15,
+      10080,
+    );
+    const windowStart = serverUpdateWindowTime(request.body?.windowStart, 'window_start');
+    const windowEnd = serverUpdateWindowTime(request.body?.windowEnd, 'window_end');
+    if (windowStart === windowEnd) {
+      throw Object.assign(new Error('server_update_window_cannot_span_full_day'), {
+        statusCode: 400,
+      });
+    }
+    const timezone = cleanText(request.body?.timezone, 'timezone', 100);
+    const validTimezone = await client.query(
+      'SELECT 1 FROM pg_timezone_names WHERE name = $1',
+      [timezone],
+    );
+    if (!validTimezone.rows[0]) {
+      throw Object.assign(new Error('invalid_timezone'), { statusCode: 400 });
+    }
+    const current = await client.query(
+      `SELECT mode, minimum_import_age_minutes, window_start, window_end,
+              timezone, updated_at
+       FROM server_update_policy
+       WHERE singleton = true
+       FOR UPDATE`,
+    );
+    if (!current.rows[0]) {
+      throw Object.assign(new Error('server_update_policy_not_configured'), { statusCode: 409 });
+    }
+    if (
+      current.rows[0].mode !== 'automatic'
+      && mode === 'automatic'
+      && request.body?.confirmation !== serverUpdateAutomaticConfirmation
+    ) {
+      throw Object.assign(new Error('server_update_automatic_confirmation_required'), {
+        statusCode: 400,
+      });
+    }
+    const updated = await client.query(
+      `UPDATE server_update_policy
+       SET mode = $1,
+           minimum_import_age_minutes = $2,
+           window_start = $3,
+           window_end = $4,
+           timezone = $5,
+           updated_by = $6,
+           updated_at = now()
+       WHERE singleton = true
+       RETURNING mode, minimum_import_age_minutes, window_start, window_end,
+                 timezone, updated_at`,
+      [
+        mode,
+        minimumImportAgeMinutes,
+        windowStart,
+        windowEnd,
+        timezone,
+        request.roomframeSession.user_id,
+      ],
+    );
+    const previous = serializeServerUpdatePolicy(current.rows[0]);
+    const policy = serializeServerUpdatePolicy(updated.rows[0]);
+    await writeAudit(
+      client,
+      request,
+      'release.server_auto_policy_updated',
+      'server-update-policy',
+      'singleton',
+      { previous, next: policy },
+    );
+    return { policy };
+  }));
+
   app.get('/api/v1/users', {
     preHandler: [authenticated, requirePermission('users:read')],
   }, async () => {
@@ -1350,7 +1465,7 @@ export const registerStudioRoutes = ({
   app.get('/api/v1/releases', {
     preHandler: [authenticated, requirePermission('releases:read')],
   }, async () => {
-    const [releases, deployments, serverUpdateRequests, source] = await Promise.all([
+    const [releases, deployments, serverUpdateRequests, source, policy] = await Promise.all([
       pool.query(
         `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at,
                 EXISTS (
@@ -1370,12 +1485,14 @@ export const registerStudioRoutes = ({
          ORDER BY request.requested_at DESC LIMIT 100`,
       ),
       readReleaseSource(pool, config),
+      readServerUpdatePolicy(pool),
     ]);
     return {
       releases: releases.rows.map(serializeRelease),
       deployments: deployments.rows,
       serverUpdateRequests: serverUpdateRequests.rows,
       source,
+      policy,
     };
   });
 

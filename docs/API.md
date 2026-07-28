@@ -176,6 +176,7 @@ la rotation de clé et le mTLS doivent être finalisés avant production.
 ```text
 GET  /api/v1/releases
 POST /api/v1/releases/import
+PUT  /api/v1/settings/server-updates
 POST /api/v1/releases/:releaseId/server-update-requests
 POST /api/v1/releases/:releaseId/deployments
 POST /api/v1/deployments/:deploymentId/advance
@@ -204,10 +205,25 @@ fichier quarantainé par son hash et sa signature. `GET /releases` et
 `GET /studio` exposent le statut contrôlé `pending`, `running`, `completed`,
 `failed` ou `rolled-back`, sans journal système ni chemin interne.
 
+`PUT /settings/server-updates` configure la politique persistante :
+`manual` par défaut ou `automatic`, délai minimal après import de 15 minutes à
+7 jours, début/fin de fenêtre `HH:MM` et fuseau IANA. Le passage initial en
+automatique exige exactement
+`ACTIVER LES MISES A JOUR AUTOMATIQUES`, la permission `releases:write`, une
+session et CSRF. La réponse expose uniquement la politique normalisée.
+
+En mode automatique, le courtier considère seulement une release dont la
+provenance vérifiée est `github`, avec exactement une archive serveur, assez
+ancienne et située dans la fenêtre locale. Toute release ayant déjà une
+demande dans l’historique est exclue : après un échec ou un rollback, une
+décision humaine est obligatoire. Un import multipart manuel n’est jamais
+éligible.
+
 `GET /releases` et `GET /studio` exposent également l’état non sensible de la
 source automatique : dépôt public, canal, fréquence, dernier contrôle,
 dernier résultat et code de refus contrôlé. L’ETag et les chemins de stockage
-restent internes. Le poller non privilégié utilise le même importeur que la
+restent internes. Ils exposent aussi la politique serveur non sensible. Le
+poller non privilégié utilise le même importeur que la
 route multipart ; une archive déjà présente avec le même identifiant, la même
 version et le même hash est reconnue sans créer de doublon.
 

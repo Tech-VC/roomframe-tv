@@ -250,3 +250,11 @@ release déjà signée et importée, mais ne pourrait ni fournir un autre fichie
 ni choisir une clé privée, ni contourner la revalidation/downgrade, ni obtenir
 un shell root. Les actions demandées, démarrées, terminées ou annulées par
 rollback restent dans l’audit.
+
+La politique automatique est désactivée par défaut et son activation initiale
+exige une seconde confirmation textuelle. Même activée, la sélection root
+refuse les imports manuels, les releases trop récentes, celles hors fenêtre et
+toute version déjà tentée. La provenance GitHub est enregistrée par
+l’importeur après la vérification complète du bundle ; elle n’est jamais
+acceptée depuis un corps HTTP d’administration. Modifier la politique ne donne
+à l’API ni Docker, ni sudo, ni accès en écriture au magasin de clés.

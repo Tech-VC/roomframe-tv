@@ -183,6 +183,59 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(session.statusCode, 200);
   const csrfToken = session.json().csrfToken;
+  const releaseStateBefore = await app.inject({
+    method: 'GET',
+    url: '/api/v1/releases',
+    headers: { cookie },
+  });
+  assert.equal(releaseStateBefore.statusCode, 200, releaseStateBefore.body);
+  assert.equal(releaseStateBefore.json().policy.mode, 'manual');
+  assert.equal(releaseStateBefore.json().policy.minimumImportAgeMinutes, 60);
+  const policyClock = (date) => (
+    `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`
+  );
+  const automaticWindowStart = policyClock(new Date(Date.now() - 60 * 60 * 1000));
+  const automaticWindowEnd = policyClock(new Date(Date.now() + 60 * 60 * 1000));
+  const automaticPolicyPayload = {
+    mode: 'automatic',
+    minimumImportAgeMinutes: 15,
+    windowStart: automaticWindowStart,
+    windowEnd: automaticWindowEnd,
+    timezone: 'UTC',
+  };
+  const policyWithoutCsrf = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/server-updates',
+    headers: { cookie },
+    payload: {
+      ...automaticPolicyPayload,
+      confirmation: 'ACTIVER LES MISES A JOUR AUTOMATIQUES',
+    },
+  });
+  assert.equal(policyWithoutCsrf.statusCode, 403);
+  const policyWithoutConfirmation = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/server-updates',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: automaticPolicyPayload,
+  });
+  assert.equal(policyWithoutConfirmation.statusCode, 400);
+  assert.equal(
+    policyWithoutConfirmation.json().error,
+    'server_update_automatic_confirmation_required',
+  );
+  const automaticPolicy = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/server-updates',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      ...automaticPolicyPayload,
+      confirmation: 'ACTIVER LES MISES A JOUR AUTOMATIQUES',
+    },
+  });
+  assert.equal(automaticPolicy.statusCode, 200, automaticPolicy.body);
+  assert.equal(automaticPolicy.json().policy.mode, 'automatic');
+  assert.equal(automaticPolicy.json().policy.timezone, 'UTC');
 
   const uploadedImage = await sharp({
     create: {
@@ -444,6 +497,93 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(releasesAfterPoll.json().serverUpdateRequests.length, 1);
   assert.equal(releasesAfterPoll.json().serverUpdateRequests[0].status, 'pending');
   assert.equal(releasesAfterPoll.json().releases[0].has_server_archive, true);
+  await pool.query(
+    `UPDATE server_update_requests
+     SET status = 'completed', completed_at = now(), updated_at = now()
+     WHERE id = $1`,
+    [queuedServerUpdate.json().id],
+  );
+  const githubAutoFixture = await buildTestUpdate(
+    path.join(temporary, 'api-update-auto-github'),
+    {
+      version: '0.3.2',
+      keyId: 'dev-auto-github',
+      serverArtifactKind: 'server-archive',
+    },
+  );
+  await copyFile(
+    githubAutoFixture.publicKeyPath,
+    path.join(config.updateTrustDir, 'dev-auto-github.pem'),
+  );
+  const githubAutoRelease = await importReleaseBundle({
+    pool,
+    config,
+    validators,
+    source: githubAutoFixture.bundlePath,
+    actor: { actorType: 'system' },
+    sourceDetails: { provider: 'github', externalReleaseId: 6001, externalAssetId: 6002 },
+  });
+  const manualNewerFixture = await buildTestUpdate(
+    path.join(temporary, 'api-update-manual-newer'),
+    {
+      version: '0.3.3',
+      keyId: 'dev-manual-newer',
+      serverArtifactKind: 'server-archive',
+    },
+  );
+  await copyFile(
+    manualNewerFixture.publicKeyPath,
+    path.join(config.updateTrustDir, 'dev-manual-newer.pem'),
+  );
+  const manualNewerRelease = await importReleaseBundle({
+    pool,
+    config,
+    validators,
+    source: manualNewerFixture.bundlePath,
+    actor: { actorType: 'user', session: session.json().session },
+    sourceDetails: { provider: 'manual' },
+  });
+  await pool.query(
+    `UPDATE release_history
+     SET imported_at = now() - interval '30 minutes'
+     WHERE id = ANY($1::uuid[])`,
+    [[githubAutoRelease.releaseId, manualNewerRelease.releaseId]],
+  );
+  const automaticQueueSql = await readFile(
+    path.join(root, 'database/queries/queue_automatic_server_update.sql'),
+    'utf8',
+  );
+  await pool.query(automaticQueueSql);
+  const automaticRequest = await pool.query(
+    `SELECT id, release_id, requested_by, status
+     FROM server_update_requests
+     WHERE release_id = $1`,
+    [githubAutoRelease.releaseId],
+  );
+  assert.equal(automaticRequest.rows.length, 1);
+  assert.equal(automaticRequest.rows[0].status, 'pending');
+  assert.equal(automaticRequest.rows[0].requested_by, null);
+  const manualAutomaticRequest = await pool.query(
+    'SELECT count(*) AS count FROM server_update_requests WHERE release_id = $1',
+    [manualNewerRelease.releaseId],
+  );
+  assert.equal(manualAutomaticRequest.rows[0].count, '0');
+  await pool.query(
+    `UPDATE server_update_requests
+     SET status = 'failed', last_error_code = 'test_failure',
+         completed_at = now(), updated_at = now()
+     WHERE id = $1`,
+    [automaticRequest.rows[0].id],
+  );
+  await pool.query(automaticQueueSql);
+  const automaticRequestsAfterFailure = await pool.query(
+    'SELECT count(*) AS count FROM server_update_requests WHERE requested_by IS NULL',
+  );
+  assert.equal(automaticRequestsAfterFailure.rows[0].count, '1');
+  const automaticAudit = await pool.query(
+    "SELECT count(*) AS count FROM audit_log WHERE action = 'release.server_apply_auto_requested'",
+  );
+  assert.equal(automaticAudit.rows[0].count, '1');
   const equalVersionSource = path.join(temporary, 'equal-version.rfupdate');
   await copyFile(updateFixture.bundlePath, equalVersionSource);
   const equalVersionImport = await importReleaseBundle({
@@ -484,7 +624,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(rejectedUpdate.statusCode, 422, rejectedUpdate.body);
   assert.equal(rejectedUpdate.json().error, 'duplicate_update_manifest_key');
   const releaseCount = await pool.query('SELECT count(*) AS count FROM release_history');
-  assert.equal(releaseCount.rows[0].count, '1');
+  assert.equal(releaseCount.rows[0].count, '3');
   assert.deepEqual(await readdir(config.processingDir), []);
 
   const makeRoleSession = async (role, username) => {
@@ -525,6 +665,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.deepEqual(contentStudio.json().sourceSettings, []);
   assert.deepEqual(contentStudio.json().releases, []);
   assert.deepEqual(contentStudio.json().serverUpdateRequests, []);
+  assert.equal(contentStudio.json().serverUpdatePolicy, null);
   const forbiddenServerUpdateRequest = await app.inject({
     method: 'POST',
     url: `/api/v1/releases/${importedRelease.releaseId}/server-update-requests`,
@@ -532,6 +673,19 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     payload: { confirmVersion: updateFixture.manifest.version },
   });
   assert.equal(forbiddenServerUpdateRequest.statusCode, 403);
+  const forbiddenServerUpdatePolicy = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/server-updates',
+    headers: { cookie: contentCookie },
+    payload: {
+      mode: 'manual',
+      minimumImportAgeMinutes: 60,
+      windowStart: '02:00',
+      windowEnd: '05:00',
+      timezone: 'UTC',
+    },
+  });
+  assert.equal(forbiddenServerUpdatePolicy.statusCode, 403);
   const securityCookie = await makeRoleSession('security', 'security-test');
   const forbiddenPreview = await app.inject({
     method: 'GET',
@@ -1208,6 +1362,16 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   await runMigrations(pool, config.migrationsDir);
   const seedsAfterMigrations = await pool.query('SELECT count(*) AS count FROM experience_seed_history');
   assert.equal(seedsAfterMigrations.rows[0].count, '1');
+  const updatePolicyAfterMigrations = await pool.query(
+    `SELECT mode, minimum_import_age_minutes, timezone
+     FROM server_update_policy
+     WHERE singleton = true`,
+  );
+  assert.deepEqual(updatePolicyAfterMigrations.rows[0], {
+    mode: 'automatic',
+    minimum_import_age_minutes: 15,
+    timezone: 'UTC',
+  });
   const groupPolicyAfterMigrations = await pool.query(
     `SELECT return_home_when_inactive_minutes, home_sleep_minutes, rules
      FROM power_schedules

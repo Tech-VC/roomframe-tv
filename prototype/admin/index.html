@@ -359,6 +359,24 @@
             <h3>Lecture de la source signée…</h3>
             <p>La configuration est chargée depuis le serveur.</p>
           </article>
+          <section class="deployment-console update-policy-console" aria-labelledby="serverUpdatePolicyTitle">
+            <div class="console-index">
+              <span>POLITIQUE / OPT-IN</span>
+              <h2 id="serverUpdatePolicyTitle">Choisir quand le serveur peut basculer</h2>
+              <p id="serverUpdatePolicySummary">Le mode manuel reste actif tant qu’un propriétaire ne valide pas explicitement l’automatisation.</p>
+            </div>
+            <form id="serverUpdatePolicyForm">
+              <label for="serverUpdatePolicyMode">Mode<select id="serverUpdatePolicyMode" name="mode"><option value="manual">Manuel · validation humaine</option><option value="automatic">Automatique · GitHub signé</option></select></label>
+              <label for="serverUpdatePolicyDelay">Délai après import, en minutes<input id="serverUpdatePolicyDelay" name="minimumImportAgeMinutes" type="number" min="15" max="10080" value="60" required></label>
+              <label for="serverUpdateWindowStart">Début de fenêtre<input id="serverUpdateWindowStart" name="windowStart" type="time" value="02:00" required></label>
+              <label for="serverUpdateWindowEnd">Fin de fenêtre<input id="serverUpdateWindowEnd" name="windowEnd" type="time" value="05:00" required></label>
+              <label for="serverUpdateTimezone">Fuseau IANA<input id="serverUpdateTimezone" name="timezone" type="text" maxlength="100" value="UTC" autocomplete="off" spellcheck="false" required></label>
+              <label class="policy-confirmation hidden" id="serverUpdatePolicyConfirmationField" for="serverUpdatePolicyConfirmation">Confirmation exacte<input id="serverUpdatePolicyConfirmation" name="confirmation" type="text" maxlength="64" autocomplete="off" spellcheck="false" aria-describedby="serverUpdatePolicyConfirmationHelp"></label>
+              <p class="policy-confirmation-help hidden" id="serverUpdatePolicyConfirmationHelp">Retaper : <b>ACTIVER LES MISES A JOUR AUTOMATIQUES</b></p>
+              <button class="tool primary" type="submit">Enregistrer la politique</button>
+              <p class="form-error hidden" id="serverUpdatePolicyError" role="alert"></p>
+            </form>
+          </section>
           <section class="deployment-console" aria-labelledby="serverUpdateTitle">
             <div class="console-index">
               <span>SERVEUR / FILE LOCALE</span>

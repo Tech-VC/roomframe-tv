@@ -66,7 +66,8 @@ Timer systemd root ── courtier local ───────────┘
 Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions,
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
-déploiements TV, les demandes d’application serveur et l’audit.
+déploiements TV, les demandes d’application serveur, leur politique
+automatique opt-in et l’audit.
 
 ## Une seule origine HTTPS
 
@@ -133,9 +134,10 @@ modèle partagé côté interface est testé avec le validateur de layout de l�
 Les interactions couvrent déplacement, redimensionnement, clavier, calques,
 propriétés, palette et historique.
 
-Le sélecteur d’aperçu TV/groupe est volontairement désactivé : `0.3.0` édite la
-scène d’instance et ne simule pas une affectation que l’API ne sait pas encore
-retourner.
+Le sélecteur d’aperçu TV/groupe résout côté serveur les affectations publiées
+et reste distinct du brouillon modifiable. Le Studio expose également la
+politique d’application serveur dans la même direction éditoriale, sans donner
+de privilège système au navigateur.
 
 ## Frontière matérielle
 

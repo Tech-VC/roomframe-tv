@@ -9,7 +9,9 @@ usage() {
 Usage: sudo roomframe-update-broker
 
 Prend au plus une demande serveur en attente dans PostgreSQL et délègue son
-application à roomframe-apply-update. Cette commande est destinée à l'unité
+application à roomframe-apply-update. Si la politique opt-in l'autorise, elle
+peut d'abord mettre en file une release GitHub signée suffisamment ancienne
+pendant sa fenêtre de maintenance. Cette commande est destinée à l'unité
 systemd RoomFrame ; l'API web ne l'exécute jamais et ne possède pas Docker.
 USAGE
 }
@@ -40,9 +42,10 @@ INSTALL_DIR="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}"
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
 COMPOSE_COMMAND="${ROOMFRAME_COMPOSE_COMMAND:-$INSTALL_DIR/scripts/roomframe-compose.sh}"
 APPLY_COMMAND="${ROOMFRAME_APPLY_UPDATE_COMMAND:-$INSTALL_DIR/scripts/roomframe-apply-update.sh}"
+AUTO_QUEUE_SQL="$INSTALL_DIR/database/queries/queue_automatic_server_update.sql"
 STATE_FILE="$DATA_DIR/app/server-update-state.json"
 
-[[ -x "$COMPOSE_COMMAND" && -x "$APPLY_COMMAND" ]] || {
+[[ -x "$COMPOSE_COMMAND" && -x "$APPLY_COMMAND" && -r "$AUTO_QUEUE_SQL" ]] || {
   echo "Commandes RoomFrame incomplètes." >&2
   exit 1
 }
@@ -80,6 +83,13 @@ SELECT
   jsonb_build_object('requestId', id)
 FROM interrupted;
 SQL
+
+# La sélection automatique reste entièrement dans PostgreSQL et ne reçoit
+# aucun chemin ni argument venant du web. Elle ne considère que les imports
+# GitHub vérifiés et n'effectue jamais de nouvelle tentative automatique.
+"$COMPOSE_COMMAND" exec -T postgres \
+  psql --username=roomframe --dbname=roomframe --set ON_ERROR_STOP=1 --quiet \
+  < "$AUTO_QUEUE_SQL"
 
 request_row="$(
   "$COMPOSE_COMMAND" exec -T postgres \

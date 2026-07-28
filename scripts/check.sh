@@ -59,6 +59,19 @@ grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {
   echo "L'aide du courtier doit documenter sa frontière root/API." >&2
   exit 1
 }
+automatic_queue_sql="database/queries/queue_automatic_server_update.sql"
+grep -Fq "release.verification #>> '{source,provider}' = 'github'" "$automatic_queue_sql" || {
+  echo "La file automatique doit être limitée aux imports GitHub vérifiés." >&2
+  exit 1
+}
+grep -Fq "WHERE previous.release_id = release.id" "$automatic_queue_sql" || {
+  echo "Une release déjà tentée ne doit jamais être relancée automatiquement." >&2
+  exit 1
+}
+grep -Fq 'AUTO_QUEUE_SQL=' scripts/roomframe-update-broker.sh || {
+  echo "Le courtier doit charger la requête automatique versionnée." >&2
+  exit 1
+}
 
 trust_key_help="$(bash scripts/roomframe-trust-update-key.sh --help)"
 grep -Fq -- '--revoke' <<<"$trust_key_help" || {

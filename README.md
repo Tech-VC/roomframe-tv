@@ -127,6 +127,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   retour automatique au code précédent sur healthcheck négatif ;
 - mise en file depuis le Studio via PostgreSQL et courtier systemd root, sans
   monter Docker dans l’API ni lui donner sudo ;
+- politique serveur manuelle par défaut, avec opt-in explicite pour appliquer
+  uniquement les imports GitHub signés après délai et dans une fenêtre de
+  maintenance ; un échec n’est jamais relancé automatiquement ;
 - distribution d’APK par canari ou vagues progressives avec état par TV ;
 - état du parc alimenté par la dernière télémétrie technique autorisée, sans
   contenu consulté ni identifiant d’appareil personnel ;
@@ -191,8 +194,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 20 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 43 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 21 tests Studio/synchronisation TV et
+23 tests API, contrôle de syntaxe serveur inclus, soit 44 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -201,17 +204,13 @@ la stabilité des formulaires asynchrones, le détourage prudent des logos et le
 bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test
 d’intégration couvre aussi l’upload et le traitement réel d’une image ainsi
 que l’import multipart d’un `.rfupdate`, la découverte GitHub conditionnelle,
-le contrôle des redirections et l’import automatique idempotent.
+le contrôle des redirections, l’import automatique idempotent et la sélection
+bornée d’une release serveur par la politique opt-in.
 
 Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- l’import `.rfupdate`, le poller GitHub, la demande depuis le Studio, le
-  courtier root, le téléchargement APK affecté et les vagues
-  canari/progressives sont implémentés ; l’application serveur entièrement
-  automatique sans validation d’un administrateur reste volontairement
-  désactivée ;
 - le Studio gère plusieurs scènes et leurs affectations publiées ; la
   programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,
