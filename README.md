@@ -164,8 +164,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 15 tests Studio/synchronisation TV et
-19 tests API, contrôle de syntaxe serveur inclus, soit 34 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 16 tests Studio/synchronisation TV et
+19 tests API, contrôle de syntaxe serveur inclus, soit 35 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,

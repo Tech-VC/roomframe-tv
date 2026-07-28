@@ -10,7 +10,8 @@
       "asset": "assets/background-default.webp",
       "mode": "cover",
       "focusX": 0.5,
-      "focusY": 0.5
+      "focusY": 0.5,
+      "blur": 0
     },
     "renderTarget": "1080p"
   },

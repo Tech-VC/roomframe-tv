@@ -54,6 +54,7 @@ compte sont révoquées après succès.
 
 ```text
 GET  /api/v1/instance
+PUT  /api/v1/instance/branding
 GET  /api/v1/studio
 POST /api/v1/scenes/:sceneId/revisions
 POST /api/v1/scenes/:sceneId/publish
@@ -75,6 +76,14 @@ GET  /api/v1/audit
 Chaque route applique une permission dédiée. Le rôle contenu peut, par
 exemple, obtenir le Studio sans recevoir le parc, les réglages de sources ou
 les releases. Les actions d’écriture sont ajoutées au journal d’audit.
+
+`PUT /instance/branding` est réservé au propriétaire et exige le CSRF de
+session. Il met à jour atomiquement le nom affiché, cinq couleurs bornées au
+format hexadécimal, un rythme typographique choisi dans une liste fermée et un
+logo image déjà traité. La révision TV globale est incrémentée. Le statut de
+bootstrap public n’expose ensuite que ce nom et ces valeurs visuelles sûres :
+la page de connexion peut être personnalisée sans publier de média ni
+d’information réseau.
 
 Une scène est un document typé conforme à `contracts/layout.schema.json`.
 Créer une révision exige `baseRevision`; une base obsolète renvoie `409` et la
@@ -122,8 +131,9 @@ x-roomframe-device-key: <clé remise une fois>
 ```
 
 Le manifeste de synchronisation suit `contracts/tv-sync.schema.json`. Il
-contient la révision globale, la révision de scène publiée, les documents,
-leurs SHA-256, les variantes médias prêtes et un SHA-256 canonique du
+contient la révision globale, la révision de scène publiée, les documents
+`scene`, `messages`, `schedule`, `sources` et `branding`, leurs SHA-256, les
+variantes médias prêtes et un SHA-256 canonique du
 manifeste. `?revision=<n>` reçoit une réponse courte `upToDate` lorsque rien n’a
 changé.
 

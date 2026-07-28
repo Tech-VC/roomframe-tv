@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css">
-  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui3">
+  <script type="module" src="/app.js?v=0.3.0-ui3"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -14,10 +14,11 @@
 
   <div class="shell" id="app" aria-busy="true">
     <header class="mast">
-      <div class="wordmark"><span class="mark" aria-hidden="true"></span><span>ROOMFRAME TV</span></div>
+      <div class="wordmark"><span class="mark" aria-hidden="true"></span><img class="hidden" id="instanceLogo" alt=""><span id="instanceWordmark">ROOMFRAME TV</span></div>
       <nav class="sections" aria-label="Espaces de travail">
         <button class="section on" type="button" data-view="surface" aria-current="page">Surface</button>
         <button class="section" type="button" data-view="content">Contenus</button>
+        <button class="section" type="button" data-view="brand">Identité</button>
         <button class="section" type="button" data-view="fleet">Parc</button>
         <button class="section" type="button" data-view="releases">Versions</button>
         <button class="section" type="button" data-view="security">Sécurité</button>
@@ -39,7 +40,7 @@
         <div class="workspace">
           <aside class="left">
             <div class="eyebrow">Scène active / configuration</div>
-            <h1 class="bigtitle" id="surfaceTitle">Composer<br>l’<em>accueil</em>.</h1>
+            <h1 class="bigtitle" id="surfaceTitle"><span>01</span>Table<br>de composition</h1>
 
             <div class="field">
               <label for="targetSelect">Aperçu</label>
@@ -61,6 +62,11 @@
                 <button class="chip" type="button" data-fit="focus">Point focal</button>
               </div>
             </fieldset>
+            <div class="field range-field">
+              <label for="backgroundBlur">Flou du fond <output id="backgroundBlurValue" for="backgroundBlur">0 px</output></label>
+              <input type="range" id="backgroundBlur" min="0" max="40" step="1" value="0">
+              <div class="range-scale" aria-hidden="true"><span>Net</span><span>Doux</span></div>
+            </div>
             <div class="field">
               <label class="asset-trigger" for="backgroundFile">
                 <span class="asset-icon">BG</span>
@@ -80,9 +86,9 @@
                 <button type="button" data-add-kind="image">Image</button>
                 <button type="button" data-add-kind="video">Vidéo</button>
                 <button type="button" data-add-kind="logo">Logo</button>
-                <button type="button" data-add-kind="source" data-source="airplay">AirPlay</button>
-                <button type="button" data-add-kind="source" data-source="cast">Cast</button>
-                <button type="button" data-add-kind="source" data-source="hdmi">HDMI</button>
+                <button type="button" data-add-kind="source" data-source="airplay"><span class="source-glyph airplay" aria-hidden="true"></span>AirPlay</button>
+                <button type="button" data-add-kind="source" data-source="cast"><span class="source-glyph cast" aria-hidden="true"></span>Cast</button>
+                <button type="button" data-add-kind="source" data-source="hdmi"><span class="source-glyph hdmi" aria-hidden="true"></span>HDMI</button>
                 <button type="button" data-add-kind="app">Application</button>
                 <button type="button" data-add-kind="network">Réseau</button>
               </div>
@@ -179,6 +185,57 @@
         </div>
       </section>
 
+      <section class="workspace-panel full-panel brand-panel" id="view-brand" aria-labelledby="brandTitle">
+        <aside class="panel-index">
+          <div class="eyebrow">Identité de l’instance</div>
+          <h1 class="editorial-title" id="brandTitle">Une régie.<br>Votre<br>signature.</h1>
+          <p class="note">La charte pilote la connexion, l’administration et les documents envoyés aux TV.</p>
+        </aside>
+        <div class="panel-content brand-workbench">
+          <form class="brand-form" id="brandForm">
+            <div class="brand-form-head">
+              <div><span class="index-number">ID / 01</span><h2>Charte globale</h2></div>
+              <button class="tool primary" type="submit">Appliquer la charte</button>
+            </div>
+            <label for="brandDisplayName">Nom affiché</label>
+            <input id="brandDisplayName" name="displayName" maxlength="100" required>
+            <div class="color-bench">
+              <label for="brandPrimary"><span>Structure</span><input id="brandPrimary" name="primary" type="color"><input id="brandPrimaryText" class="color-text" aria-label="Couleur de structure en hexadécimal" maxlength="7"></label>
+              <label for="brandAccent"><span>Signal</span><input id="brandAccent" name="accent" type="color"><input id="brandAccentText" class="color-text" aria-label="Couleur de signal en hexadécimal" maxlength="7"></label>
+              <label for="brandSurface"><span>Surface</span><input id="brandSurface" name="surface" type="color"><input id="brandSurfaceText" class="color-text" aria-label="Couleur de surface en hexadécimal" maxlength="7"></label>
+              <label for="brandInk"><span>Encre</span><input id="brandInk" name="ink" type="color"><input id="brandInkText" class="color-text" aria-label="Couleur d’encre en hexadécimal" maxlength="7"></label>
+              <label for="brandMuted"><span>Secondaire</span><input id="brandMuted" name="muted" type="color"><input id="brandMutedText" class="color-text" aria-label="Couleur secondaire en hexadécimal" maxlength="7"></label>
+            </div>
+            <div class="brand-pair">
+              <label for="brandFontPreset">Rythme typographique
+                <select id="brandFontPreset" name="fontPreset">
+                  <option value="studio">Studio — net et éditorial</option>
+                  <option value="compact">Compact — dense et technique</option>
+                  <option value="humanist">Humaniste — calme et accueillant</option>
+                </select>
+              </label>
+              <label for="brandLogoAsset">Logo de l’instance
+                <select id="brandLogoAsset" name="logoAssetId"><option value="">Aucun logo global</option></select>
+              </label>
+            </div>
+            <p class="form-error hidden" id="brandError" role="alert"></p>
+          </form>
+          <section class="brand-preview" aria-label="Aperçu de la charte">
+            <div class="preview-signal"><span></span><span>APERÇU DIRECT</span></div>
+            <div class="preview-lockup">
+              <img class="hidden" id="brandPreviewLogo" alt="">
+              <p id="brandPreviewName">ROOMFRAME</p>
+              <span>RÉGIE LOCALE / DOUBLE VALIDATION</span>
+            </div>
+            <div class="preview-console">
+              <span>IDENTITÉ</span>
+              <strong>Connexion sécurisée</strong>
+              <div><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="workspace-panel full-panel" id="view-fleet" aria-labelledby="fleetTitle">
         <aside class="panel-index"><div class="eyebrow">Parc local</div><h1 class="editorial-title" id="fleetTitle">Les salles<br>comme une<br>constellation.</h1><p class="note">Les capacités non remontées restent explicitement inconnues.</p></aside>
         <div class="panel-content"><div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div></div>
@@ -204,21 +261,30 @@
   </div>
 
   <div class="gate hidden" id="authGate">
-    <section class="gate-art" aria-hidden="true"><div class="setup-brand">ROOMFRAME / ACCÈS LOCAL</div><div class="setup-num" id="gateNumber">01</div><div><h1 id="gateHeadline">Préparer l’instance.</h1><p id="gateAside">Le réseau du serveur est déjà configuré. RoomFrame ne le modifie pas.</p></div></section>
+    <section class="gate-art" aria-hidden="true">
+      <div class="gate-coordinates"><span>RF / RÉGIE LOCALE</span><span>ACCÈS CONTRÔLÉ</span></div>
+      <div class="gate-identity"><span class="gate-rule"></span><h1 id="gateOrgName">ROOMFRAME</h1><p id="gateHeadline">Poste de composition</p></div>
+      <div class="gate-foot"><span id="gateNumber">01</span><span id="gateAside">Administration locale</span></div>
+    </section>
     <section class="gate-panel" id="loginPanel" aria-labelledby="loginTitle">
-      <div class="server-ready"><b>HTTPS local</b><span id="loginServerUrl">Instance RoomFrame</span></div>
+      <div class="access-state"><span class="access-pulse"></span><span>Instance disponible</span><b>Double validation active</b></div>
       <form class="gate-form" id="loginForm">
-        <h2 id="loginTitle">Ouvrir la régie</h2>
-        <p>Utilisez votre compte local et votre second facteur.</p>
+        <span class="form-index">ACCÈS / 01</span>
+        <h2 id="loginTitle">Ouvrir la régie.</h2>
+        <p>Identité locale, phrase de passe et code de votre application d’authentification.</p>
         <label for="loginUsername">Identifiant</label><input id="loginUsername" name="username" autocomplete="username" required>
         <label for="loginPassword">Phrase de passe</label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
-        <label for="loginTotp">Code TOTP</label><input id="loginTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+        <div class="totp-login">
+          <label for="loginTotp">Code à 6 chiffres <span>Application d’authentification</span></label>
+          <input id="loginTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="loginTotpHelp" required>
+          <small id="loginTotpHelp">Le code change toutes les 30 secondes et ne peut pas être réutilisé.</small>
+        </div>
         <p class="form-error hidden" id="loginError" role="alert"></p>
-        <button class="next" type="submit">Se connecter</button>
+        <button class="next" type="submit"><span>Entrer</span><b aria-hidden="true">→</b></button>
       </form>
     </section>
     <section class="gate-panel hidden" id="bootstrapPanel" aria-labelledby="bootstrapTitle">
-      <div class="server-ready"><b>Serveur prêt</b><span id="bootstrapServerUrl">Aucun réglage réseau demandé</span></div>
+      <div class="access-state"><span class="access-pulse"></span><span>Serveur prêt</span><b>Initialisation unique</b></div>
       <form class="gate-form" id="bootstrapForm">
         <h2 id="bootstrapTitle">Initialiser une seule fois</h2>
         <p>Créez l’identité et le premier administrateur. Le serveur verrouillera définitivement ce parcours.</p>

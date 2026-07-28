@@ -98,6 +98,14 @@ cette IPv4 comme SNI par défaut afin que les clients qui n’envoient aucun nom
 de serveur lors d’un accès direct par IP reçoivent tout de même le bon
 certificat local.
 
+Les fichiers statiques de l’administration et du simulateur sont servis avec
+`Cache-Control: no-cache` : le navigateur peut les conserver, mais doit les
+revalider après une mise à jour. Cela évite de mélanger un nouvel HTML avec
+une ancienne feuille de style ou un ancien JavaScript.
+Le numéro de version des références CSS et JavaScript est également modifié
+quand une release change ces fichiers, afin de sortir proprement d’un cache
+créé avant l’ajout de cette politique.
+
 ## Configuration et données
 
 ```text

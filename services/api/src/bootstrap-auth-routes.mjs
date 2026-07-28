@@ -65,6 +65,12 @@ const normalizeBootstrapPayload = (body) => {
     branding: {
       primary: color(body.branding?.primary, '#151511'),
       accent: color(body.branding?.accent, '#ff4f1f'),
+      surface: color(body.branding?.surface, '#e7e4da'),
+      ink: color(body.branding?.ink, '#11130f'),
+      muted: color(body.branding?.muted, '#62645d'),
+      fontPreset: ['studio', 'compact', 'humanist'].includes(body.branding?.fontPreset)
+        ? body.branding.fontPreset
+        : 'studio',
     },
     policies: {
       returnHomeWhenInactiveMinutes: boundedInteger(
@@ -169,17 +175,37 @@ export const registerBootstrapAuthRoutes = ({
     `${crypto.randomBytes(32).toString('base64url')}Aa1!`,
   );
 
-  app.get('/api/v1/bootstrap/status', async () => ({
-    serverReady: true,
-    configured: await configured(pool),
-    networkManagedExternally: true,
-    server: await readServerState(config),
-    defaultExperience: {
-      bundleId: experience.manifest.bundleId,
-      version: experience.manifest.version,
-      verified: true,
-    },
-  }));
+  app.get('/api/v1/bootstrap/status', async () => {
+    const result = await pool.query(
+      'SELECT display_name, config FROM roomframe_instance WHERE singleton = true',
+    );
+    const instance = result.rows[0];
+    const branding = instance?.config?.branding ?? {};
+    return {
+      serverReady: true,
+      configured: Boolean(instance),
+      networkManagedExternally: true,
+      server: await readServerState(config),
+      identity: instance ? {
+        displayName: instance.display_name,
+        branding: {
+          primary: color(branding.primary, '#151511'),
+          accent: color(branding.accent, '#ff4f1f'),
+          surface: color(branding.surface, '#e7e4da'),
+          ink: color(branding.ink, '#11130f'),
+          muted: color(branding.muted, '#62645d'),
+          fontPreset: ['studio', 'compact', 'humanist'].includes(branding.fontPreset)
+            ? branding.fontPreset
+            : 'studio',
+        },
+      } : null,
+      defaultExperience: {
+        bundleId: experience.manifest.bundleId,
+        version: experience.manifest.version,
+        verified: true,
+      },
+    };
+  });
 
   app.post('/api/v1/bootstrap/totp', {
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },

@@ -1,5 +1,5 @@
-import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js";
-import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js";
+import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js?v=0.3.0-ui3";
+import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js?v=0.3.0-ui3";
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
@@ -25,7 +25,7 @@ const bundledRevision = {
       width: 1920,
       height: 1080,
       renderTarget: "1080p",
-      background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5 },
+      background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5, blur: 0 },
     },
     nodes: [
       { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue en salle de réunion 1", role: "greeting", fontScale: 1, maxLines: 1 } },
@@ -75,6 +75,13 @@ const nodeText = (node) => {
   return node.props?.label ?? node.kind;
 };
 
+const sourceGlyph = (source) => {
+  const normalized = ["airplay", "cast", "hdmi"].includes(source) ? source : "app";
+  const glyph = make("span", `source-glyph ${normalized}`);
+  glyph.setAttribute("aria-hidden", "true");
+  return glyph;
+};
+
 const renderRevision = (revision) => {
   revokeObjectUrls();
   currentRevision = revision;
@@ -85,10 +92,17 @@ const renderRevision = (revision) => {
   const background = scene.canvas?.background ?? {};
   const backgroundUrl = resolveAsset(background.assetId ?? background.asset);
   const backgroundElement = $("#background");
+  const branding = revision.documents?.branding ?? {};
+  if (/^#[0-9a-f]{6}$/i.test(branding.accent ?? "")) {
+    document.documentElement.style.setProperty("--signal", branding.accent);
+  }
   backgroundElement.style.backgroundColor = background.color ?? "#132323";
   backgroundElement.style.backgroundImage = backgroundUrl ? `url("${String(backgroundUrl).replaceAll('"', "%22")}")` : "none";
   backgroundElement.style.backgroundSize = background.mode === "contain" ? "contain" : "cover";
   backgroundElement.style.backgroundPosition = `${(background.focusX ?? .5) * 100}% ${(background.focusY ?? .5) * 100}%`;
+  const blur = Math.max(0, Math.min(40, Number(background.blur ?? 0)));
+  backgroundElement.style.filter = `blur(${blur / 19.2}cqw)`;
+  backgroundElement.style.transform = `scale(${1 + blur / 240})`;
 
   const nodes = [...(scene.nodes ?? [])].sort((a, b) => a.zIndex - b.zIndex).map((node) => {
     const interactive = ["source", "app"].includes(node.kind);
@@ -107,8 +121,14 @@ const renderRevision = (revision) => {
     if (interactive && Number(node.focusOrder) > 0) element.tabIndex = Number(node.focusOrder);
 
     if (["logo", "image"].includes(node.kind)) {
+      const nodeAsset = node.kind === "logo"
+        && branding.logoAssetId
+        && !node.props?.assetId
+        && (!node.props?.asset || node.props?.asset === "assets/logo-placeholder.png")
+        ? branding.logoAssetId
+        : node.props?.assetId ?? node.props?.asset;
       const url = resolveAsset(
-        node.props?.assetId ?? node.props?.asset,
+        nodeAsset,
         node.kind === "logo" ? "logo" : null,
       );
       if (url) {
@@ -131,6 +151,12 @@ const renderRevision = (revision) => {
       }
     } else if (node.kind === "message") {
       element.append(make("strong", "", node.props?.title ?? "MESSAGES"));
+    } else if (node.kind === "source") {
+      element.append(
+        sourceGlyph(node.props?.source),
+        make("span", "node-text", nodeText(node)),
+        make("span", "source-action", "↗"),
+      );
     } else {
       element.append(make("span", "node-text", nodeText(node)));
     }

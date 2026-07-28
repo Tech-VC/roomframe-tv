@@ -1,6 +1,7 @@
 package org.roomframe.tv
 
 import android.app.Activity
+import android.content.res.ColorStateList
 import android.content.pm.ApplicationInfo
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -90,10 +91,10 @@ class MainActivity : Activity() {
         val sources = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             listOf(
-                getString(R.string.source_airplay) to adapters.airPlay,
-                getString(R.string.source_cast) to adapters.cast,
-                getString(R.string.source_hdmi) to adapters.hdmi,
-            ).forEach { (label, adapter) ->
+                Triple(getString(R.string.source_airplay), R.drawable.ic_source_airplay, adapters.airPlay),
+                Triple(getString(R.string.source_cast), R.drawable.ic_source_cast, adapters.cast),
+                Triple(getString(R.string.source_hdmi), R.drawable.ic_source_hdmi, adapters.hdmi),
+            ).forEach { (label, icon, adapter) ->
                 addView(TextView(context).apply {
                     text = label
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24).toFloat())
@@ -101,6 +102,9 @@ class MainActivity : Activity() {
                     setTextColor(Color.WHITE)
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(scenePx(22), 0, scenePx(22), 0)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
+                    compoundDrawablePadding = scenePx(18)
+                    compoundDrawableTintList = ColorStateList.valueOf(Color.WHITE)
                     setBackgroundColor(0x18000000)
                     isFocusable = true
                     setOnFocusChangeListener { view, focused ->

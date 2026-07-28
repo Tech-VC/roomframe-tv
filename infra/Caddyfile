@@ -35,12 +35,14 @@ __ROOMFRAME_SITE_ADDRESSES__ {
 
   redir /simulator /simulator/ 308
   handle_path /simulator/* {
+    header Cache-Control "no-cache"
     root * /srv/simulator
     try_files {path} /index.html
     file_server
   }
 
   handle {
+    header Cache-Control "no-cache"
     root * /srv/admin
     try_files {path} /index.html
     file_server

@@ -40,6 +40,7 @@ export const DEFAULT_SCENE = Object.freeze({
       mode: "cover",
       focusX: 0.5,
       focusY: 0.5,
+      blur: 0,
     },
   },
   nodes: [
@@ -109,6 +110,7 @@ export const normalizeScene = (input) => {
         mode,
         focusX: numberInRange(background.focusX, 0.5, 0, 1),
         focusY: numberInRange(background.focusY, 0.5, 0, 1),
+        blur: numberInRange(background.blur, 0, 0, 40),
       },
     },
     nodes,

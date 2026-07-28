@@ -44,6 +44,19 @@ test("normalise une salutation sur une seule ligne", () => {
   assert.equal(scene.nodes[0].props.maxLines, 1);
 });
 
+test("normalise le flou du fond et le borne à quarante pixels", () => {
+  const blurred = normalizeScene({
+    layoutId: "scene",
+    canvas: { background: { type: "image", mode: "cover", blur: 18 } },
+    nodes: [],
+  });
+  assert.equal(blurred.canvas.background.blur, 18);
+  blurred.canvas.background.blur = 99;
+  assert.equal(normalizeScene(blurred).canvas.background.blur, 40);
+  blurred.canvas.background.blur = -4;
+  assert.equal(normalizeScene(blurred).canvas.background.blur, 0);
+});
+
 test("contraint un nouvel objet dans la scène", () => {
   const node = createNode("source", "hdmi");
   assert.equal(node.kind, "source");

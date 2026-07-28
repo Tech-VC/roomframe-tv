@@ -24,8 +24,10 @@
             "color": {"type": ["string", "null"]},
             "mode": {"enum": ["cover", "contain", "focus"]},
             "focusX": {"type": "number", "minimum": 0, "maximum": 1},
-            "focusY": {"type": "number", "minimum": 0, "maximum": 1}
-          }
+            "focusY": {"type": "number", "minimum": 0, "maximum": 1},
+            "blur": {"type": "number", "minimum": 0, "maximum": 40}
+          },
+          "additionalProperties": false
         },
         "additionalProperties": false
       },

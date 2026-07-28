@@ -17,6 +17,10 @@
   "branding": {
     "primary": "#111111",
     "accent": "#ff4f1f",
+    "surface": "#e7e4da",
+    "ink": "#11130f",
+    "muted": "#62645d",
+    "fontPreset": "studio",
     "logoAssetId": null,
     "defaultGreeting": "Bonjour, bienvenue dans cette salle",
     "defaultLogoPlacement": "bottom-right"

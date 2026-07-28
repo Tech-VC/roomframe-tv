@@ -46,6 +46,14 @@ const optionalUuid = (value) => {
   return String(value);
 };
 
+const brandColor = (value, field) => {
+  const color = String(value ?? '').trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(color)) {
+    throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
+  }
+  return color;
+};
+
 const targetIdFor = (targetType, value) => {
   if (targetType === 'instance' || targetType === 'fleet') return null;
   const id = optionalUuid(value);
@@ -394,6 +402,61 @@ export const registerStudioRoutes = ({
     if (!result.rows[0]) return reply.code(404).send({ error: 'instance_not_configured' });
     return result.rows[0].config;
   });
+
+  app.put('/api/v1/instance/branding', {
+    preHandler: [authenticated, requirePermission('instance:write'), csrf],
+  }, async (request) => withTransaction(pool, async (client) => {
+    const currentResult = await client.query(
+      'SELECT config FROM roomframe_instance WHERE singleton = true FOR UPDATE',
+    );
+    const current = currentResult.rows[0]?.config;
+    if (!current) throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
+    const requested = request.body?.branding ?? {};
+    const fontPreset = String(requested.fontPreset ?? 'studio');
+    if (!['studio', 'compact', 'humanist'].includes(fontPreset)) {
+      throw Object.assign(new Error('invalid_font_preset'), { statusCode: 400 });
+    }
+    const logoAssetId = optionalUuid(requested.logoAssetId);
+    if (logoAssetId) {
+      const asset = await client.query(
+        "SELECT id FROM assets WHERE id = $1 AND media_type = 'image' AND processing_status = 'ready'",
+        [logoAssetId],
+      );
+      if (!asset.rows[0]) {
+        throw Object.assign(new Error('branding_logo_not_ready'), { statusCode: 409 });
+      }
+    }
+    const displayName = cleanText(request.body?.displayName, 'display_name', 100);
+    const next = {
+      ...current,
+      displayName,
+      branding: {
+        ...current.branding,
+        primary: brandColor(requested.primary, 'primary_color'),
+        accent: brandColor(requested.accent, 'accent_color'),
+        surface: brandColor(requested.surface, 'surface_color'),
+        ink: brandColor(requested.ink, 'ink_color'),
+        muted: brandColor(requested.muted, 'muted_color'),
+        fontPreset,
+        logoAssetId,
+      },
+    };
+    validators.assertInstance(next);
+    await client.query(
+      `UPDATE roomframe_instance
+       SET display_name = $1, config = $2
+       WHERE singleton = true`,
+      [displayName, JSON.stringify(next)],
+    );
+    const sync = await bumpSyncRevision(client);
+    await writeAudit(client, request, 'instance.branding.updated', 'instance', current.instanceId, {
+      displayName,
+      fontPreset,
+      logoAssetId,
+      syncRevision: Number(sync.rows[0].revision),
+    });
+    return { instance: next, syncRevision: Number(sync.rows[0].revision) };
+  }));
 
   app.get('/api/v1/studio', {
     preHandler: [authenticated, requirePermission('studio:read')],
@@ -1172,21 +1235,37 @@ export const registerStudioRoutes = ({
       messages: { schemaVersion: 1, items: messagesResult.rows },
       schedule,
       sources: { schemaVersion: 1, items: sourcesResult.rows },
+      branding: {
+        schemaVersion: 1,
+        displayName: instanceResult.rows[0].config.displayName,
+        ...instanceResult.rows[0].config.branding,
+      },
     };
     const documentEntries = [
       jsonDocument('scene.json', documents.scene),
       jsonDocument('messages.json', documents.messages),
       jsonDocument('schedule.json', documents.schedule),
       jsonDocument('sources.json', documents.sources),
+      jsonDocument('branding.json', documents.branding),
     ];
 
+    const brandingLogoId = instanceResult.rows[0].config.branding?.logoAssetId;
+    const deliveryScene = brandingLogoId
+      ? {
+        ...sceneRecord.document,
+        nodes: [
+          ...(sceneRecord.document.nodes ?? []),
+          { kind: 'logo', props: { assetId: brandingLogoId } },
+        ],
+      }
+      : sceneRecord.document;
     const uploadedAssets = await assertSceneAssetsAvailable(
       pool,
-      sceneRecord.document,
+      deliveryScene,
       experience,
       'published_scene_assets_unavailable',
     );
-    const assetUsages = referencedAssetUsages(sceneRecord.document);
+    const assetUsages = referencedAssetUsages(deliveryScene);
     const mediaAssets = uploadedAssets.flatMap((asset) => (
       selectMediaDeliveryVariants(asset, assetUsages.get(asset.id))
       .map(([variant, descriptor]) => ({

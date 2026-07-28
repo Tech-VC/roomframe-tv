@@ -45,6 +45,13 @@ Le secret TOTP est généré aléatoirement, chiffré au repos avec AES-256-GCM 
 associé à un défi temporaire. La vérification tolère une fenêtre d’un pas et
 refuse la réutilisation d’un compteur déjà accepté.
 
+Le TOTP est obligatoire à chaque connexion : six chiffres, période de
+30 secondes, HMAC-SHA-1 conforme au profil interopérable RFC 6238. Les
+tentatives de connexion sont limitées à huit par tranche de 15 minutes. Ce
+facteur protège notamment contre la réutilisation isolée d’une phrase de
+passe, mais ne doit pas être présenté comme résistant au phishing. WebAuthn et
+les passkeys restent l’étape prévue pour cette propriété.
+
 Le jeton initial est lu explicitement avec :
 
 ```bash
@@ -104,6 +111,11 @@ ni objet, ni frame, ni base externe. Les aperçus contrôlés peuvent utiliser
 
 `scripts/check.sh` refuse les scripts, styles et attributs de style inline dans
 les deux interfaces.
+
+La page de connexion configurée affiche seulement l’identité visuelle publique
+bornée de l’instance. Elle ne présente plus le FQDN, l’IPv4, les détails TLS ou
+la topologie réseau. Le logo authentifié reste protégé par les mêmes règles de
+téléchargement média que le Studio.
 
 ## TV et données
 

@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js";
-import { ApiError, readApiResponse } from "./api-client.js";
+} from "./scene-model.js?v=0.3.0-ui3";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui3";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -20,6 +20,30 @@ const make = (tag, className, text) => {
   if (className) element.className = className;
   if (text != null) element.textContent = String(text);
   return element;
+};
+
+const DEFAULT_BRANDING = Object.freeze({
+  primary: "#151511",
+  accent: "#ff4f1f",
+  surface: "#e7e4da",
+  ink: "#11130f",
+  muted: "#62645d",
+  fontPreset: "studio",
+  logoAssetId: null,
+});
+
+const normalizeBranding = (value = {}) => ({
+  ...DEFAULT_BRANDING,
+  ...Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined && entry !== null),
+  ),
+});
+
+const sourceGlyph = (source) => {
+  const normalized = ["airplay", "cast", "hdmi"].includes(source) ? source : "app";
+  const glyph = make("span", `source-glyph ${normalized}`);
+  glyph.setAttribute("aria-hidden", "true");
+  return glyph;
 };
 
 const api = {
@@ -32,7 +56,7 @@ const api = {
       headers["content-type"] = "application/json";
       options.body = JSON.stringify(body);
     }
-    if (method === "POST" && authenticated) {
+    if (!["GET", "HEAD"].includes(method) && authenticated) {
       if (!this.csrfToken) throw new ApiError("Jeton CSRF de session absent. Reconnectez-vous.", 401);
       headers["x-csrf-token"] = this.csrfToken;
     }
@@ -43,10 +67,12 @@ const api = {
   },
   get(path) { return this.request(path, { authenticated: false }); },
   post(path, body, authenticated = true) { return this.request(path, { method: "POST", body, authenticated }); },
+  put(path, body, authenticated = true) { return this.request(path, { method: "PUT", body, authenticated }); },
 };
 
 const state = {
   bootstrapStatus: null,
+  instance: null,
   session: null,
   scene: null,
   selectedId: null,
@@ -86,6 +112,8 @@ const refs = {
   sceneName: $("#sceneName"),
   greetingInput: $("#greetingInput"),
   targetSelect: $("#targetSelect"),
+  backgroundBlur: $("#backgroundBlur"),
+  backgroundBlurValue: $("#backgroundBlurValue"),
   toast: $("#toast"),
 };
 
@@ -113,17 +141,22 @@ const setBusy = (busy) => {
 };
 
 const showGate = (panel) => {
+  refs.app.inert = true;
+  refs.app.setAttribute("aria-hidden", "true");
   refs.authGate.classList.remove("hidden");
   refs.loginPanel.classList.toggle("hidden", panel !== "login");
   refs.bootstrapPanel.classList.toggle("hidden", panel !== "bootstrap");
-  $("#gateNumber").textContent = panel === "login" ? "02" : "01";
-  $("#gateHeadline").textContent = panel === "login" ? "Entrer dans la régie." : "Préparer l’instance.";
+  $("#gateNumber").textContent = panel === "login" ? "AUTH / 02" : "INIT / 01";
+  $("#gateHeadline").textContent = panel === "login" ? "Poste de composition" : "Préparer l’instance";
+  $("#gateAside").textContent = panel === "login" ? "Administration locale" : "Configuration applicative";
   refs.logoutButton.classList.add("hidden");
   setTimeout(() => (panel === "login" ? $("#loginUsername") : $("#bootstrapDisplayName")).focus(), 0);
 };
 
 const hideGate = () => {
   refs.authGate.classList.add("hidden");
+  refs.app.inert = false;
+  refs.app.removeAttribute("aria-hidden");
   refs.logoutButton.classList.remove("hidden");
 };
 
@@ -139,16 +172,39 @@ const sessionIsAuthenticated = (payload) => Boolean(
 
 const sessionUser = (payload) => payload?.user ?? payload?.session?.user ?? null;
 
+const applyBranding = (instanceOrIdentity = {}) => {
+  const branding = normalizeBranding(instanceOrIdentity.branding);
+  const displayName = String(instanceOrIdentity.displayName || "RoomFrame").trim();
+  const root = document.documentElement;
+  root.style.setProperty("--brand", branding.primary);
+  root.style.setProperty("--signal", branding.accent);
+  root.style.setProperty("--paper", branding.surface);
+  root.style.setProperty("--ink", branding.ink);
+  root.style.setProperty("--muted", branding.muted);
+  root.dataset.fontPreset = branding.fontPreset;
+  $("#instanceWordmark").textContent = displayName;
+  $("#gateOrgName").textContent = displayName;
+  $("#brandPreviewName").textContent = displayName;
+  state.instance = {
+    ...(state.instance ?? {}),
+    ...instanceOrIdentity,
+    displayName,
+    branding,
+  };
+};
+
 const boot = async () => {
   setBusy(true);
   setStatus("loading", "Connexion à l’instance locale…");
   try {
     const status = await api.get("bootstrap/status");
     state.bootstrapStatus = status;
+    if (status.identity) applyBranding(status.identity);
     const server = status.server ?? {};
     const serverUrl = server.adminUrl || server.preferredAdminUrl || location.origin;
-    $("#loginServerUrl").textContent = serverUrl;
-    $("#bootstrapServerUrl").textContent = `${serverUrl} · réseau géré hors RoomFrame`;
+    if ($("#bootstrapServerUrl")) {
+      $("#bootstrapServerUrl").textContent = `${serverUrl} · réseau géré hors RoomFrame`;
+    }
     if (!status.configured) {
       setStatus("ok", "Serveur prêt · configuration initiale requise");
       showGate("bootstrap");
@@ -188,6 +244,7 @@ const loadStudio = async () => {
   setStatus("loading", "Chargement de la régie…");
   try {
     const payload = await api.get("studio");
+    applyBranding(payload.instance ?? state.bootstrapStatus?.identity ?? {});
     const sourceScene = payload.scene?.document ?? payload.scene ?? payload.draft?.scene ?? payload.currentRevision?.scene ?? payload.layout;
     state.scene = normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE));
     state.sceneId = payload.scene?.id ?? state.scene.layoutId;
@@ -218,6 +275,7 @@ const selectedNode = () => state.scene?.nodes.find((node) => node.id === state.s
 
 const renderStudio = () => {
   const hasScene = Boolean(state.scene);
+  populateBrandForm();
   refs.stageEmpty.classList.toggle("hidden", hasScene);
   refs.monitor.classList.toggle("hidden", !hasScene);
   if (!hasScene) {
@@ -232,6 +290,9 @@ const renderStudio = () => {
   refs.greetingInput.value = greeting?.props.text ?? "";
   refs.stageTitle.textContent = state.scene.name;
   refs.stageMeta.textContent = `1920 × 1080 · ${state.currentRevisionId ? `révision ${state.currentRevisionId}` : "brouillon non enregistré"}`;
+  refs.backgroundBlur.value = String(state.scene.canvas.background.blur ?? 0);
+  refs.backgroundBlurValue.value = `${Math.round(state.scene.canvas.background.blur ?? 0)} px`;
+  refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
   $$("[data-fit]").forEach((button) => button.classList.toggle("on", button.dataset.fit === state.scene.canvas.background.mode));
   renderTargets();
   renderBackground();
@@ -262,6 +323,18 @@ const assetUrl = (asset, preferredVariant = null) => {
   );
 };
 
+const logoAssetForNode = (node) => {
+  if (node.kind !== "logo") return node.props.asset ?? node.props.assetId;
+  const current = node.props.assetId ?? node.props.asset;
+  if (
+    state.instance?.branding?.logoAssetId
+    && (!current || current === "assets/logo-placeholder.png")
+  ) {
+    return state.instance.branding.logoAssetId;
+  }
+  return current;
+};
+
 const renderBackground = () => {
   const background = state.scene.canvas.background;
   const url = assetUrl(background.asset);
@@ -271,6 +344,9 @@ const renderBackground = () => {
   $("#screenBg").style.backgroundSize = background.mode === "contain" ? "contain" : "cover";
   $("#screenBg").style.backgroundPosition = position;
   $("#screenBg").style.backgroundRepeat = "no-repeat";
+  const blur = Number(background.blur ?? 0);
+  $("#screenBg").style.filter = `blur(${blur / 19.2}cqw)`;
+  $("#screenBg").style.transform = `scale(${1 + blur / 240})`;
 };
 
 const applyNodeGeometry = (element, node) => {
@@ -294,7 +370,7 @@ const renderNodes = () => {
 
     if (["image", "video", "logo"].includes(node.kind)) {
       const url = assetUrl(
-        node.props.asset ?? node.props.assetId,
+        logoAssetForNode(node),
         node.kind === "logo" ? "logo" : null,
       );
       if (url) {
@@ -305,6 +381,12 @@ const renderNodes = () => {
         image.style.objectFit = node.props.fit === "cover" ? "cover" : "contain";
         element.append(image);
       } else element.append(make("span", "media-placeholder", nodeLabel(node)));
+    } else if (node.kind === "source") {
+      element.append(
+        sourceGlyph(node.props?.source),
+        make("span", "node-text", nodeDisplayText(node)),
+        make("span", "source-action", "↗"),
+      );
     } else {
       element.append(make("span", "node-text", nodeDisplayText(node)));
     }
@@ -412,6 +494,50 @@ const renderCollections = () => {
   $("#fleetList").replaceChildren(...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]));
 };
 
+const populateBrandForm = () => {
+  const branding = normalizeBranding(state.instance?.branding);
+  $("#brandDisplayName").value = state.instance?.displayName ?? "RoomFrame";
+  for (const field of ["Primary", "Accent", "Surface", "Ink", "Muted"]) {
+    const key = field.toLowerCase();
+    $(`#brand${field}`).value = branding[key];
+    $(`#brand${field}Text`).value = branding[key];
+  }
+  $("#brandFontPreset").value = branding.fontPreset;
+  const logoSelect = $("#brandLogoAsset");
+  const empty = make("option", "", "Aucun logo global");
+  empty.value = "";
+  const options = [empty];
+  for (const media of state.media.filter((item) => item.kind === "image" && item.status === "ready")) {
+    const option = make("option", "", media.originalFilename ?? media.id);
+    option.value = media.id;
+    options.push(option);
+  }
+  logoSelect.replaceChildren(...options);
+  logoSelect.value = branding.logoAssetId ?? "";
+  const logoUrl = assetUrl(branding.logoAssetId, "logo");
+  for (const image of [$("#instanceLogo"), $("#brandPreviewLogo")]) {
+    image.classList.toggle("hidden", !logoUrl);
+    if (logoUrl) image.src = logoUrl;
+    else image.removeAttribute("src");
+  }
+};
+
+const previewBrandForm = () => {
+  const candidate = {
+    displayName: $("#brandDisplayName").value.trim() || "RoomFrame",
+    branding: {
+      primary: $("#brandPrimary").value,
+      accent: $("#brandAccent").value,
+      surface: $("#brandSurface").value,
+      ink: $("#brandInk").value,
+      muted: $("#brandMuted").value,
+      fontPreset: $("#brandFontPreset").value,
+      logoAssetId: $("#brandLogoAsset").value || null,
+    },
+  };
+  applyBranding(candidate);
+};
+
 const renderSecurity = () => {
   const user = sessionUser(state.session);
   const ledger = $("#securityLedger");
@@ -419,7 +545,8 @@ const renderSecurity = () => {
   const entries = [
     ["Session", user?.username ?? user?.email ?? "Authentifiée"],
     ["Rôle", user?.role ?? (Array.isArray(user?.roles) ? user.roles.join(", ") : "Non communiqué")],
-    ["MFA", user?.mfaEnabled === true ? "Actif" : user?.mfaEnabled === false ? "Inactif" : "État non communiqué"],
+    ["Double validation", "TOTP obligatoire à chaque connexion"],
+    ["Protection TOTP", "Secret chiffré · code 30 s · réutilisation refusée"],
   ];
   for (const [term, description] of entries) ledger.append(make("dt", "", term), make("dd", "", description));
 };
@@ -693,7 +820,7 @@ $("#bootstrapForm").addEventListener("submit", async (event) => {
       displayName: String(data.get("displayName") || "").trim(),
       roomName: String(data.get("roomName") || "").trim(),
       defaultGreeting: String(data.get("defaultGreeting") || "").trim(),
-      branding: { primary: "#151511", accent: "#e94318", logoAssetId: null },
+      branding: DEFAULT_BRANDING,
       policies: { returnHomeWhenInactiveMinutes: 15, homeSleepMinutes: 30, powerScheduleEnabled: false },
       bootstrapAdmin: {
         username: String(data.get("username") || "").trim(),
@@ -725,6 +852,7 @@ refs.logoutButton.addEventListener("click", async () => {
     api.csrfToken = "";
     state.session = null;
     state.scene = null;
+    $("#loginForm").reset();
     showGate("login");
   }
 });
@@ -766,6 +894,13 @@ $("#backgroundModes").addEventListener("click", (event) => {
   state.scene.canvas.background.mode = button.dataset.fit;
   renderStudio();
 });
+refs.backgroundBlur.addEventListener("input", () => {
+  if (!state.scene) return;
+  state.scene.canvas.background.blur = Number(refs.backgroundBlur.value);
+  refs.backgroundBlurValue.value = `${refs.backgroundBlur.value} px`;
+  refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
+  renderBackground();
+});
 $("#palette").addEventListener("click", (event) => {
   const button = event.target.closest("[data-add-kind]");
   if (!button) return;
@@ -776,6 +911,56 @@ $("#palette").addEventListener("click", (event) => {
   state.selectedId = node.id;
   renderStudio();
   selectNode(node.id, true);
+});
+
+for (const field of ["Primary", "Accent", "Surface", "Ink", "Muted"]) {
+  const picker = $(`#brand${field}`);
+  const textInput = $(`#brand${field}Text`);
+  picker.addEventListener("input", () => {
+    textInput.value = picker.value;
+    previewBrandForm();
+  });
+  textInput.addEventListener("input", () => {
+    const value = textInput.value.trim().toLowerCase();
+    if (/^#[0-9a-f]{6}$/.test(value)) {
+      picker.value = value;
+      previewBrandForm();
+    }
+  });
+}
+$("#brandDisplayName").addEventListener("input", previewBrandForm);
+$("#brandFontPreset").addEventListener("change", previewBrandForm);
+$("#brandLogoAsset").addEventListener("change", previewBrandForm);
+$("#brandForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("brandError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const branding = {
+    primary: $("#brandPrimaryText").value.trim().toLowerCase(),
+    accent: $("#brandAccentText").value.trim().toLowerCase(),
+    surface: $("#brandSurfaceText").value.trim().toLowerCase(),
+    ink: $("#brandInkText").value.trim().toLowerCase(),
+    muted: $("#brandMutedText").value.trim().toLowerCase(),
+    fontPreset: $("#brandFontPreset").value,
+    logoAssetId: $("#brandLogoAsset").value || null,
+  };
+  submit.disabled = true;
+  try {
+    const payload = await api.put("instance/branding", {
+      displayName: $("#brandDisplayName").value.trim(),
+      branding,
+    });
+    applyBranding(payload.instance);
+    populateBrandForm();
+    toast("Charte globale enregistrée et transmise à la synchronisation TV.");
+    setStatus("ok", "Identité visuelle enregistrée par l’API");
+  } catch (error) {
+    formError("brandError", error.message);
+    applyBranding(state.instance ?? state.bootstrapStatus?.identity ?? {});
+  } finally {
+    submit.disabled = false;
+  }
 });
 refs.objectList.addEventListener("click", (event) => {
   const button = event.target.closest("[data-select-node]");

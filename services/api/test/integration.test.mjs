@@ -236,6 +236,57 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(deliveredMedia.headers['content-type'], 'image/webp');
   assert.equal(deliveredMedia.headers['x-content-type-options'], 'nosniff');
 
+  const brandingWithoutCsrf = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/instance/branding',
+    headers: { cookie },
+    payload: {
+      displayName: 'Atelier de test',
+      branding: {
+        primary: '#102a43',
+        accent: '#1aa6b7',
+        surface: '#e8edf0',
+        ink: '#14202a',
+        muted: '#667684',
+        fontPreset: 'studio',
+        logoAssetId: queuedAsset.id,
+      },
+    },
+  });
+  assert.equal(brandingWithoutCsrf.statusCode, 403);
+  const brandingUpdate = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/instance/branding',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      displayName: 'Atelier de test',
+      branding: {
+        primary: '#102a43',
+        accent: '#1aa6b7',
+        surface: '#e8edf0',
+        ink: '#14202a',
+        muted: '#667684',
+        fontPreset: 'studio',
+        logoAssetId: queuedAsset.id,
+      },
+    },
+  });
+  assert.equal(brandingUpdate.statusCode, 200, brandingUpdate.body);
+  assert.equal(brandingUpdate.json().instance.displayName, 'Atelier de test');
+  assert.equal(brandingUpdate.json().instance.branding.logoAssetId, queuedAsset.id);
+  const publicIdentity = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
+  assert.deepEqual(publicIdentity.json().identity, {
+    displayName: 'Atelier de test',
+    branding: {
+      primary: '#102a43',
+      accent: '#1aa6b7',
+      surface: '#e8edf0',
+      ink: '#14202a',
+      muted: '#667684',
+      fontPreset: 'studio',
+    },
+  });
+
   const duplicateParts = multipartFile({
     filename: 'copie-neutre.png',
     mime: 'image/png',
@@ -549,6 +600,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     (node) => node.kind === 'text' && node.props?.role === 'greeting',
   );
   greetingNode.props.text = 'Bonjour, personnalisation conservée après mise à jour';
+  personalizedScene.canvas.background.blur = 18;
   const revision = await app.inject({
     method: 'POST',
     url: `/api/v1/scenes/${studioState.scene.id}/revisions`,
@@ -582,6 +634,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(sync.statusCode, 200);
   assert.equal(sync.json().upToDate, false);
   assert.match(sync.json().manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(sync.json().documents.scene.canvas.background.blur, 18);
+  assert.equal(sync.json().documents.branding.displayName, 'Atelier de test');
+  assert.equal(sync.json().documents.branding.accent, '#1aa6b7');
+  assert.ok(sync.json().manifest.documents.some((entry) => entry.path === 'branding.json'));
   const previewPresence = await pool.query(
     "SELECT last_seen_at FROM screens WHERE enrollment_state = 'simulated'",
   );
@@ -596,6 +652,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
 
   const statusAfter = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
   assert.equal(statusAfter.json().configured, true);
+  assert.equal(statusAfter.json().identity.displayName, 'Atelier de test');
   const locked = await app.inject({
     method: 'POST',
     url: '/api/v1/bootstrap/totp',
