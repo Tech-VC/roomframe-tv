@@ -145,6 +145,8 @@ wait_for_stack() {
 }
 
 set_database_role_password() {
+  # Docker's file_env and the Node client discard the file's final newline.
+  # PostgreSQL trim() removes spaces only, so strip CR/LF explicitly here.
   "$COMPOSE_COMMAND" exec -T postgres \
     psql \
       --username=roomframe \
@@ -153,7 +155,7 @@ set_database_role_password() {
       --quiet <<'SQL'
 SELECT format(
   'ALTER ROLE roomframe PASSWORD %L',
-  trim(pg_read_file('/run/secrets/postgres_password'))
+  rtrim(pg_read_file('/run/secrets/postgres_password'), E'\r\n')
 )
 \gexec
 SQL
