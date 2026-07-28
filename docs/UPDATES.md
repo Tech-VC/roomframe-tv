@@ -158,10 +158,10 @@ demandes `pending`/`running` simultanées.
 `roomframe-update-broker.timer` réveille chaque minute un service oneshot root.
 Le courtier prend au plus une ligne puis appelle `roomframe-apply-update` avec
 son UUID et la version confirmée. Il ne fait confiance ni à un chemin venant de
-la base, ni au statut de vérification initial : le moteur recalcule le hash,
-retrouve la clé approuvée et revalide Ed25519. Si une autre maintenance détient
-le verrou, la demande retourne en file ; un processus interrompu devient un
-échec contrôlé au passage suivant.
+la base, ni au statut de vérification initial : il dérive le fichier hôte depuis
+la quarantaine et le SHA-256, recalcule ce hash, retrouve la clé approuvée et
+revalide Ed25519. Si une autre maintenance détient le verrou, la demande retourne
+en file ; un processus interrompu devient un échec contrôlé au passage suivant.
 
 Le conteneur API n’a ni socket Docker, ni sudo, ni montage du courtier. Sa seule
 capacité supplémentaire est l’écriture de la demande en base, déjà limitée par

@@ -44,6 +44,15 @@ grep -Fq "n'est jamais appelée directement par l'API web" <<<"$apply_help" || {
   echo "L'aide d'application doit documenter sa frontière root/API." >&2
   exit 1
 }
+if rg -n 'realpath .*RELEASE_PATH|read -r .*RELEASE_PATH' scripts/roomframe-apply-update.sh; then
+  echo "Le moteur root ne doit pas faire confiance au chemin de release stocké par l'API." >&2
+  exit 1
+fi
+grep -Fq "realpath -e \"\$VERIFIED_ROOT/\$RELEASE_SHA.rfupdate\"" \
+  scripts/roomframe-apply-update.sh || {
+  echo "Le moteur root doit dériver le bundle hôte depuis sa quarantaine et son hash." >&2
+  exit 1
+}
 
 broker_help="$(bash scripts/roomframe-update-broker.sh --help)"
 grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {

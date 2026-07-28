@@ -279,14 +279,14 @@ release_row="$(
       --field-separator=$'\t' \
       --set ON_ERROR_STOP=1 \
       --set=release_id="$RELEASE_ID" <<'SQL'
-SELECT version, status, sha256, signature_key_id, storage_path
+SELECT version, status, sha256, signature_key_id
 FROM release_history
 WHERE id = :'release_id'::uuid;
 SQL
 )"
 [[ -n "$release_row" && "$(wc -l <<<"$release_row" | tr -d ' ')" == "1" ]] \
   || fail "release importée introuvable ou ambiguë"
-IFS=$'\t' read -r RELEASE_VERSION RELEASE_STATUS RELEASE_SHA RELEASE_KEY_ID RELEASE_PATH \
+IFS=$'\t' read -r RELEASE_VERSION RELEASE_STATUS RELEASE_SHA RELEASE_KEY_ID \
   <<<"$release_row"
 
 [[ "$RELEASE_STATUS" == "verified" ]] \
@@ -302,7 +302,10 @@ VERIFIED_ROOT="$DATA_DIR/releases/verified"
 [[ -d "$VERIFIED_ROOT" && ! -L "$VERIFIED_ROOT" ]] \
   || fail "quarantaine de releases absente ou symbolique"
 VERIFIED_ROOT_REAL="$(realpath -e "$VERIFIED_ROOT")"
-RELEASE_REAL="$(realpath -e "$RELEASE_PATH")"
+# Le chemin conservé par l'API appartient à son espace de montage conteneur
+# (`/data/releases`). Le moteur root ne lui fait pas confiance et retrouve le
+# bundle hôte uniquement depuis le hash déjà validé.
+RELEASE_REAL="$(realpath -e "$VERIFIED_ROOT/$RELEASE_SHA.rfupdate")"
 [[
   "$(dirname "$RELEASE_REAL")" == "$VERIFIED_ROOT_REAL"
   && "$(basename "$RELEASE_REAL")" == "$RELEASE_SHA.rfupdate"
