@@ -51,6 +51,20 @@ grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {
   exit 1
 }
 
+broker_unit="infra/systemd/roomframe-update-broker.service"
+grep -Eq '^RestrictAddressFamilies=.*AF_NETLINK([[:space:]]|$)' "$broker_unit" || {
+  echo "La sandbox du courtier doit autoriser AF_NETLINK pour la détection réseau." >&2
+  exit 1
+}
+grep -Fqx 'Environment=DOCKER_CONFIG=/run/roomframe-update-broker/docker' "$broker_unit" || {
+  echo "Le client Docker du courtier doit écrire dans son répertoire runtime éphémère." >&2
+  exit 1
+}
+grep -Fqx 'ProtectHome=true' "$broker_unit" || {
+  echo "La sandbox du courtier doit conserver ProtectHome=true." >&2
+  exit 1
+}
+
 while IFS= read -r -d '' document; do
   python3 -m json.tool "$document" >/dev/null
 done < <(find contracts defaults examples -type f -name '*.json' -print0)

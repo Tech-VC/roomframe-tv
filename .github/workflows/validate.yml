@@ -47,11 +47,21 @@ jobs:
           printf '%s\n' local-agent-instructions > AGENTS.md
           printf '%s\n' apple-double-test > prototype/admin/._private-test-only.js
           printf '%s\n' finder-test > prototype/admin/.DS_Store
+          real_ip="$(command -v ip)"
+          mkdir "$test_root/bin"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'if [ "$*" = "-4 route get 1.1.1.1" ]; then exit 2; fi' \
+            "exec \"$real_ip\" \"\$@\"" \
+            > "$test_root/bin/ip"
+          chmod 0755 "$test_root/bin/ip"
           sudo env \
+            PATH="$test_root/bin:$PATH" \
             ROOMFRAME_INSTALL_DIR="$test_root/install" \
             ROOMFRAME_CONFIG_DIR="$test_root/config" \
             ROOMFRAME_DATA_DIR="$test_root/data" \
             ROOMFRAME_SKIP_COMMAND_LINKS=1 \
+            ROOMFRAME_SKIP_SYSTEMD_UNITS=1 \
             ./install.sh --source "$PWD" --host roomframe.example.test --no-start
           before="$(
             sudo find "$test_root/config/secrets" \
@@ -63,6 +73,7 @@ jobs:
             ROOMFRAME_CONFIG_DIR="$test_root/config" \
             ROOMFRAME_DATA_DIR="$test_root/data" \
             ROOMFRAME_SKIP_COMMAND_LINKS=1 \
+            ROOMFRAME_SKIP_SYSTEMD_UNITS=1 \
             ./install.sh --source "$PWD" --host roomframe.example.test --no-start
           after="$(
             sudo find "$test_root/config/secrets" \
