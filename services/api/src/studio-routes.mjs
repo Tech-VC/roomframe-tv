@@ -574,10 +574,36 @@ export const registerStudioRoutes = ({
       ),
       pool.query('SELECT * FROM assets ORDER BY created_at DESC LIMIT 200'),
       pool.query(
-        `SELECT id, display_name, room_name, group_id, enrollment_state, agent_version,
-                home_version, active_revision, capabilities, source_state, last_seen_at,
-                enrollment_expires_at
-         FROM screens ORDER BY display_name`,
+        `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
+                screen.enrollment_state, screen.agent_version, screen.home_version,
+                screen.active_revision, screen.capabilities, screen.source_state,
+                screen.last_seen_at, screen.enrollment_expires_at,
+                CASE
+                  WHEN screen.enrollment_state <> 'active' THEN NULL
+                  WHEN screen.last_seen_at >= now() - interval '2 minutes' THEN true
+                  ELSE false
+                END AS online,
+                CASE WHEN metric.id IS NULL THEN NULL ELSE jsonb_build_object(
+                  'recordedAt', metric.recorded_at,
+                  'startupMs', metric.startup_ms,
+                  'resumeMs', metric.resume_ms,
+                  'memoryBytes', metric.memory_bytes,
+                  'storageFreeBytes', metric.storage_free_bytes,
+                  'networkState', metric.network_state,
+                  'syncRevision', metric.sync_revision,
+                  'syncDurationMs', metric.sync_duration_ms,
+                  'updateState', metric.update_state,
+                  'errorCode', metric.error_code
+                ) END AS latest_metric
+         FROM screens AS screen
+         LEFT JOIN LATERAL (
+           SELECT *
+           FROM device_metrics
+           WHERE screen_id = screen.id
+           ORDER BY recorded_at DESC, id DESC
+           LIMIT 1
+         ) AS metric ON true
+         ORDER BY screen.display_name`,
       ),
       pool.query('SELECT * FROM tv_groups ORDER BY name'),
       pool.query('SELECT * FROM messages ORDER BY priority DESC, created_at DESC LIMIT 200'),
@@ -621,7 +647,11 @@ export const registerStudioRoutes = ({
       releases: can('releases:read') ? releasesResult.rows.map(serializeRelease) : [],
       deployments: can('releases:read') ? deploymentsResult.rows : [],
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
-      measuredMetrics: null,
+      measuredMetrics: can('fleet:read') ? {
+        totalScreens: screensResult.rows.length,
+        onlineScreens: screensResult.rows.filter((row) => row.online === true).length,
+        reportingScreens: screensResult.rows.filter((row) => row.latest_metric !== null).length,
+      } : null,
     };
   });
 
@@ -1820,6 +1850,20 @@ export const registerStudioRoutes = ({
     ) {
       throw Object.assign(new Error('invalid_update_state'), { statusCode: 400 });
     }
+    const metricErrorCode = body.errorCode
+      ? cleanText(body.errorCode, 'error_code', 120)
+      : null;
+    const allowedMetricErrorCodes = new Set([
+      'sync-failed',
+      'update-failed',
+      'render-failed',
+      'storage-low',
+      'network-degraded',
+      'internal',
+    ]);
+    if (metricErrorCode !== null && !allowedMetricErrorCodes.has(metricErrorCode)) {
+      throw Object.assign(new Error('unsupported_metric_error_code'), { statusCode: 400 });
+    }
     const metric = {
       startupMs: optionalIntegerInRange(body.startupMs, 'startup_ms', 0, 2_147_483_647),
       resumeMs: optionalIntegerInRange(body.resumeMs, 'resume_ms', 0, 2_147_483_647),
@@ -1839,26 +1883,32 @@ export const registerStudioRoutes = ({
         2_147_483_647,
       ),
       updateState,
-      errorCode: body.errorCode ? cleanText(body.errorCode, 'error_code', 120) : null,
+      errorCode: metricErrorCode,
     };
-    await pool.query(
-      `INSERT INTO device_metrics (
-         screen_id, startup_ms, resume_ms, memory_bytes, storage_free_bytes,
-         network_state, sync_revision, sync_duration_ms, update_state, error_code
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        screen.id,
-        metric.startupMs,
-        metric.resumeMs,
-        metric.memoryBytes,
-        metric.storageFreeBytes,
-        metric.networkState,
-        metric.syncRevision,
-        metric.syncDurationMs,
-        metric.updateState,
-        metric.errorCode,
-      ],
-    );
+    await withTransaction(pool, async (client) => {
+      await client.query(
+        `INSERT INTO device_metrics (
+           screen_id, startup_ms, resume_ms, memory_bytes, storage_free_bytes,
+           network_state, sync_revision, sync_duration_ms, update_state, error_code
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [
+          screen.id,
+          metric.startupMs,
+          metric.resumeMs,
+          metric.memoryBytes,
+          metric.storageFreeBytes,
+          metric.networkState,
+          metric.syncRevision,
+          metric.syncDurationMs,
+          metric.updateState,
+          metric.errorCode,
+        ],
+      );
+      await client.query(
+        'UPDATE screens SET last_seen_at = now(), updated_at = now() WHERE id = $1',
+        [screen.id],
+      );
+    });
     return reply.code(202).send({ accepted: true });
   });
 

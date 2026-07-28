@@ -147,7 +147,10 @@ peut aussi utiliser ces routes pour un aperçu.
 Les métriques acceptées concernent uniquement le démarrage, la reprise, la
 mémoire, le stockage, le réseau, la synchronisation, la mise à jour et les
 codes d’erreur. Les événements sont limités à une liste contrôlée. Aucun
-contenu regardé ni appareil personnel n’est collecté.
+contenu regardé ni appareil personnel n’est collecté. Une mesure valide
+actualise aussi la présence de la TV. `GET /studio` expose uniquement sa
+dernière mesure et un résumé parc ; l’historique brut reste côté base pour le
+diagnostic et la future politique de rétention.
 
 La clé d’appareil reste une étape intermédiaire. Les certificats individuels,
 la rotation de clé et le mTLS doivent être finalisés avant production.

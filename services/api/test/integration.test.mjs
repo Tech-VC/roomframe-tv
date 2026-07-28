@@ -764,6 +764,50 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(assignedDefaultAsset.statusCode, 200);
   assert.equal(assignedDefaultAsset.headers['content-type'], 'image/webp');
 
+  const acceptedMetrics = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/metrics',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: {
+      startupMs: 1240,
+      resumeMs: 180,
+      memoryBytes: 805_306_368,
+      storageFreeBytes: 2_147_483_648,
+      networkState: 'ethernet',
+      syncRevision: deviceSync.json().revision,
+      syncDurationMs: 245,
+      updateState: 'available',
+    },
+  });
+  assert.equal(acceptedMetrics.statusCode, 202, acceptedMetrics.body);
+  const rejectedMetrics = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/metrics',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: { networkState: 'personal-device-name' },
+  });
+  assert.equal(rejectedMetrics.statusCode, 400, rejectedMetrics.body);
+  const rejectedMetricDetail = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/metrics',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: {
+      networkState: 'wifi',
+      errorCode: 'personal-device-name',
+    },
+  });
+  assert.equal(rejectedMetricDetail.statusCode, 400, rejectedMetricDetail.body);
+  assert.equal(rejectedMetricDetail.json().error, 'unsupported_metric_error_code');
+
   const studio = await app.inject({
     method: 'GET',
     url: '/api/v1/studio',
@@ -772,7 +816,16 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(studio.statusCode, 200);
   const studioState = studio.json();
   assert.equal(studioState.scene.currentRevision, 1);
-  assert.equal(studioState.measuredMetrics, null);
+  assert.deepEqual(studioState.measuredMetrics, {
+    totalScreens: 3,
+    onlineScreens: 2,
+    reportingScreens: 1,
+  });
+  const measuredScreen = studioState.tvs.find((screen) => screen.id === pendingDevice.id);
+  assert.equal(measuredScreen.online, true);
+  assert.equal(measuredScreen.latest_metric.networkState, 'ethernet');
+  assert.equal(measuredScreen.latest_metric.storageFreeBytes, 2_147_483_648);
+  assert.equal(measuredScreen.latest_metric.syncDurationMs, 245);
   const seededGreeting = studioState.scene.document.nodes.find(
     (node) => node.kind === 'text' && node.props?.role === 'greeting',
   );

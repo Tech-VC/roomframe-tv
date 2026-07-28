@@ -244,9 +244,10 @@ depuis l’administration. Une clé de release durable, conservée hors dépôt,
 devra remplacer la clé debug avant tout vrai canal de mise à jour.
 
 La build `0.3.1` (`versionCode` 4) ajoute le renderer alimenté par le cache,
-l’enrôlement HTTPS et la distribution APK vérifiée. Elle sert de candidate à
-la montée de version depuis le code 3, mais n’est pas encore installée ni
-validée sur cette Philips.
+l’enrôlement HTTPS, la distribution APK vérifiée et l’envoi borné des mesures
+techniques autorisées après chaque cycle de synchronisation. Elle sert de
+candidate à la montée de version depuis le code 3, mais n’est pas encore
+installée ni validée sur cette Philips.
 
 ## HDMI et sources
 

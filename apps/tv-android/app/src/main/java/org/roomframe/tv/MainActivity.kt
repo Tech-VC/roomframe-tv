@@ -6,10 +6,13 @@ import android.content.pm.ApplicationInfo
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
@@ -25,7 +28,9 @@ import org.roomframe.tv.experience.ExperienceRepository
 import org.roomframe.tv.experience.ExperienceSnapshot
 import org.roomframe.tv.sync.DeviceCredentialStore
 import org.roomframe.tv.sync.HttpExperienceSyncClient
+import org.roomframe.tv.sync.HttpTvMetricsClient
 import org.roomframe.tv.sync.SyncResult
+import org.roomframe.tv.sync.TvMetricSnapshot
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
 
@@ -37,6 +42,7 @@ import org.roomframe.tv.update.HttpAppUpdateCoordinator
  * 4. ne bascule qu'après téléchargement et validation atomiques.
  */
 class MainActivity : Activity() {
+    private val processStartedAt = SystemClock.elapsedRealtime()
     private var okDownAt: Long? = null
     private val adapters by lazy { DeviceAdapters.forAndroid(this) }
     private val syncExecutor = Executors.newSingleThreadExecutor()
@@ -52,6 +58,8 @@ class MainActivity : Activity() {
     private lateinit var repository: ExperienceRepository
     private lateinit var credentialStore: DeviceCredentialStore
     private var currentSnapshot: ExperienceSnapshot? = null
+    @Volatile private var startupDurationMs: Long? = null
+    @Volatile private var resumeDurationMs: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,13 +68,18 @@ class MainActivity : Activity() {
         repository = ExperienceRepository(this, store)
         credentialStore = DeviceCredentialStore(this)
         render(repository.load())
+        startupDurationMs = SystemClock.elapsedRealtime() - processStartedAt
     }
 
     override fun onResume() {
+        val resumedAt = SystemClock.elapsedRealtime()
         super.onResume()
         scheduler.removeCallbacks(periodicSync)
         periodicSync.run()
-        window.decorView.post { enterImmersiveMode() }
+        window.decorView.post {
+            enterImmersiveMode()
+            resumeDurationMs = SystemClock.elapsedRealtime() - resumedAt
+        }
     }
 
     override fun onPause() {
@@ -97,6 +110,9 @@ class MainActivity : Activity() {
         if (!syncRunning.compareAndSet(false, true)) return
         val activeRevisionId = currentSnapshot?.revisionId
         syncExecutor.execute {
+            val syncStartedAt = SystemClock.elapsedRealtime()
+            var reportedRevision = revisionNumber(activeRevisionId)
+            var syncErrorCode: String? = null
             try {
                 when (
                     val result = HttpExperienceSyncClient(
@@ -107,24 +123,50 @@ class MainActivity : Activity() {
                     SyncResult.UpToDate -> recordSyncState("up-to-date")
                     is SyncResult.RevisionAvailable -> {
                         store.stageAndActivate(result.revision)
+                        reportedRevision = revisionNumber(result.revision.revisionId)
                         val updated = repository.load()
                         recordSyncState("active:${updated.revisionId}")
                         runOnUiThread {
                             if (!isFinishing && !isDestroyed) render(updated)
                         }
                     }
-                    is SyncResult.Failed -> recordSyncState("failed:${result.reason}")
+                    is SyncResult.Failed -> {
+                        syncErrorCode = "sync-failed"
+                        recordSyncState("failed:${result.reason}")
+                    }
                 }
             } catch (error: Exception) {
+                syncErrorCode = "sync-failed"
                 recordSyncState("failed:${error.message?.take(140) ?: "internal"}")
             } finally {
-                synchronizeAppUpdate(credentials)
+                val updateResult = synchronizeAppUpdate(credentials)
+                val updateState = metricUpdateState(updateResult)
+                if (syncErrorCode == null && updateState == "failed") {
+                    syncErrorCode = "update-failed"
+                }
+                val runtime = Runtime.getRuntime()
+                val metric = TvMetricSnapshot(
+                    startupMs = startupDurationMs,
+                    resumeMs = resumeDurationMs,
+                    memoryBytes = runtime.totalMemory() - runtime.freeMemory(),
+                    storageFreeBytes = filesDir.usableSpace.coerceAtLeast(0),
+                    networkState = currentNetworkState(),
+                    syncRevision = reportedRevision,
+                    syncDurationMs = SystemClock.elapsedRealtime() - syncStartedAt,
+                    updateState = updateState,
+                    errorCode = syncErrorCode,
+                )
+                runCatching { HttpTvMetricsClient(credentials).send(metric) }
+                    .onFailure { recordMetricState("failed") }
+                    .onSuccess { recordMetricState("accepted") }
                 syncRunning.set(false)
             }
         }
     }
 
-    private fun synchronizeAppUpdate(credentials: org.roomframe.tv.sync.DeviceCredentials) {
+    private fun synchronizeAppUpdate(
+        credentials: org.roomframe.tv.sync.DeviceCredentials,
+    ): String {
         val state = runCatching {
             HttpAppUpdateCoordinator(
                 context = applicationContext,
@@ -139,6 +181,7 @@ class MainActivity : Activity() {
             .edit()
             .putString("last_update_check", state.take(180))
             .apply()
+        return state
     }
 
     private fun recordSyncState(value: String) {
@@ -147,6 +190,38 @@ class MainActivity : Activity() {
             .putString("last_sync_state", value.take(180))
             .apply()
     }
+
+    private fun recordMetricState(value: String) {
+        getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
+            .edit()
+            .putString("last_metric_delivery", value)
+            .apply()
+    }
+
+    private fun currentNetworkState(): String {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val network = manager.activeNetwork ?: return "offline"
+        val capabilities = manager.getNetworkCapabilities(network) ?: return "unknown"
+        return when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> "unknown"
+            else -> "degraded"
+        }
+    }
+
+    private fun metricUpdateState(value: String): String = when {
+        value.startsWith("failed:") -> "failed"
+        value.startsWith("installing:") -> "installing"
+        value.startsWith("downloaded:") -> "staged"
+        value.startsWith("installed:") -> "ready"
+        else -> "idle"
+    }
+
+    private fun revisionNumber(value: String?): Long? = value
+        ?.removePrefix("sync-")
+        ?.toLongOrNull()
+        ?.takeIf { it >= 0 }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)

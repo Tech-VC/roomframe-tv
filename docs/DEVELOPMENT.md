@@ -221,11 +221,11 @@ Le launcher compile un accueil natif sans WebView et contient :
 Le build debug 0.3.0 a été installé et lancé sur le matériel Philips documenté
 dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
-client HTTPS et de la distribution APK est maintenant codée et testée hors
-matériel. Le provisionnement Device Owner, l’installation silencieuse réelle
-et la PKI individuelle restent à valider. Aucun résultat HDMI, Cast, AirPlay,
-puissance ou mise à jour silencieuse ne peut être déduit des adaptateurs
-`unsupported` ou des tests JVM.
+client HTTPS, de la distribution APK et des métriques techniques minimales est
+maintenant codée et testée hors matériel. Le provisionnement Device Owner,
+l’installation silencieuse réelle et la PKI individuelle restent à valider.
+Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
+peut être déduit des adaptateurs `unsupported` ou des tests JVM.
 
 La build suivante est `0.3.1` / `versionCode 4`, afin de tester une vraie
 montée de version depuis l’APK `0.3.0` / code 3 déjà installé. Elle n’est pas

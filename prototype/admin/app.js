@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui6";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui6";
+} from "./scene-model.js?v=0.3.0-ui7";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui7";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -20,6 +20,20 @@ const make = (tag, className, text) => {
   if (className) element.className = className;
   if (text != null) element.textContent = String(text);
   return element;
+};
+
+const formatBytes = (value) => {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return null;
+  if (bytes < 1024) return `${bytes} o`;
+  const units = ["Kio", "Mio", "Gio", "Tio"];
+  let amount = bytes;
+  let unit = -1;
+  do {
+    amount /= 1024;
+    unit += 1;
+  } while (amount >= 1024 && unit < units.length - 1);
+  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
 };
 
 const DEFAULT_BRANDING = Object.freeze({
@@ -86,6 +100,7 @@ const state = {
   groups: [],
   releases: [],
   deployments: [],
+  measuredMetrics: null,
   enrollmentTicket: null,
   interaction: null,
   preview: null,
@@ -287,6 +302,7 @@ const loadStudio = async () => {
     state.groups = Array.isArray(payload.groups) ? payload.groups : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+    state.measuredMetrics = payload.measuredMetrics ?? null;
     state.preview = null;
     state.previewSelection = "";
     state.selectedId = state.scene.nodes[0]?.id ?? null;
@@ -611,6 +627,7 @@ const renderCollections = () => {
   const tvRows = state.televisions.map((tv) => {
     const card = make("article", "tv-cell");
     const enrollmentState = tv.enrollmentState ?? tv.enrollment_state;
+    const metric = tv.latestMetric ?? tv.latest_metric;
     const connectionState = enrollmentState === "pending"
       ? "Enrôlement en attente"
       : enrollmentState === "revoked"
@@ -620,17 +637,46 @@ const renderCollections = () => {
           : tv.online === false
             ? "Hors ligne"
             : "État inconnu";
+    const health = enrollmentState !== "active"
+      ? "pending"
+      : tv.online === true
+        ? "online"
+        : "offline";
+    card.dataset.health = health;
+    const signal = make("span", "tv-signal", connectionState);
+    signal.setAttribute("aria-label", connectionState);
+    const metricLines = metric ? [
+      `Réseau : ${metric.networkState ?? "inconnu"}`,
+      `Synchronisation : ${metric.syncRevision == null ? "non mesurée" : `r${metric.syncRevision}${metric.syncDurationMs == null ? "" : ` · ${metric.syncDurationMs} ms`}`}`,
+      `Mémoire : ${formatBytes(metric.memoryBytes) ?? "non mesurée"}`,
+      `Stockage libre : ${formatBytes(metric.storageFreeBytes) ?? "non mesuré"}`,
+      `Démarrage : ${metric.startupMs == null ? "non mesuré" : `${metric.startupMs} ms`}`,
+      `Mise à jour : ${metric.updateState ?? "inconnue"}`,
+      ...(metric.errorCode ? [`Erreur : ${metric.errorCode}`] : []),
+    ] : ["Mesures techniques : en attente"];
     card.append(
+      signal,
       make("h3", "", tv.displayName ?? tv.display_name ?? tv.name ?? tv.id),
       make("p", "", [
         connectionState,
         `Source : ${tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"}`,
         `Version : ${tv.version ?? tv.home_version ?? "inconnue"}`,
+        ...metricLines,
       ].join("\n")),
     );
     return card;
   });
-  $("#fleetList").replaceChildren(...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]));
+  const fleetSummary = state.measuredMetrics
+    ? make(
+      "p",
+      "fleet-summary",
+      `${state.measuredMetrics.onlineScreens}/${state.measuredMetrics.totalScreens} en ligne · ${state.measuredMetrics.reportingScreens} avec mesures`,
+    )
+    : null;
+  $("#fleetList").replaceChildren(
+    ...(fleetSummary ? [fleetSummary] : []),
+    ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
+  );
 };
 
 const renderEnrollmentTicket = () => {

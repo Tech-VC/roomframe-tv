@@ -115,6 +115,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles et
   hashes, puis quarantaine ;
 - distribution d’APK par canari ou vagues progressives avec état par TV ;
+- état du parc alimenté par la dernière télémétrie technique autorisée, sans
+  contenu consulté ni identifiant d’appareil personnel ;
 - accueil Android natif, cache atomique, synchronisation HTTPS, enrôlement et
   contrôle de l’APK avant `PackageInstaller` ;
 - diagnostic et sauvegarde cohérente avant migration.

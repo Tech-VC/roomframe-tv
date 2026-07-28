@@ -196,7 +196,19 @@ textarea { min-height: 58px; resize: vertical; }
 .ticket-actions { grid-column: 2 / -1; display: flex; justify-content: flex-end; gap: 10px; }
 .enrollment-ticket .tool:not(.primary) { color: #fff; border-color: #fff; }
 .fleet-map { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 1px; background: var(--ink); border: 1px solid var(--ink); }
-.tv-cell { min-height: 150px; padding: 18px; background: var(--paper); }
+.fleet-summary {
+  grid-column: 1 / -1; margin: 0; padding: 12px 18px; color: white;
+  background: var(--brand); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: .12em; text-transform: uppercase;
+}
+.tv-cell { position: relative; min-height: 150px; padding: 18px; background: var(--paper); }
+.tv-signal {
+  position: absolute; left: 18px; top: 18px; width: 11px; height: 11px;
+  overflow: hidden; color: transparent; background: #8a8d86;
+}
+.tv-cell[data-health="online"] .tv-signal { background: var(--success); }
+.tv-cell[data-health="offline"] .tv-signal { background: var(--danger); }
+.tv-cell[data-health="pending"] .tv-signal { background: #b88210; }
 .tv-cell h3 { font-family: Georgia, serif; font-size: 22px; margin: 26px 0 8px; }
 .tv-cell p { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .release-result { margin-top: 20px; }
