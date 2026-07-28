@@ -1280,6 +1280,58 @@ export const registerStudioRoutes = ({
     });
   });
 
+  app.post('/api/v1/deployments/:deploymentId/retry', {
+    preHandler: [authenticated, requirePermission('deployments:write'), csrf],
+  }, async (request) => {
+    const deploymentId = optionalUuid(request.params.deploymentId);
+    return withTransaction(pool, async (client) => {
+      const deployment = await client.query(
+        "SELECT id, status FROM deployments WHERE id = $1 FOR UPDATE",
+        [deploymentId],
+      );
+      if (!deployment.rows[0]) {
+        throw Object.assign(new Error('deployment_not_found'), { statusCode: 404 });
+      }
+      if (deployment.rows[0].status !== 'running') {
+        throw Object.assign(new Error('deployment_not_running'), { statusCode: 409 });
+      }
+      const retried = await client.query(
+        `UPDATE deployment_targets
+         SET status = 'offered', offered_at = now(), error_code = NULL,
+             reported_version = NULL, updated_at = now()
+         WHERE deployment_id = $1 AND status IN ('failed', 'deferred')
+         RETURNING screen_id`,
+        [deploymentId],
+      );
+      if (retried.rowCount === 0) {
+        throw Object.assign(new Error('deployment_no_retryable_targets'), { statusCode: 409 });
+      }
+      const progress = await client.query(
+        `SELECT status, count(*)::integer AS count
+         FROM deployment_targets
+         WHERE deployment_id = $1
+         GROUP BY status`,
+        [deploymentId],
+      );
+      const progressDocument = Object.fromEntries(
+        progress.rows.map((entry) => [entry.status, Number(entry.count)]),
+      );
+      await client.query(
+        'UPDATE deployments SET progress = $2 WHERE id = $1',
+        [deploymentId, JSON.stringify(progressDocument)],
+      );
+      await writeAudit(client, request, 'deployment.targets.retried', 'deployment', deploymentId, {
+        targetCount: retried.rowCount,
+      });
+      return {
+        id: deploymentId,
+        status: 'running',
+        retriedCount: retried.rowCount,
+        progress: progressDocument,
+      };
+    });
+  });
+
   app.get('/api/v1/tv/update', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request) => {
@@ -1430,6 +1482,12 @@ export const registerStudioRoutes = ({
       );
       const current = locked.rows[0];
       if (!current) throw Object.assign(new Error('deployment_target_not_found'), { statusCode: 404 });
+      if (nextStatus === 'installed' && reportedVersion !== current.version) {
+        throw Object.assign(new Error('installed_version_mismatch'), { statusCode: 409 });
+      }
+      if (nextStatus === 'failed' && !errorCode) {
+        throw Object.assign(new Error('update_error_code_required'), { statusCode: 400 });
+      }
       const transitions = {
         offered: new Set(['downloaded', 'failed', 'deferred']),
         downloading: new Set(['downloaded', 'failed', 'deferred']),

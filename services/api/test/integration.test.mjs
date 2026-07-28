@@ -532,6 +532,47 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     'download-and-verification-active-install-requires-device-owner',
   );
 
+  const otherEnrollment = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tvs/enrollment',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      displayName: 'TV isolée',
+      roomName: 'Salle isolée',
+    },
+  });
+  assert.equal(otherEnrollment.statusCode, 201, otherEnrollment.body);
+  const otherPendingDevice = otherEnrollment.json();
+  const otherClaim = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enroll',
+    payload: {
+      deviceId: otherPendingDevice.id,
+      enrollmentKey: otherPendingDevice.enrollmentKey,
+    },
+  });
+  assert.equal(otherClaim.statusCode, 201, otherClaim.body);
+  const otherDeviceCredential = otherClaim.json();
+  const otherUpdateOffer = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/update',
+    headers: {
+      'x-roomframe-device-id': otherPendingDevice.id,
+      'x-roomframe-device-key': otherDeviceCredential.deviceKey,
+    },
+  });
+  assert.equal(otherUpdateOffer.statusCode, 200, otherUpdateOffer.body);
+  assert.equal(otherUpdateOffer.json().available, false);
+  const foreignApkDownload = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/updates/${deployment.id}/apk`,
+    headers: {
+      'x-roomframe-device-id': otherPendingDevice.id,
+      'x-roomframe-device-key': otherDeviceCredential.deviceKey,
+    },
+  });
+  assert.equal(foreignApkDownload.statusCode, 403, foreignApkDownload.body);
+
   const updateOffer = await app.inject({
     method: 'GET',
     url: '/api/v1/tv/update',
@@ -561,6 +602,22 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   );
 
   for (const status of ['downloaded', 'installing', 'installed']) {
+    if (status === 'installed') {
+      const falseInstalledReport = await app.inject({
+        method: 'POST',
+        url: `/api/v1/tv/updates/${deployment.id}/status`,
+        headers: {
+          'x-roomframe-device-id': pendingDevice.id,
+          'x-roomframe-device-key': deviceCredential.deviceKey,
+        },
+        payload: {
+          status,
+          version: '9.9.9',
+        },
+      });
+      assert.equal(falseInstalledReport.statusCode, 409, falseInstalledReport.body);
+      assert.equal(falseInstalledReport.json().error, 'installed_version_mismatch');
+    }
     const report = await app.inject({
       method: 'POST',
       url: `/api/v1/tv/updates/${deployment.id}/status`,
@@ -585,6 +642,66 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(completedDeployment.statusCode, 200, completedDeployment.body);
   assert.equal(completedDeployment.json().status, 'completed');
+
+  const retryDeploymentResponse = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/deployments`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      strategy: 'canary',
+      targetType: 'tv',
+      targetId: pendingDevice.id,
+      batchSize: 1,
+    },
+  });
+  assert.equal(retryDeploymentResponse.statusCode, 201, retryDeploymentResponse.body);
+  const retryDeployment = retryDeploymentResponse.json();
+  const failedWithoutCode = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tv/updates/${retryDeployment.id}/status`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: { status: 'failed', version: importedRelease.version },
+  });
+  assert.equal(failedWithoutCode.statusCode, 400, failedWithoutCode.body);
+  assert.equal(failedWithoutCode.json().error, 'update_error_code_required');
+  const failedReport = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tv/updates/${retryDeployment.id}/status`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: {
+      status: 'failed',
+      version: importedRelease.version,
+      errorCode: 'download-failed',
+    },
+  });
+  assert.equal(failedReport.statusCode, 200, failedReport.body);
+  assert.equal(failedReport.json().status, 'failed');
+  const retriedDeployment = await app.inject({
+    method: 'POST',
+    url: `/api/v1/deployments/${retryDeployment.id}/retry`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(retriedDeployment.statusCode, 200, retriedDeployment.body);
+  assert.equal(retriedDeployment.json().retriedCount, 1);
+  assert.equal(retriedDeployment.json().progress.offered, 1);
+  const retriedOffer = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/update',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(retriedOffer.statusCode, 200, retriedOffer.body);
+  assert.equal(retriedOffer.json().available, true);
+  assert.equal(retriedOffer.json().deployment.id, retryDeployment.id);
 
   const unrelatedDefaultAsset = await app.inject({
     method: 'GET',

@@ -122,7 +122,11 @@ La première vague passe à `offered`. Chaque TV autorisée récupère uniquemen
 l’APK qui lui est affecté, puis annonce les états `downloaded`, `installing`,
 `installed`, `failed` ou `deferred`. L’administration ne peut ouvrir la vague
 suivante tant que la vague active contient un téléchargement, une installation
-ou un échec. Les cibles suivantes restent `queued`.
+ou un échec. Les cibles suivantes restent `queued`. Une version annoncée comme
+installée est acceptée uniquement si elle correspond à la release distribuée ;
+un échec doit fournir un code de diagnostic contrôlé. L’opérateur peut remettre
+explicitement les cibles `failed` ou `deferred` dans la vague sans recréer le
+plan de déploiement.
 
 L’APK extrait du bundle vérifié est matérialisé par hash sous
 `/var/lib/roomframe/releases/artifacts/`; son chemin interne n’est jamais

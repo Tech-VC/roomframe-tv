@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui4";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui4";
+} from "./scene-model.js?v=0.3.0-ui5";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui5";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -627,6 +627,13 @@ const renderReleases = () => {
       advance.dataset.advanceDeployment = deployment.id;
       advance.textContent = "Valider et ouvrir la suite";
       row.append(advance);
+      if (Number(progress.failed ?? 0) + Number(progress.deferred ?? 0) > 0) {
+        const retry = make("button", "tool");
+        retry.type = "button";
+        retry.dataset.retryDeployment = deployment.id;
+        retry.textContent = "Relancer les TV interrompues";
+        row.append(retry);
+      }
     }
     return row;
   });
@@ -1382,6 +1389,23 @@ $("#deploymentForm").addEventListener("submit", async (event) => {
   }
 });
 $("#releaseBoard").addEventListener("click", async (event) => {
+  const retry = event.target.closest("[data-retry-deployment]");
+  if (retry) {
+    retry.disabled = true;
+    try {
+      const result = await api.post(
+        `deployments/${encodeURIComponent(retry.dataset.retryDeployment)}/retry`,
+        {},
+      );
+      await refreshReleases();
+      toast(`${result.retriedCount} TV remise(s) dans la vague active.`);
+    } catch (error) {
+      toast(`La relance a été refusée : ${error.message}`, true);
+    } finally {
+      retry.disabled = false;
+    }
+    return;
+  }
   const button = event.target.closest("[data-advance-deployment]");
   if (!button) return;
   button.disabled = true;

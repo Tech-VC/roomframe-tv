@@ -156,6 +156,7 @@ GET  /api/v1/releases
 POST /api/v1/releases/import
 POST /api/v1/releases/:releaseId/deployments
 POST /api/v1/deployments/:deploymentId/advance
+POST /api/v1/deployments/:deploymentId/retry
 GET  /api/v1/tv/update
 GET  /api/v1/tv/updates/:deploymentId/apk
 POST /api/v1/tv/updates/:deploymentId/status
@@ -175,6 +176,9 @@ les retours des TV.
 
 Les trois routes `/tv/update*` exigent l’identité d’appareil et ne donnent
 accès qu’à la cible correspondante. L’APK est servi sans cache et les
-transitions de statut sont strictes. L’installation du code serveur et
+transitions de statut sont strictes. Un état `installed` dont la version ne
+correspond pas à la release est refusé. Une relance administrative remet
+explicitement les cibles `failed` ou `deferred` dans la vague active.
+L’installation du code serveur et
 l’installation silencieuse Android sans Device Owner ne sont pas déduites de
 ce statut.
