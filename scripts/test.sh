@@ -11,7 +11,8 @@ NODE_BIN="${ROOMFRAME_NODE_BIN:-$(command -v node 2>/dev/null || true)}"
   echo "Node.js 22 ou plus récent est requis." >&2
   exit 1
 }
-export PATH="$(dirname "$NODE_BIN"):$PATH"
+NODE_DIRECTORY="$(dirname "$NODE_BIN")"
+export PATH="$NODE_DIRECTORY:$PATH"
 
 if [[ ! -d "$ROOT/services/api/node_modules" ]]; then
   command -v npm >/dev/null 2>&1 || {

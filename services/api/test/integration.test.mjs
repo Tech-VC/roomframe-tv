@@ -2,17 +2,23 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  copyFile,
   mkdir,
   mkdtemp,
+  readdir,
+  readFile,
   rm,
   writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import sharp from 'sharp';
 import { buildApp } from '../src/app.mjs';
+import { buildTestUpdate } from '../scripts/build-test-update.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { createPool, runMigrations } from '../src/database.mjs';
+import { processOneMediaJob } from '../src/media-worker.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 
@@ -29,6 +35,26 @@ const cookieHeader = (response) => {
   const value = response.headers['set-cookie'];
   const first = Array.isArray(value) ? value[0] : value;
   return first?.split(';')[0] ?? '';
+};
+
+const multipartFile = ({ filename, mime, contents }) => {
+  const boundary = `roomframe-${crypto.randomBytes(16).toString('hex')}`;
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\n`
+      + `Content-Disposition: form-data; name="file"; filename="${filename}"\r\n`
+      + `Content-Type: ${mime}\r\n\r\n`,
+    ),
+    contents,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return {
+    body,
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'content-length': String(body.length),
+    },
+  };
 };
 
 test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV restent cohérents', {
@@ -101,7 +127,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
       totpCode: totpNow(challenge.secret),
       displayName: 'Organisation de test',
       roomName: `Salle ${index + 1}`,
-      defaultGreeting: 'Bonjour, bienvenue dans cette salle',
+      defaultGreeting: 'Bonjour,\n  bienvenue en salle de réunion 1',
       branding: { primary: '#151511', accent: '#ff4f1f' },
       policies: {
         returnHomeWhenInactiveMinutes: 15,
@@ -151,6 +177,186 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(session.statusCode, 200);
   const csrfToken = session.json().csrfToken;
+
+  const uploadedImage = await sharp({
+    create: {
+      width: 96,
+      height: 54,
+      channels: 4,
+      background: { r: 26, g: 108, b: 155, alpha: 1 },
+    },
+  }).png().toBuffer();
+  const uploadParts = multipartFile({
+    filename: 'image-neutre.png',
+    mime: 'image/png',
+    contents: uploadedImage,
+  });
+  const upload = await app.inject({
+    method: 'POST',
+    url: '/api/v1/media',
+    headers: {
+      ...uploadParts.headers,
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: uploadParts.body,
+  });
+  assert.equal(upload.statusCode, 202, upload.body);
+  const queuedAsset = upload.json();
+  assert.equal(queuedAsset.status, 'queued');
+  assert.match(queuedAsset.sha256, /^[a-f0-9]{64}$/);
+
+  assert.equal(await processOneMediaJob(pool, config, 'integration-worker'), true);
+  const processedAsset = await pool.query('SELECT * FROM assets WHERE id = $1', [queuedAsset.id]);
+  assert.equal(processedAsset.rows[0].processing_status, 'ready');
+  assert.ok(processedAsset.rows[0].variants.thumbnail);
+  assert.ok(processedAsset.rows[0].variants['1080p']);
+  const generated1080p = path.join(
+    config.mediaDir,
+    processedAsset.rows[0].variants['1080p'].path,
+  );
+  const generatedBytes = await readFile(generated1080p);
+  assert.equal(
+    crypto.createHash('sha256').update(generatedBytes).digest('hex'),
+    processedAsset.rows[0].variants['1080p'].sha256,
+  );
+  const generatedMetadata = await sharp(generatedBytes).metadata();
+  assert.equal(generatedMetadata.format, 'webp');
+  assert.equal(generatedMetadata.width, 96);
+  assert.equal(generatedMetadata.height, 54);
+  assert.equal(generatedMetadata.exif, undefined);
+  assert.equal(generatedMetadata.xmp, undefined);
+
+  const deliveredMedia = await app.inject({
+    method: 'GET',
+    url: `/api/v1/media/${queuedAsset.id}/1080p`,
+    headers: { cookie },
+  });
+  assert.equal(deliveredMedia.statusCode, 200);
+  assert.equal(deliveredMedia.headers['content-type'], 'image/webp');
+  assert.equal(deliveredMedia.headers['x-content-type-options'], 'nosniff');
+
+  const duplicateParts = multipartFile({
+    filename: 'copie-neutre.png',
+    mime: 'image/png',
+    contents: uploadedImage,
+  });
+  const duplicate = await app.inject({
+    method: 'POST',
+    url: '/api/v1/media',
+    headers: {
+      ...duplicateParts.headers,
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: duplicateParts.body,
+  });
+  assert.equal(duplicate.statusCode, 200, duplicate.body);
+  assert.equal(duplicate.json().id, queuedAsset.id);
+  const duplicateState = await pool.query(
+    'SELECT count(*) AS assets, (SELECT count(*) FROM media_jobs) AS jobs FROM assets',
+  );
+  assert.deepEqual(duplicateState.rows[0], { assets: '1', jobs: '1' });
+
+  const invalidParts = multipartFile({
+    filename: 'faux-media.jpg',
+    mime: 'image/jpeg',
+    contents: Buffer.from('ceci ne constitue pas une image'),
+  });
+  const invalidUpload = await app.inject({
+    method: 'POST',
+    url: '/api/v1/media',
+    headers: {
+      ...invalidParts.headers,
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: invalidParts.body,
+  });
+  assert.equal(invalidUpload.statusCode, 415);
+  assert.deepEqual(await readdir(config.processingDir), []);
+
+  const updateFixture = await buildTestUpdate(path.join(temporary, 'api-update'));
+  await mkdir(config.updateTrustDir, { recursive: true, mode: 0o700 });
+  await copyFile(
+    updateFixture.publicKeyPath,
+    path.join(config.updateTrustDir, 'dev-local.pem'),
+  );
+  const updateParts = multipartFile({
+    filename: 'roomframe-test-0.3.1.rfupdate',
+    mime: 'application/octet-stream',
+    contents: await readFile(updateFixture.bundlePath),
+  });
+  const importedUpdate = await app.inject({
+    method: 'POST',
+    url: '/api/v1/releases/import',
+    headers: {
+      ...updateParts.headers,
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: updateParts.body,
+  });
+  assert.equal(importedUpdate.statusCode, 201, importedUpdate.body);
+  const importedRelease = importedUpdate.json();
+  assert.equal(importedRelease.releaseId, updateFixture.manifest.releaseId);
+  assert.equal(importedRelease.status, 'verified');
+  assert.match(importedRelease.bundleSha256, /^[a-f0-9]{64}$/);
+  const quarantinedBundle = await readFile(path.join(
+    config.releasesDir,
+    'verified',
+    `${importedRelease.bundleSha256}.rfupdate`,
+  ));
+  assert.equal(
+    crypto.createHash('sha256').update(quarantinedBundle).digest('hex'),
+    importedRelease.bundleSha256,
+  );
+
+  const plannedDeployment = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/deployments`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      strategy: 'progressive',
+      targetType: 'fleet',
+    },
+  });
+  assert.equal(plannedDeployment.statusCode, 201, plannedDeployment.body);
+  assert.equal(plannedDeployment.json().status, 'planned');
+  assert.equal(
+    plannedDeployment.json().hardwareExecution,
+    'simulated-until-adapter-validation',
+  );
+
+  const invalidUpdateFixture = await buildTestUpdate(
+    path.join(temporary, 'api-update-invalid'),
+    {
+      manifestTextTransform: (manifest) => manifest.replace(
+        '"formatVersion": 1,',
+        '"formatVersion": 1,\n  "formatVersion": 1,',
+      ),
+    },
+  );
+  const invalidUpdateParts = multipartFile({
+    filename: 'roomframe-invalide.rfupdate',
+    mime: 'application/octet-stream',
+    contents: await readFile(invalidUpdateFixture.bundlePath),
+  });
+  const rejectedUpdate = await app.inject({
+    method: 'POST',
+    url: '/api/v1/releases/import',
+    headers: {
+      ...invalidUpdateParts.headers,
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: invalidUpdateParts.body,
+  });
+  assert.equal(rejectedUpdate.statusCode, 422, rejectedUpdate.body);
+  assert.equal(rejectedUpdate.json().error, 'duplicate_update_manifest_key');
+  const releaseCount = await pool.query('SELECT count(*) AS count FROM release_history');
+  assert.equal(releaseCount.rows[0].count, '1');
+  assert.deepEqual(await readdir(config.processingDir), []);
 
   const makeRoleSession = async (role, username) => {
     const userId = crypto.randomUUID();
@@ -296,6 +502,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   const studioState = studio.json();
   assert.equal(studioState.scene.currentRevision, 1);
   assert.equal(studioState.measuredMetrics, null);
+  const seededGreeting = studioState.scene.document.nodes.find(
+    (node) => node.kind === 'text' && node.props?.role === 'greeting',
+  );
+  assert.equal(seededGreeting.props.text, 'Bonjour, bienvenue en salle de réunion 1');
 
   const noCsrf = await app.inject({
     method: 'POST',

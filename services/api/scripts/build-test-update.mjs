@@ -27,6 +27,7 @@ export const buildTestUpdate = async (outputDirectory, {
   keyId = 'dev-local',
   tamperArtifact = false,
   extraEntries = [],
+  manifestTextTransform = (value) => value,
 } = {}) => {
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -61,7 +62,8 @@ export const buildTestUpdate = async (outputDirectory, {
       kind: 'oci-images',
     }],
   };
-  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestBytes = Buffer.from(manifestTextTransform(manifestText), 'utf8');
   const signature = crypto.sign(null, manifestBytes, privateKey);
   const archive = new yazl.ZipFile();
   archive.addBuffer(manifestBytes, 'manifest.json', { compress: false });

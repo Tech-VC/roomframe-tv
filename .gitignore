@@ -13,9 +13,14 @@ backups/
 media/
 node_modules/
 .gradle/
+.kotlin/
 **/build/
+local.properties
 .DS_Store
+._*
 dist/
 *.local
 runtime.env
 .idea/
+local-branding/
+local-hardware/

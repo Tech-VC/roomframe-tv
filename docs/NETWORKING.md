@@ -32,6 +32,10 @@ L'IPv4 est ajoutée au certificat Caddy et reste toujours affichée comme URL de
 secours. Un échec ou une incohérence DNS produit un avertissement et la ligne A
 à créer, sans bloquer l'installation.
 
+Caddy présente le certificat de cette IPv4 comme certificat SNI par défaut :
+l’URL de secours fonctionne aussi avec les clients TLS qui n’envoient pas de
+nom de serveur pour une adresse IP.
+
 ## Cas particulier de `.local`
 
 `.local` est réservé à mDNS dans de nombreux clients, alors que certains
@@ -66,6 +70,10 @@ VLAN Admin -> RoomFrame   TCP 443
 
 PostgreSQL, le worker, Docker et les répertoires persistants restent sur un
 réseau Docker interne et ne publient aucun port sur le LAN.
+
+Docker crée ses propres interfaces et routes de pont internes. Elles ne
+modifient ni l’adresse, ni le préfixe, ni la route par défaut, ni les DNS de
+l’interface LAN déjà configurée.
 
 ## Ordre de découverte cible côté TV
 

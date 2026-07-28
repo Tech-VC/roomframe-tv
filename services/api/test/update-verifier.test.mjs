@@ -116,4 +116,20 @@ test('un artefact non listé et un downgrade sont refusés', async (t) => {
     }),
     /update_version_not_newer/,
   );
+
+  const duplicateKey = await buildTestUpdate(path.join(directory, 'duplicate-key'), {
+    manifestTextTransform: (manifest) => manifest.replace(
+      '"formatVersion": 1,',
+      '"formatVersion": 1,\n  "formatVersion": 1,',
+    ),
+  });
+  await assert.rejects(
+    verifyUpdateBundle({
+      file: duplicateKey.bundlePath,
+      validators,
+      trustDir: path.dirname(duplicateKey.publicKeyPath),
+      currentVersion: '0.3.0',
+    }),
+    /duplicate_update_manifest_key/,
+  );
 });

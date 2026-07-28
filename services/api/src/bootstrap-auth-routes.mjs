@@ -27,7 +27,7 @@ const cleanText = (value, {
   minimum = 1,
   maximum,
 }) => {
-  const result = String(value ?? '').trim();
+  const result = String(value ?? '').replace(/\s+/gu, ' ').trim();
   if (result.length < minimum || result.length > maximum) {
     throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
   }

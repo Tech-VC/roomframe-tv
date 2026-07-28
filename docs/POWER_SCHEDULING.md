@@ -18,6 +18,28 @@ Le serveur valide et persiste déjà les horaires avec
 `requireCapabilityProbe=true`. Le squelette Android n’exécute pas encore ces
 politiques et aucune commande Philips n’est fournie dans le jalon `0.3.0`.
 
+## Économiseur d’écran et mode ambiant
+
+Le launcher applique `FLAG_KEEP_SCREEN_ON` tant que son activité est visible.
+RoomFrame empêche ainsi l’économiseur ou le mode ambiant de démarrer pendant
+l’affichage de l’accueil, sans modifier le réglage système de la TV. Lorsque
+RoomFrame passe en arrière-plan, Android autorise de nouveau l’extinction
+normale de l’écran.
+
+Sur la Philips de validation, l’économiseur Google TV est activé avec un délai
+de 600000 ms. Un test contrôlé a temporairement réduit ce délai à 15000 ms :
+RoomFrame est resté au premier plan, la TV est restée `Awake` et aucun
+`DreamService` n’a démarré. La valeur de 600000 ms a ensuite été restaurée.
+
+Si l’économiseur est déjà actif avant le lancement distant de RoomFrame, le
+drapeau ne ferme pas le rêve en cours. Une interaction télécommande l’arrête
+normalement. Le futur adaptateur de réveil devra traiter explicitement ce cas
+sans dépendre d’une commande ADB.
+
+Avant une veille programmée explicite, l’Agent devra libérer le maintien
+d’écran, puis seulement appeler l’adaptateur de puissance validé. Ce chemin
+reste à implémenter.
+
 ## Réveil
 
 Un réveil programmé est plus contraignant : une application ne s’exécute pas si la TV est totalement hors tension. Trois niveaux sont prévus :

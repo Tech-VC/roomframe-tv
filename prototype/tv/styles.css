@@ -25,7 +25,10 @@ main { min-height: 0; display: grid; place-items: center; background: #050505; }
 .wash { position: absolute; inset: 0; z-index: 1; background: linear-gradient(90deg, rgba(2,6,6,.76), rgba(2,6,6,.08) 67%, rgba(2,6,6,.55)); }
 #nodeLayer { position: absolute; inset: 0; z-index: 2; }
 .node { position: absolute; display: flex; align-items: center; color: white; overflow: hidden; white-space: pre-wrap; }
+.node-text { min-width: 0; overflow: hidden; }
 .kind-text { font-family: Georgia, serif; font-size: 3.3cqw; line-height: 1.03; letter-spacing: -.04em; }
+.kind-text.role-greeting { white-space: nowrap; font-size: 2.3cqw; }
+.kind-text.role-greeting .node-text { width: 100%; white-space: nowrap; text-overflow: ellipsis; }
 .kind-clock, .kind-weather { justify-content: flex-end; font-size: 1.05cqw; letter-spacing: .08em; }
 .kind-source, .kind-app { justify-content: space-between; border: 0; border-top: 1px solid rgba(255,255,255,.65); border-bottom: 1px solid rgba(255,255,255,.22); padding: 0 1cqw; background: rgba(0,0,0,.08); color: white; font-weight: 900; font-size: 1.25cqw; text-transform: uppercase; letter-spacing: .09em; text-align: left; }
 .kind-source::after, .kind-app::after { content: "↗"; color: var(--acid); font-size: 1.5cqw; }

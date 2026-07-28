@@ -24,9 +24,13 @@ L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 - `session_secret` ;
 - `totp_encryption_key`.
 
-Ces fichiers sont root-only, réguliers, non vides et en mode `0600`. Ils sont
-montés dans les conteneurs sous `/run/secrets` et ne transitent pas dans les
-variables d’environnement. Une seconde installation conserve leur contenu.
+Le répertoire est `root:root` en mode `0700`. Les fichiers sont réguliers, non
+vides, `root:root` en mode `0444`. Sur l’hôte, aucun compte non-root ne peut les
+lire puisqu’il ne peut pas traverser le répertoire `0700`. Docker monte ensuite
+individuellement et en lecture seule uniquement les secrets autorisés pour
+chaque conteneur ; ce mode permet à l’API exécutée sans privilèges de lire son
+montage. Les secrets ne transitent jamais dans les variables d’environnement.
+Une seconde installation conserve leur contenu.
 
 `/etc/roomframe/runtime.conf` contient uniquement les chemins, URL, hôte,
 IPv4, version et fuseau nécessaires à Compose.
@@ -152,8 +156,8 @@ JavaScript libre sont refusés.
 Les `.rfupdate` exigent une signature Ed25519 et une clé publique approuvée.
 La clé privée reste hors du dépôt et du serveur. La requête d’import ne fait
 qu’une vérification et une mise en quarantaine ; elle n’exécute ni shell, ni
-migration, ni image. Le vérificateur CLI refuse les clés JSON dupliquées ; la
-parité de ce contrôle dans le vérificateur Node de l’API reste à ajouter.
+migration, ni image. Le vérificateur CLI et le vérificateur Node de l’API
+refusent tous deux les clés JSON dupliquées avant validation du contrat.
 
 Une clé publique est approuvée uniquement après contrôle d’empreinte :
 
@@ -175,3 +179,9 @@ et le job de packaging reçoit `contents: write` seulement après validation.
 `SHA256SUMS`. Une sauvegarde contient la configuration et la PKI : elle doit
 être protégée comme un secret, déplacée vers un stockage sûr et chiffrée selon
 la politique de l’organisation.
+
+`roomframe-verify-backup --latest`, exécutable uniquement par root, refuse les
+liens, entrées inattendues, permissions trop ouvertes, archives dangereuses et
+checksums invalides. Le dump est réellement restauré dans un conteneur
+PostgreSQL éphémère avec `--network none`; aucune donnée de production n’est
+écrite ou remplacée.

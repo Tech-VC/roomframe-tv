@@ -93,6 +93,11 @@ affichée :
 DNS à créer dans la zone interne : roomframe.example.local  A  192.0.2.20
 ```
 
+Le certificat HTTPS de secours contient l’IPv4 détectée. Caddy utilise aussi
+cette IPv4 comme SNI par défaut afin que les clients qui n’envoient aucun nom
+de serveur lors d’un accès direct par IP reçoivent tout de même le bon
+certificat local.
+
 ## Configuration et données
 
 ```text
@@ -116,6 +121,12 @@ Les secrets PostgreSQL, bootstrap, session et chiffrement TOTP sont créés
 uniquement lorsqu’ils sont absents. Une seconde exécution conserve les fichiers
 existants ; aucun secret n’est régénéré silencieusement.
 
+Le répertoire `/etc/roomframe/secrets` reste `root:root` en mode `0700`. Ses
+fichiers sont `root:root` en mode `0444` : ils restent inaccessibles directement
+aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-root
+une fois montés individuellement et en lecture seule par Docker. Chaque service
+ne reçoit que les secrets déclarés dans `compose.yaml`.
+
 `runtime.conf` mémorise également l’UID/GID du compte `roomframe`. Les médias,
 traitements et releases lui appartiennent. La demande de récupération reste
 écrite par root, lisible par le groupe runtime et montée en lecture seule dans
@@ -132,6 +143,11 @@ supprimer un fichier présent uniquement dans `/opt/roomframe`. Cette stratégie
 protège les données, mais n’est pas encore un déploiement atomique par
 répertoire de version.
 
+Les instructions locales `AGENTS.md`, les dossiers privés de validation
+`local-branding/` et `local-hardware/`, ainsi que les métadonnées macOS
+`.DS_Store` et AppleDouble `._*`, sont explicitement exclus de cette copie et
+des archives de release.
+
 ## Commandes d’exploitation
 
 ```bash
@@ -139,6 +155,7 @@ sudo roomframe-compose ps
 sudo roomframe-compose logs --tail=200 api worker
 sudo roomframe-diagnose
 sudo roomframe-backup
+sudo roomframe-verify-backup --latest
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -158,6 +175,12 @@ sudo roomframe-backup --without-media
 
 Une sauvegarde contient de la configuration sensible et de la PKI. Elle reste
 root-only et doit être déplacée vers un stockage protégé.
+
+`roomframe-verify-backup --latest` vérifie ensuite la liste et les permissions
+des fichiers, les SHA-256, les métadonnées, la sûreté des archives et restaure
+le dump dans un PostgreSQL 17 temporaire sans réseau ni port publié. Cette
+validation ne modifie jamais la base installée. Un chemin explicite vers un
+enfant direct de `/var/lib/roomframe/backups` peut remplacer `--latest`.
 
 ## Approuver une clé de mise à jour
 

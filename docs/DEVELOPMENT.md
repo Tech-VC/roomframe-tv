@@ -42,9 +42,10 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 9 scénarios : modèle Studio et compatibilité avec le validateur
-API, normalisation du vrai manifeste TV, réponse `upToDate`, hashes et
-préférence de la variante 1080p. Ce lot passe `9/9`.
+Ils comptent 14 scénarios : modèle Studio, salutation mono-ligne et
+compatibilité avec le validateur API, normalisation du vrai manifeste TV,
+réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
+sûr des réponses API non JSON ou malformées. Ce lot passe `14/14`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -75,8 +76,8 @@ ROOMFRAME_TEST_DB_PASSWORD
 Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
-La suite API couvre actuellement 13 scénarios Node, auxquels s’ajoutent les
-9 tests UI, soit 22 tests sur un clone frais. Les workflows GitHub de
+La suite API couvre actuellement 19 scénarios Node, auxquels s’ajoutent les
+14 tests UI, soit 33 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -88,7 +89,13 @@ donc ce même ensemble. Les scénarios comprennent notamment :
 - isolation des assets d’une TV ;
 - seed appliqué une seule fois et migrations rejouables ;
 - récupération liée au bon compte, consommation unique et refus du rejeu ;
+- upload multipart réel, détection MIME, traitement Sharp, hashes des
+  variantes, suppression des métadonnées, déduplication et refus d’un faux
+  média ;
+- détourage automatique prudent des logos et sélection de la variante alpha ;
 - contrats de scène et fuseaux ;
+- import multipart `.rfupdate`, quarantaine, plan progressif et refus HTTP
+  d’un manifeste signé contenant des clés JSON dupliquées ;
 - mise à jour Ed25519 valide et refus des altérations, artefacts non listés et
   downgrades, ainsi que remplacement sûr d’une quarantaine corrompue.
 
@@ -108,6 +115,7 @@ sudo ./install.sh --host roomframe.example.local
 sudo ./install.sh --host roomframe.example.local
 sudo /opt/roomframe/scripts/roomframe-diagnose.sh
 sudo /opt/roomframe/scripts/roomframe-backup.sh
+sudo /opt/roomframe/scripts/roomframe-verify-backup.sh --latest
 ```
 
 La seconde exécution doit conserver les secrets, la base, les médias, la PKI,
@@ -128,8 +136,71 @@ copié dans le dépôt ni servir à une release.
 
 ## Android
 
-Le projet fournit ses fichiers Gradle mais pas encore de wrapper `gradlew`
-versionné. Il compile un fallback d’accueil natif sans WebView et contient :
+Le projet versionne un wrapper Gradle 8.9 avec le SHA-256 de la distribution.
+Le build nécessite JDK 17, Android SDK Platform 35 et Android SDK Build Tools
+35.0.0 :
+
+```bash
+cd apps/tv-android
+./gradlew --no-daemon clean :app:assembleDebug
+```
+
+L’APK de développement est produit dans
+`app/build/outputs/apk/debug/app-debug.apk`. Après avoir autorisé ADB sur une
+TV de test :
+
+```bash
+adb connect TV_IP_ADDRESS:5555
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -W -n org.roomframe.tv/.MainActivity
+```
+
+`adb install -r` conserve les données de l’application lorsqu’une version
+signée avec la même clé est déjà installée. La clé debug locale ne doit jamais
+devenir la clé de signature des releases.
+
+Pour constituer un relevé matériel privé et reproductible :
+
+```bash
+./scripts/collect-android-tv-capabilities.sh \
+  --target TV_IP_ADDRESS:5555 \
+  --output PRIVATE_OUTPUT_DIRECTORY
+```
+
+L’option `--include-third-party-packages` ajoute uniquement les identifiants
+des applications installées. La collecte exclut volontairement numéro de
+série, comptes, SSID, adresses réseau, appareils associés et contenu consulté.
+Le dossier de sortie doit rester privé ; `local-hardware/` est ignoré par Git
+pour les essais effectués dans ce dépôt.
+
+### Surcharge visuelle locale de test
+
+Un APK debuggable peut charger temporairement un fond et un logo depuis son
+stockage privé, sans les embarquer dans le dépôt public. Les noms acceptés
+sont `background` et `logo`, avec une extension `.webp`, `.png`, `.jpg` ou
+`.jpeg`, une limite de 25 Mio par fichier et une limite décodée de 3840 ×
+2160 pixels.
+
+```bash
+adb push LOCAL_BACKGROUND_FILE /data/local/tmp/roomframe-background.png
+adb push LOCAL_LOGO_FILE /data/local/tmp/roomframe-logo.png
+adb shell run-as org.roomframe.tv mkdir -p files/branding
+adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-background.png files/branding/background.png
+adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-logo.png files/branding/logo.png
+adb shell run-as org.roomframe.tv chmod 600 files/branding/background.png files/branding/logo.png
+adb shell rm /data/local/tmp/roomframe-background.png /data/local/tmp/roomframe-logo.png
+```
+
+Ce chemin est désactivé dans les builds non debuggables. Il sert uniquement
+au prototypage matériel ; les releases doivent recevoir leurs médias validés,
+optimisés et adressés par hash via le pipeline de synchronisation.
+
+Les builds debug acceptent les autorités de certification ajoutées par
+l’utilisateur Android afin de tester la CA Caddy locale. Les builds release
+continuent de faire confiance uniquement aux CA système tant que le client
+HTTPS n’a pas reçu la CA d’instance par le flux d’enrôlement.
+
+Le launcher compile un fallback d’accueil natif sans WebView et contient :
 
 - `cache/FileExperienceStore`, qui vérifie les hashes, écrit un staging,
   bascule les pointeurs atomiquement et conserve la révision précédente ;
@@ -138,7 +209,9 @@ versionné. Il compile un fallback d’accueil natif sans WebView et contient :
 - des adaptateurs qui répondent honnêtement `unsupported` et des simulateurs
   réservés aux tests.
 
-Le build Android reproductible n’est pas encore exécuté dans cette suite faute
-de wrapper/SDK validé. L’intégration du cache, du client HTTPS et de la PKI au
-launcher reste incomplète. Aucun résultat matériel réel ne peut être déduit
-des adaptateurs simulés.
+Le build debug 0.3.0 a été installé et lancé sur le matériel Philips documenté
+dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
+D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
+client HTTPS, de la PKI et de l’installation APK pilotée par l’administration
+reste incomplète. Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour
+silencieuse ne peut être déduit des adaptateurs `unsupported` ou simulés.

@@ -99,7 +99,7 @@ create_secret_once() {
   if [[ -e "$destination" ]]; then
     [[ -f "$destination" && -s "$destination" ]] \
       || fail "le secret existant est invalide ou vide: $destination"
-    chmod 0600 "$destination"
+    chmod 0444 "$destination"
     chown root:root "$destination"
     return
   fi
@@ -109,7 +109,7 @@ create_secret_once() {
     rm -f "$temporary"
     fail "génération du secret impossible: $name"
   fi
-  chmod 0600 "$temporary"
+  chmod 0444 "$temporary"
   chown root:root "$temporary"
   mv -n "$temporary" "$destination"
   if [[ -e "$temporary" ]]; then

@@ -45,7 +45,7 @@ Une mise à jour logicielle :
 
 - scène 1920 × 1080 ;
 - fond neutre optimisé ;
-- salutation ;
+- salutation mono-ligne, réduite automatiquement si nécessaire ;
 - heure et météo ;
 - AirPlay, Cast et HDMI ;
 - zone de messages ;

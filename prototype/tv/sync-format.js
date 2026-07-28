@@ -58,3 +58,39 @@ export const variantRank = (variant) => ({
   original: 1,
   "1080p": 2,
 }[variant] ?? 1);
+
+export const createAssetResolver = (
+  assets,
+  createObjectUrl = (blob) => URL.createObjectURL(blob),
+) => {
+  const map = new Map();
+  const aliasRanks = new Map();
+  const variantAliases = new Map();
+  const createdObjectUrls = [];
+  for (const asset of assets ?? []) {
+    if (!(asset.blob instanceof Blob)) continue;
+    const url = createObjectUrl(asset.blob);
+    createdObjectUrls.push(url);
+    map.set(asset.key, url);
+    const aliases = asset.aliases ?? [asset.assetId, asset.sha256].filter(Boolean);
+    for (const alias of aliases) {
+      if (asset.variant) variantAliases.set(`${alias}:${asset.variant}`, url);
+      const rank = variantRank(asset.variant);
+      if (!map.has(alias) || rank > (aliasRanks.get(alias) ?? -1)) {
+        map.set(alias, url);
+        aliasRanks.set(alias, rank);
+      }
+    }
+  }
+  return {
+    createdObjectUrls,
+    resolve(key, preferredVariant = null) {
+      if (!key) return null;
+      if (/^(blob:|https?:|\/)/.test(key)) return key;
+      if (preferredVariant && variantAliases.has(`${key}:${preferredVariant}`)) {
+        return variantAliases.get(`${key}:${preferredVariant}`);
+      }
+      return map.get(key) ?? map.get(String(key).replace(/^assets\//, "")) ?? key;
+    },
+  };
+};

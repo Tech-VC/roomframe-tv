@@ -21,6 +21,8 @@ const numberInRange = (value, fallback, min, max) => {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 };
 
+export const singleLineText = (value) => String(value ?? "").replace(/\s+/gu, " ").trim();
+
 const uuid = () => globalThis.crypto?.randomUUID?.() ?? `node-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 export const DEFAULT_SCENE = Object.freeze({
@@ -41,7 +43,7 @@ export const DEFAULT_SCENE = Object.freeze({
     },
   },
   nodes: [
-    { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { role: "greeting", text: "Bonjour, bienvenue dans cette salle", fontScale: 1, maxLines: 3 } },
+    { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { role: "greeting", text: "Bonjour, bienvenue en salle de réunion 1", fontScale: 1, maxLines: 1 } },
     { id: "clock-weather", kind: "clock", x: 1320, y: 58, width: 500, height: 90, zIndex: 20, focusOrder: 0, props: { showDate: false, showWeather: true, format: "24h" } },
     { id: "airplay", kind: "source", x: 90, y: 485, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
     { id: "cast", kind: "source", x: 90, y: 625, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
@@ -55,13 +57,19 @@ export const DEFAULT_SCENE = Object.freeze({
 export const cloneScene = (scene) => structuredClone(scene);
 
 const migrateNode = (input, index) => {
-  const legacyKind = input?.kind === "greeting" ? "text" : input?.kind === "messages" ? "message" : input?.kind;
+  const legacyGreeting = input?.kind === "greeting";
+  const legacyKind = legacyGreeting ? "text" : input?.kind === "messages" ? "message" : input?.kind;
   const kind = NODE_KINDS.has(legacyKind) ? legacyKind : "text";
   const inputProps = input?.props && typeof input.props === "object" ? { ...input.props } : {};
   if (inputProps.packageName && !inputProps.applicationId) inputProps.applicationId = inputProps.packageName;
   const props = Object.fromEntries(Object.entries(inputProps).filter(([key]) => ALLOWED_PROPS[kind].has(key)));
   if (input?.content != null && kind === "text" && props.text == null) props.text = String(input.content);
   if (input?.content != null && kind === "message" && props.title == null) props.title = String(input.content).split(/[|\n]/)[0];
+  if (legacyGreeting) props.role = "greeting";
+  if (kind === "text" && props.role === "greeting") {
+    props.text = singleLineText(props.text);
+    props.maxLines = 1;
+  }
   if (ALLOWED_PROPS[kind].has("label") && props.label == null) props.label = input?.label ?? kind;
   const x = numberInRange(input?.x, 100 + index * 20, 0, CANVAS_WIDTH - 20);
   const y = numberInRange(input?.y, 100 + index * 20, 0, CANVAS_HEIGHT - 20);
@@ -159,7 +167,10 @@ export const nodeDisplayText = (node) => {
 };
 
 export const setNodeDisplayText = (node, value) => {
-  if (node.kind === "text") node.props.text = value;
+  if (node.kind === "text") {
+    node.props.text = node.props.role === "greeting" ? singleLineText(value) : value;
+    if (node.props.role === "greeting") node.props.maxLines = 1;
+  }
   else if (node.kind === "message") node.props.title = String(value).split("\n")[0];
   else if (node.kind === "network") node.props.value = value;
   else if (node.kind === "weather" || ALLOWED_PROPS[node.kind].has("label")) node.props.label = value;

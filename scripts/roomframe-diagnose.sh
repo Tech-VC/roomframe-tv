@@ -33,6 +33,15 @@ note "RoomFrame ${ROOMFRAME_VERSION:-version inconnue}"
 note "Administration: ${ROOMFRAME_PUBLIC_URL:-URL inconnue}"
 note "IPv4 détectée: ${ROOMFRAME_SERVER_IP:-inconnue}"
 
+secrets_directory="$CONFIG_DIR/secrets"
+secrets_directory_mode="$(stat -c '%a' "$secrets_directory" 2>/dev/null || true)"
+secrets_directory_owner="$(stat -c '%u:%g' "$secrets_directory" 2>/dev/null || true)"
+if [[ "$secrets_directory_mode" == "700" && "$secrets_directory_owner" == "0:0" ]]; then
+  ok "répertoire de secrets root-only (0700)"
+else
+  bad "protection du répertoire de secrets: ${secrets_directory_mode:-absente} ${secrets_directory_owner:-inconnue}, attendu 700 0:0"
+fi
+
 for directory in app postgres media processing releases backups pki caddy caddy-config seed; do
   if [[ -d "$DATA_DIR/$directory" ]]; then
     ok "volume persistant $directory"
@@ -48,10 +57,11 @@ for secret_name in postgres_password bootstrap_token session_secret totp_encrypt
     continue
   fi
   mode="$(stat -c '%a' "$secret_path" 2>/dev/null || true)"
-  if [[ "$mode" == "600" ]]; then
-    ok "secret $secret_name présent avec permissions 0600"
+  owner="$(stat -c '%u:%g' "$secret_path" 2>/dev/null || true)"
+  if [[ "$mode" == "444" && "$owner" == "0:0" ]]; then
+    ok "secret $secret_name protégé par le répertoire root-only et montable en lecture seule (0444)"
   else
-    bad "permissions du secret $secret_name: ${mode:-inconnues}, attendu 600"
+    bad "protection du secret $secret_name: ${mode:-inconnue} ${owner:-inconnu}, attendu 444 0:0"
   fi
 done
 

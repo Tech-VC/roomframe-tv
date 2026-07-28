@@ -14,6 +14,16 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
+if find . \
+  \( -path './.git' -o -path './services/api/node_modules' \
+     -o -path './apps/tv-android/.gradle' -o -path './apps/tv-android/app/build' \
+     -o -path './local-branding' -o -path './local-hardware' \) -prune \
+  -o -type f \( -name '._*' -o -name '.DS_Store' \) -print -quit \
+  | grep -q .; then
+  echo "Des métadonnées macOS .DS_Store ou AppleDouble ._* sont présentes dans les sources." >&2
+  exit 1
+fi
+
 bash -n install.sh
 while IFS= read -r -d '' script; do
   bash -n "$script"

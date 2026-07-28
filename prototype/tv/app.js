@@ -1,5 +1,5 @@
 import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js";
-import { bytesToHex, normalizeSyncPayload, stableStringify, variantRank } from "./sync-format.js";
+import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js";
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
@@ -28,7 +28,7 @@ const bundledRevision = {
       background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5 },
     },
     nodes: [
-      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue dans cette salle", role: "greeting", fontScale: 1, maxLines: 3 } },
+      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue en salle de réunion 1", role: "greeting", fontScale: 1, maxLines: 1 } },
       { id: "clock", kind: "clock", x: 1320, y: 58, width: 500, height: 90, zIndex: 20, focusOrder: 0, props: { showDate: false, showWeather: true, format: "24h" } },
       { id: "airplay", kind: "source", x: 90, y: 485, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
       { id: "cast", kind: "source", x: 90, y: 625, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
@@ -61,28 +61,9 @@ const revokeObjectUrls = () => {
 };
 
 const assetResolver = (revision) => {
-  const map = new Map();
-  const aliasRanks = new Map();
-  for (const asset of revision.assets ?? []) {
-    if (asset.blob instanceof Blob) {
-      const url = URL.createObjectURL(asset.blob);
-      objectUrls.push(url);
-      map.set(asset.key, url);
-      const aliases = asset.aliases ?? [asset.assetId, asset.sha256].filter(Boolean);
-      for (const alias of aliases) {
-        const rank = variantRank(asset.variant);
-        if (!map.has(alias) || rank > (aliasRanks.get(alias) ?? -1)) {
-          map.set(alias, url);
-          aliasRanks.set(alias, rank);
-        }
-      }
-    }
-  }
-  return (key) => {
-    if (!key) return null;
-    if (/^(blob:|https?:|\/)/.test(key)) return key;
-    return map.get(key) ?? map.get(String(key).replace(/^assets\//, "")) ?? key;
-  };
+  const indexed = createAssetResolver(revision.assets);
+  objectUrls.push(...indexed.createdObjectUrls);
+  return indexed.resolve;
 };
 
 const nodeText = (node) => {
@@ -111,7 +92,8 @@ const renderRevision = (revision) => {
 
   const nodes = [...(scene.nodes ?? [])].sort((a, b) => a.zIndex - b.zIndex).map((node) => {
     const interactive = ["source", "app"].includes(node.kind);
-    const element = make(interactive ? "button" : "div", `node kind-${node.kind}`);
+    const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
+    const element = make(interactive ? "button" : "div", `node kind-${node.kind}${roleClass}`);
     if (interactive) {
       element.type = "button";
       element.dataset.adapter = node.props?.source ?? node.props?.applicationId ?? "unsupported";
@@ -125,7 +107,10 @@ const renderRevision = (revision) => {
     if (interactive && Number(node.focusOrder) > 0) element.tabIndex = Number(node.focusOrder);
 
     if (["logo", "image"].includes(node.kind)) {
-      const url = resolveAsset(node.props?.assetId ?? node.props?.asset);
+      const url = resolveAsset(
+        node.props?.assetId ?? node.props?.asset,
+        node.kind === "logo" ? "logo" : null,
+      );
       if (url) {
         const image = make("img");
         image.src = url;
@@ -146,7 +131,9 @@ const renderRevision = (revision) => {
       }
     } else if (node.kind === "message") {
       element.append(make("strong", "", node.props?.title ?? "MESSAGES"));
-    } else element.textContent = nodeText(node);
+    } else {
+      element.append(make("span", "node-text", nodeText(node)));
+    }
     return element;
   });
   $("#nodeLayer").replaceChildren(...nodes);

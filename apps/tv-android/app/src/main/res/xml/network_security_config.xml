@@ -2,5 +2,8 @@
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors><certificates src="system" /></trust-anchors>
     </base-config>
+    <debug-overrides>
+        <trust-anchors><certificates src="user" /></trust-anchors>
+    </debug-overrides>
     <!-- La CA locale ou le pin est injecté pendant l’enrôlement dans la version production. -->
 </network-security-config>

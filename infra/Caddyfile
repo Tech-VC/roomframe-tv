@@ -3,6 +3,9 @@
 {
   auto_https disable_redirects
   admin off
+  # Les clients TLS n'envoient pas tous un SNI pour une URL contenant une IP.
+  # Présenter alors explicitement le certificat de l'IPv4 de secours.
+  default_sni __ROOMFRAME_DEFAULT_SNI__
 }
 
 __ROOMFRAME_SITE_ADDRESSES__ {

@@ -97,6 +97,18 @@ python3 scripts/verify-update-bundle.py release.rfupdate \
 Ce vérificateur contrôle aussi les clés JSON dupliquées et n’extrait pas
 l’archive.
 
+Avant toute future application de release, une sauvegarde peut être éprouvée
+sans toucher à l’instance :
+
+```bash
+sudo roomframe-backup
+sudo roomframe-verify-backup --latest
+```
+
+La seconde commande contrôle l’enveloppe puis restaure réellement le dump dans
+un PostgreSQL temporaire sans réseau. Elle ne constitue pas encore la
+procédure de restauration complète de production.
+
 ## Plans canari et progressifs
 
 Après import, l’API peut enregistrer :
@@ -118,8 +130,6 @@ Le jalon ne comprend pas encore :
 - l’import des images, le redémarrage orchestré et le healthcheck de rollback ;
 - l’avancement automatique des vagues canari/progressives ;
 - l’installation silencieuse d’APK sur Device Owner ;
-- le refus explicite des clés JSON dupliquées par le vérificateur Node de
-  l’API, déjà assuré par le vérificateur CLI indépendant ;
 - une commande documentée de restauration complète.
 
 Deux frontières restent particulièrement importantes :

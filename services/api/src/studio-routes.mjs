@@ -16,6 +16,7 @@ import { withTransaction } from './database.mjs';
 import {
   ensureStorageCapacity,
   mediaVariantPath,
+  selectMediaDeliveryVariants,
   storeMediaUpload,
   streamMediaVariant,
 } from './media.mjs';
@@ -195,6 +196,7 @@ const serializeAsset = (asset) => ({
   focalX: Number(asset.focal_x ?? 0.5),
   focalY: Number(asset.focal_y ?? 0.5),
   variants: variantUrls(asset),
+  logoTransparency: asset.metadata?.logoTransparency ?? null,
   createdAt: asset.created_at,
 });
 
@@ -285,19 +287,23 @@ const sceneForScreen = async (pool, screen) => {
   return scene.rows[0];
 };
 
-const referencedAssetIds = (scene) => {
-  const ids = new Set();
-  const add = (value) => {
-    if (typeof value === 'string' && uuidPattern.test(value)) ids.add(value);
+const referencedAssetUsages = (scene) => {
+  const usages = new Map();
+  const add = (value, usage) => {
+    if (typeof value !== 'string' || !uuidPattern.test(value)) return;
+    if (!usages.has(value)) usages.set(value, new Set());
+    usages.get(value).add(usage);
   };
-  add(scene.canvas?.background?.assetId);
-  add(scene.canvas?.background?.asset);
+  add(scene.canvas?.background?.assetId, 'content');
+  add(scene.canvas?.background?.asset, 'content');
   for (const node of scene.nodes ?? []) {
-    add(node.props?.assetId);
-    add(node.props?.iconAssetId);
+    add(node.props?.assetId, node.kind === 'logo' ? 'logo' : 'content');
+    add(node.props?.iconAssetId, 'content');
   }
-  return [...ids];
+  return usages;
 };
+
+const referencedAssetIds = (scene) => [...referencedAssetUsages(scene).keys()];
 
 const referencedDefaultAssets = (scene) => {
   const paths = new Set();
@@ -324,7 +330,8 @@ const validPublishedVariant = (descriptor) => (
 );
 
 const assertSceneAssetsAvailable = async (queryable, scene, experience, errorCode) => {
-  const assetIds = referencedAssetIds(scene);
+  const assetUsages = referencedAssetUsages(scene);
+  const assetIds = [...assetUsages.keys()];
   const uploadedAssets = assetIds.length === 0
     ? []
     : (await queryable.query(
@@ -334,8 +341,7 @@ const assertSceneAssetsAvailable = async (queryable, scene, experience, errorCod
   const byId = new Map(uploadedAssets.map((asset) => [asset.id, asset]));
   const unavailable = assetIds.filter((id) => {
     const asset = byId.get(id);
-    const deliveryVariants = Object.entries(asset?.variants ?? {})
-      .filter(([name]) => name !== 'thumbnail')
+    const deliveryVariants = selectMediaDeliveryVariants(asset, assetUsages.get(id))
       .map(([, descriptor]) => descriptor);
     return (
       !asset
@@ -1180,8 +1186,9 @@ export const registerStudioRoutes = ({
       experience,
       'published_scene_assets_unavailable',
     );
-    const mediaAssets = uploadedAssets.flatMap((asset) => Object.entries(asset.variants ?? {})
-      .filter(([variant]) => variant !== 'thumbnail')
+    const assetUsages = referencedAssetUsages(sceneRecord.document);
+    const mediaAssets = uploadedAssets.flatMap((asset) => (
+      selectMediaDeliveryVariants(asset, assetUsages.get(asset.id))
       .map(([variant, descriptor]) => ({
         id: `${asset.id}:${variant}`,
         assetId: asset.id,
@@ -1191,7 +1198,8 @@ export const registerStudioRoutes = ({
         sha256: descriptor.sha256,
         size: descriptor.size,
         mime: descriptor.mime,
-      })));
+      }))
+    ));
 
     const defaultAssets = [...referencedDefaultAssets(sceneRecord.document)].map((entryPath) => {
       const descriptor = experience.manifest.files.find((entry) => entry.path === entryPath);

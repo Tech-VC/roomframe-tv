@@ -41,6 +41,12 @@ jobs:
             sudo rmdir "$test_root"
           }
           trap cleanup_test_root EXIT
+          mkdir -p local-branding local-hardware
+          printf '%s\n' private-test-only > local-branding/private-test-only.txt
+          printf '%s\n' private-test-only > local-hardware/private-test-only.txt
+          printf '%s\n' local-agent-instructions > AGENTS.md
+          printf '%s\n' apple-double-test > prototype/admin/._private-test-only.js
+          printf '%s\n' finder-test > prototype/admin/.DS_Store
           sudo env \
             ROOMFRAME_INSTALL_DIR="$test_root/install" \
             ROOMFRAME_CONFIG_DIR="$test_root/config" \
@@ -66,18 +72,31 @@ jobs:
           test "$before" = "$after"
           sudo test -f "$test_root/config/runtime.conf"
           sudo test -f "$test_root/data/seed/default-experience/manifest.json"
-      - name: Ensure neutral public defaults
+          sudo test ! -e "$test_root/install/AGENTS.md"
+          sudo test ! -e "$test_root/install/local-branding"
+          sudo test ! -e "$test_root/install/local-hardware"
+          sudo test ! -e "$test_root/install/prototype/admin/._private-test-only.js"
+          sudo test ! -e "$test_root/install/prototype/admin/.DS_Store"
+      - name: Reject private artifacts and local identifiers
         run: |
-          if grep \
-            --recursive \
-            --line-number \
-            --ignore-case \
-            --extended-regexp \
-            --binary-files=without-match \
-            --exclude-dir=node_modules \
-            --exclude='.env*' \
-            'septem|montrichard|51 rue des bois' \
-            defaults examples apps services prototype README.md docs; then
-            echo 'Des données spécifiques à une instance ont été trouvées.' >&2
+          forbidden_paths="$(
+            git ls-files \
+              | grep -Ei \
+                '(^|/)(AGENTS\.md|local-branding|local-hardware|node_modules|\.env[^/]*)(/|$)|\.(pem|key|crt|p12|jks|keystore|rfupdate|apk|aab)$' \
+              || true
+          )"
+          if [[ -n "$forbidden_paths" ]]; then
+            printf '%s\n' "$forbidden_paths" >&2
+            echo 'Des artefacts locaux ou sensibles sont suivis par Git.' >&2
+            exit 1
+          fi
+          if git ls-files -z \
+            | xargs -0 grep \
+                --line-number \
+                --extended-regexp \
+                --binary-files=without-match \
+                '(/Users/|/home/[A-Za-z0-9._-]+/|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|gh[pousr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|(^|[^0-9])10\.([0-9]{1,3}\.){2}[0-9]{1,3}([^0-9]|$)|(^|[^0-9])192\.168\.([0-9]{1,3}\.)[0-9]{1,3}([^0-9]|$)|(^|[^0-9])172\.(1[6-9]|2[0-9]|3[01])\.([0-9]{1,3}\.)[0-9]{1,3}([^0-9]|$))'
+          then
+            echo 'Un secret potentiel, chemin local ou identifiant réseau privé a été trouvé.' >&2
             exit 1
           fi

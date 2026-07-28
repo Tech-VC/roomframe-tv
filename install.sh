@@ -231,6 +231,8 @@ SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
 [[ -f "$SOURCE_DIR/compose.yaml" ]] || fail "compose.yaml introuvable dans $SOURCE_DIR"
 [[ -f "$SOURCE_DIR/infra/Caddyfile" ]] || fail "infra/Caddyfile introuvable dans $SOURCE_DIR"
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
+[[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
+  || fail "Liste d’exclusion des sources introuvable."
 
 install_dependencies() {
   local need_apt=0 command_name
@@ -384,16 +386,7 @@ mkdir -p "$INSTALL_DIR"
 INSTALL_DIR="$(cd -- "$INSTALL_DIR" && pwd)"
 if [[ "$SOURCE_DIR" != "$INSTALL_DIR" ]]; then
   tar \
-    --exclude='.git' \
-    --exclude='.env*' \
-    --exclude='*/.env*' \
-    --exclude='node_modules' \
-    --exclude='*/node_modules' \
-    --exclude='.gradle' \
-    --exclude='*/.gradle' \
-    --exclude='build' \
-    --exclude='*/build' \
-    --exclude='dist' \
+    --exclude-from="$SOURCE_DIR/scripts/source-excludes.txt" \
     -C "$SOURCE_DIR" -cf - . \
     | tar --no-same-owner --no-same-permissions -C "$INSTALL_DIR" -xf -
 else
@@ -437,7 +430,8 @@ chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
 mv -f "$RUNTIME_TMP" "$CONFIG_DIR/runtime.conf"
 
-python3 - "$INSTALL_DIR/infra/Caddyfile" "$CONFIG_DIR/Caddyfile" "$SITE_ADDRESSES" <<'PY'
+python3 - "$INSTALL_DIR/infra/Caddyfile" "$CONFIG_DIR/Caddyfile" \
+  "$SITE_ADDRESSES" "$SERVER_IP" <<'PY'
 import os
 import pathlib
 import sys
@@ -445,12 +439,18 @@ import tempfile
 
 source = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
-addresses = sys.argv[3]
+addresses, default_sni = sys.argv[3:]
 template = source.read_text(encoding="utf-8")
-marker = "__ROOMFRAME_SITE_ADDRESSES__"
-if template.count(marker) != 1:
-    raise SystemExit("Le modèle Caddy doit contenir exactement un marqueur d'adresse.")
-rendered = template.replace(marker, addresses)
+markers = {
+    "__ROOMFRAME_SITE_ADDRESSES__": addresses,
+    "__ROOMFRAME_DEFAULT_SNI__": default_sni,
+}
+for marker in markers:
+    if template.count(marker) != 1:
+        raise SystemExit(f"Le modèle Caddy doit contenir exactement un marqueur {marker}.")
+rendered = template
+for marker, value in markers.items():
+    rendered = rendered.replace(marker, value)
 destination.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=".Caddyfile.", dir=destination.parent, text=True)
 with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -501,7 +501,8 @@ chmod 0640 "$CONFIG_DIR/server-state.json"
 
 if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
-    roomframe-bootstrap-token roomframe-recover-admin roomframe-trust-update-key; do
+    roomframe-verify-backup roomframe-bootstrap-token roomframe-recover-admin \
+    roomframe-trust-update-key; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -514,7 +515,10 @@ fi
 
 if [[ "$NO_START" -eq 0 ]]; then
   log "Démarrage des services…"
-  "$INSTALL_DIR/scripts/roomframe-compose.sh" up -d --build --remove-orphans
+  # Recreate the containers even when the image tag is unchanged: Compose
+  # otherwise keeps stale bind-mounted secret metadata after a permission or
+  # ownership hardening performed by bootstrap.sh.
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" up -d --build --force-recreate --remove-orphans
 
   log "Vérification de l'interface HTTPS…"
   healthy=0
@@ -563,6 +567,7 @@ printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'
+printf 'Vérifier une sauvegarde    : sudo roomframe-verify-backup --latest\n'
 printf 'Jeton initial              : sudo roomframe-bootstrap-token --show\n'
 if [[ "$DNS_WARNING" -eq 1 ]]; then
   printf '\nDNS à créer dans la zone interne : %s  A  %s\n' "$PRIMARY_HOST" "$SERVER_IP"

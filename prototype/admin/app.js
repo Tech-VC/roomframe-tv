@@ -11,6 +11,7 @@ import {
   setNodeDisplayText,
   validateScene,
 } from "./scene-model.js";
+import { ApiError, readApiResponse } from "./api-client.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -20,14 +21,6 @@ const make = (tag, className, text) => {
   if (text != null) element.textContent = String(text);
   return element;
 };
-
-class ApiError extends Error {
-  constructor(message, status, payload) {
-    super(message);
-    this.status = status;
-    this.payload = payload;
-  }
-}
 
 const api = {
   csrfToken: "",
@@ -44,10 +37,8 @@ const api = {
       headers["x-csrf-token"] = this.csrfToken;
     }
     const response = await fetch(`/api/v1/${path.replace(/^\/+/, "")}`, options);
-    const contentType = response.headers.get("content-type") || "";
-    const payload = contentType.includes("application/json") ? await response.json() : { message: await response.text() };
+    const payload = await readApiResponse(response);
     this.csrfToken = response.headers.get("x-csrf-token") || payload?.csrfToken || payload?.session?.csrfToken || this.csrfToken;
-    if (!response.ok) throw new ApiError(payload?.message || payload?.error || `Erreur HTTP ${response.status}`, response.status, payload);
     return payload;
   },
   get(path) { return this.request(path, { authenticated: false }); },
@@ -257,12 +248,18 @@ const renderTargets = () => {
   refs.targetSelect.disabled = true;
 };
 
-const assetUrl = (asset) => {
+const assetUrl = (asset, preferredVariant = null) => {
   if (!asset) return null;
   if (/^(blob:|https?:|\/)/.test(asset)) return asset;
   if (asset.startsWith("assets/")) return asset;
   const media = state.media.find((item) => item.id === asset || item.sha256 === asset);
-  return media?.url ?? media?.variants?.preview?.url ?? media?.variants?.["1080p"]?.url ?? null;
+  return (
+    media?.variants?.[preferredVariant]?.url
+    ?? media?.url
+    ?? media?.variants?.preview?.url
+    ?? media?.variants?.["1080p"]?.url
+    ?? null
+  );
 };
 
 const renderBackground = () => {
@@ -287,7 +284,8 @@ const applyNodeGeometry = (element, node) => {
 const renderNodes = () => {
   const nodes = [];
   for (const node of [...state.scene.nodes].sort((a, b) => a.zIndex - b.zIndex)) {
-    const element = make("div", `node kind-${node.kind}${node.id === state.selectedId ? " selected" : ""}`);
+    const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
+    const element = make("div", `node kind-${node.kind}${roleClass}${node.id === state.selectedId ? " selected" : ""}`);
     element.dataset.nodeId = node.id;
     element.tabIndex = 0;
     element.setAttribute("role", "group");
@@ -295,7 +293,10 @@ const renderNodes = () => {
     applyNodeGeometry(element, node);
 
     if (["image", "video", "logo"].includes(node.kind)) {
-      const url = assetUrl(node.props.asset ?? node.props.assetId);
+      const url = assetUrl(
+        node.props.asset ?? node.props.assetId,
+        node.kind === "logo" ? "logo" : null,
+      );
       if (url) {
         const image = make("img");
         image.src = url;
@@ -750,8 +751,12 @@ refs.sceneName.addEventListener("input", () => {
 refs.greetingInput.addEventListener("input", () => {
   const greeting = state.scene?.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
   if (!greeting) return;
-  greeting.props.text = refs.greetingInput.value.slice(0, 220);
+  setNodeDisplayText(greeting, refs.greetingInput.value.slice(0, 220));
   renderNodes();
+});
+refs.greetingInput.addEventListener("blur", () => {
+  const greeting = state.scene?.nodes.find((node) => node.kind === "text" && node.props.role === "greeting");
+  if (greeting) refs.greetingInput.value = greeting.props.text;
 });
 $("#backgroundModes").addEventListener("click", (event) => {
   const button = event.target.closest("[data-fit]");

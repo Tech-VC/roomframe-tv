@@ -86,6 +86,12 @@ serveur contrôle les octets réels, l’extension et l’espace disponible avan
 mettre le média en file. `PATCH /media/:assetId` accepte un point focal
 normalisé `focalX`/`focalY`.
 
+Pour une image, le worker peut ajouter une variante `logo` WebP avec canal
+alpha lorsqu’un fond clair uniforme est détecté avec confiance, ou normaliser
+une transparence déjà présente. La réponse média expose `logoTransparency`
+pour distinguer un détourage appliqué, une source déjà transparente et un fond
+jugé ambigu.
+
 Le Studio web consomme directement ces routes : état de bootstrap,
 TOTP/complete, login/session/logout, chargement `scene.document`, création
 d’une révision numérique et publication. La cible reste l’instance dans ce
@@ -144,7 +150,9 @@ POST /api/v1/releases/:releaseId/deployments
 L’import multipart attend un champ `file` portant l’extension `.rfupdate`. Le
 serveur vérifie la signature Ed25519, la structure ZIP, la compatibilité, les
 tailles et les hashes avant de ranger l’archive dans la quarantaine des
-releases. Aucun artefact n’est exécuté par la requête web.
+releases. Les clés JSON dupliquées sont refusées avant la validation du
+contrat, y compris lorsque le manifeste est correctement signé. Aucun
+artefact n’est exécuté par la requête web.
 
 Une release vérifiée peut recevoir un plan `canary` ou `progressive`. Le plan
 est persisté avec l’état `planned`; le moteur d’application et les actions sur

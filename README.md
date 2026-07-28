@@ -106,7 +106,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   propriétés, clavier et historique ;
 - validation des scènes typées 1920 × 1080, sans HTML ni JavaScript libre ;
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
-  traitement asynchrone par Sharp/FFmpeg ;
+  traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
+  prudente pour les logos sur fond clair uniforme ;
 - enrôlement TV à identifiant temporaire puis clé d’appareil à remise unique ;
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
@@ -127,6 +128,7 @@ sudo roomframe-compose logs --tail=200 api worker
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup --without-media
+sudo roomframe-verify-backup --latest
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -162,12 +164,16 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 9 tests Studio/synchronisation TV et
-13 tests API, contrôle de syntaxe serveur inclus. Les workflows GitHub de
+test n’est pas fourni. Il exécute 14 tests Studio/synchronisation TV et
+19 tests API, contrôle de syntaxe serveur inclus, soit 33 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
-la compatibilité des scènes UI et le refus des bundles de mise à jour altérés.
+la compatibilité des scènes UI, le rejet concis des réponses API non JSON,
+le détourage prudent des logos et le refus des
+bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test
+d’intégration couvre aussi l’upload et le traitement réel d’une image ainsi
+que l’import multipart d’un `.rfupdate`.
 
 Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
