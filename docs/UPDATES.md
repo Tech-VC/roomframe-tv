@@ -39,7 +39,9 @@ release.rfupdate
 ```
 
 Le contrat peut aussi décrire des APK, images OCI, migrations ou verrous
-Compose. Chaque artefact présent doit être listé par le manifeste.
+Compose. Un `home-apk` ou `agent-apk` porte obligatoirement son package Android,
+son `versionCode` et le SHA-256 de son certificat de signature. Chaque artefact
+présent doit être listé par le manifeste.
 
 Avant la quarantaine, le serveur vérifie :
 
@@ -116,8 +118,16 @@ Après import, l’API peut enregistrer :
 - une stratégie `canary` ciblant une TV ;
 - une stratégie `progressive` ciblant un groupe ou le parc.
 
-Le résultat reste `planned` et indique explicitement que l’exécution
-matérielle est simulée tant que l’adaptateur n’est pas validé.
+La première vague passe à `offered`. Chaque TV autorisée récupère uniquement
+l’APK qui lui est affecté, puis annonce les états `downloaded`, `installing`,
+`installed`, `failed` ou `deferred`. L’administration ne peut ouvrir la vague
+suivante tant que la vague active contient un téléchargement, une installation
+ou un échec. Les cibles suivantes restent `queued`.
+
+L’APK extrait du bundle vérifié est matérialisé par hash sous
+`/var/lib/roomframe/releases/artifacts/`; son chemin interne n’est jamais
+renvoyé par l’API. Ce mécanisme distribue l’application TV, pas encore le code
+du serveur.
 
 ## Ce qui reste à implémenter
 
@@ -128,8 +138,7 @@ Le jalon ne comprend pas encore :
 - un moteur privilégié, séparé de l’API web, qui extrait et applique le bundle ;
 - l’association obligatoire d’une sauvegarde à une release importée ;
 - l’import des images, le redémarrage orchestré et le healthcheck de rollback ;
-- l’avancement automatique des vagues canari/progressives ;
-- l’installation silencieuse d’APK sur Device Owner ;
+- la validation physique de l’installation silencieuse APK en Device Owner ;
 - une commande documentée de restauration complète.
 
 Deux frontières restent particulièrement importantes :
@@ -168,10 +177,9 @@ les valeurs par défaut.
 
 ## Android
 
-Une future mise à jour APK doit garder `applicationId` et clé de signature.
-Android pourra alors remplacer le code sans effacer les données privées. Le
-client devra migrer son cache tout en conservant la dernière révision complète
-validée.
+Une mise à jour APK doit garder `applicationId` et clé de signature. Android
+peut alors remplacer le code sans effacer les données privées. Le client
+conserve son cache et la dernière révision complète validée.
 
 Le parcours visé ne dépend pas d’une clé USB après l’enrôlement initial :
 
@@ -186,10 +194,14 @@ Le parcours visé ne dépend pas d’une clé USB après l’enrôlement initial
 6. installer par `PackageInstaller`, puis confirmer la version et la santé
    avant d’avancer la vague.
 
-Le squelette Android expose maintenant `AppUpdateAdapter`,
-`AppUpdateCapabilities` et `VerifiedApkArtifact`. L’adaptateur actif répond
-honnêtement « indisponible » tant que Device Owner n’est pas validé ; le
-simulateur est réservé aux tests. Le client de téléchargement, la vérification
-de signature APK et l’implémentation `PackageInstaller` restent à livrer.
-Sans Device Owner, Android exigera une confirmation locale pour chaque mise à
-jour et RoomFrame ne promet pas une installation silencieuse.
+Tant que RoomFrame est visible, le client Android interroge périodiquement
+`/api/v1/tv/update`, télécharge par flux dans son stockage privé, vérifie
+taille, SHA-256, package, `versionCode`, certificat du manifeste et
+compatibilité avec la lignée de signature installée. Le fichier n’atteint
+`PackageInstaller` qu’après ces contrôles.
+
+L’adaptateur Android n’essaie l’installation silencieuse que lorsque
+`DevicePolicyManager` confirme que RoomFrame est Device Owner. Sinon l’état
+reste « APK vérifié · Device Owner requis » et aucune réussite n’est simulée.
+Le parcours Device Owner reste à valider physiquement après réinitialisation de
+la Philips.

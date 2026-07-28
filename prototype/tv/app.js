@@ -1,5 +1,5 @@
-import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js?v=0.3.0-ui3";
-import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js?v=0.3.0-ui3";
+import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js?v=0.3.0-ui4";
+import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js?v=0.3.0-ui4";
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;

@@ -28,6 +28,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".EnrollmentActivity"
+            android:exported="false"
+            android:launchMode="singleTask" />
+
         <receiver
             android:name=".RoomFrameAdminReceiver"
             android:description="@string/device_admin_description"
@@ -37,5 +42,9 @@
             <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin_receiver" />
             <intent-filter><action android:name="android.app.action.DEVICE_ADMIN_ENABLED" /></intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".adapters.AppUpdateResultReceiver"
+            android:exported="false" />
     </application>
 </manifest>

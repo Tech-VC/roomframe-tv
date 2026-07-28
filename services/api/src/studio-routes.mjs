@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -26,6 +26,7 @@ import {
   sha256,
 } from './security.mjs';
 import {
+  materializeVerifiedApkArtifacts,
   quarantineVerifiedUpdate,
   verifyUpdateBundle,
 } from './update-verifier.mjs';
@@ -206,6 +207,16 @@ const serializeAsset = (asset) => ({
   variants: variantUrls(asset),
   logoTransparency: asset.metadata?.logoTransparency ?? null,
   createdAt: asset.created_at,
+});
+
+const serializeRelease = (release) => ({
+  ...release,
+  verification: {
+    ...(release.verification ?? {}),
+    apkArtifacts: (release.verification?.apkArtifacts ?? []).map(
+      ({ storagePath: _storagePath, ...artifact }) => artifact,
+    ),
+  },
 });
 
 const saveUpload = async (part, target, maximum) => {
@@ -532,7 +543,7 @@ export const registerStudioRoutes = ({
       messages: can('messages:read') ? messagesResult.rows : [],
       sourceSettings: can('fleet:read') ? sourcesResult.rows : [],
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
-      releases: can('releases:read') ? releasesResult.rows : [],
+      releases: can('releases:read') ? releasesResult.rows.map(serializeRelease) : [],
       deployments: can('releases:read') ? deploymentsResult.rows : [],
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
       measuredMetrics: null,
@@ -1003,7 +1014,7 @@ export const registerStudioRoutes = ({
       ),
       pool.query('SELECT * FROM deployments ORDER BY created_at DESC LIMIT 100'),
     ]);
-    return { releases: releases.rows, deployments: deployments.rows };
+    return { releases: releases.rows.map(serializeRelease), deployments: deployments.rows };
   });
 
   app.post('/api/v1/releases/import', {
@@ -1038,6 +1049,11 @@ export const registerStudioRoutes = ({
         releasesDir: config.releasesDir,
         bundleSha256: verified.bundleSha256,
       });
+      const apkArtifacts = await materializeVerifiedApkArtifacts({
+        bundleFile: destination,
+        manifest: verified.manifest,
+        releasesDir: config.releasesDir,
+      });
       await withTransaction(pool, async (client) => {
         await client.query(
           `INSERT INTO release_history (
@@ -1055,6 +1071,7 @@ export const registerStudioRoutes = ({
               hashes: 'valid',
               compatibility: 'valid',
               dataPreservation: true,
+              apkArtifacts,
             }),
             destination,
             request.roomframeSession.user_id,
@@ -1075,6 +1092,14 @@ export const registerStudioRoutes = ({
         status: 'verified',
         signatureKeyId: verified.signatureKeyId,
         bundleSha256: verified.bundleSha256,
+        apkArtifacts: apkArtifacts.map((artifact) => ({
+          kind: artifact.kind,
+          packageName: artifact.packageName,
+          versionCode: artifact.versionCode,
+          sha256: artifact.sha256,
+          size: artifact.size,
+          signingCertificateSha256: artifact.signingCertificateSha256,
+        })),
         nextStep: 'Planifier explicitement une vague canari. Aucun artefact n’a été exécuté.',
       });
     } catch (error) {
@@ -1095,31 +1120,367 @@ export const registerStudioRoutes = ({
     if (!['tv', 'group', 'fleet'].includes(targetType)) {
       throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
     }
+    if (strategy === 'canary' && targetType !== 'tv') {
+      throw Object.assign(new Error('canary_requires_tv_target'), { statusCode: 400 });
+    }
     const targetId = targetIdFor(targetType, request.body?.targetId);
+    const batchSize = integerInRange(request.body?.batchSize, 'batch_size', 1, 100, 1);
     const id = crypto.randomUUID();
-    await withTransaction(pool, async (client) => {
+    const planned = await withTransaction(pool, async (client) => {
       const release = await client.query(
-        "SELECT id FROM release_history WHERE id = $1 AND status = 'verified'",
+        "SELECT id, manifest FROM release_history WHERE id = $1 AND status = 'verified'",
         [releaseId],
       );
       if (!release.rows[0]) throw Object.assign(new Error('verified_release_not_found'), { statusCode: 404 });
+      if (!(release.rows[0].manifest?.artifacts ?? []).some((artifact) => artifact.kind === 'home-apk')) {
+        throw Object.assign(new Error('home_apk_artifact_required'), { statusCode: 409 });
+      }
+      const targets = targetType === 'tv'
+        ? await client.query(
+          "SELECT id FROM screens WHERE id = $1 AND enrollment_state = 'active'",
+          [targetId],
+        )
+        : targetType === 'group'
+          ? await client.query(
+            `SELECT id FROM screens
+             WHERE group_id = $1 AND enrollment_state = 'active'
+             ORDER BY display_name, id`,
+            [targetId],
+          )
+          : await client.query(
+            `SELECT id FROM screens
+             WHERE enrollment_state = 'active'
+             ORDER BY display_name, id`,
+          );
+      const screenIds = targets.rows.map((row) => row.id);
+      if (screenIds.length === 0) {
+        throw Object.assign(new Error('deployment_target_empty'), { statusCode: 409 });
+      }
+      const offeredCount = strategy === 'canary' ? 1 : Math.min(batchSize, screenIds.length);
+      const initialProgress = {
+        offered: offeredCount,
+        queued: screenIds.length - offeredCount,
+      };
       await client.query(
         `INSERT INTO deployments (
-           id, release_id, strategy, target_type, target_id, status, created_by
-         ) VALUES ($1, $2, $3, $4, $5, 'planned', $6)`,
-        [id, releaseId, strategy, targetType, targetId, request.roomframeSession.user_id],
+           id, release_id, strategy, target_type, target_id, status,
+           progress, created_by, started_at
+         ) VALUES ($1, $2, $3, $4, $5, 'running', $6, $7, now())`,
+        [
+          id,
+          releaseId,
+          strategy,
+          targetType,
+          targetId,
+          JSON.stringify(initialProgress),
+          request.roomframeSession.user_id,
+        ],
       );
-      await writeAudit(client, request, 'deployment.planned', 'deployment', id, {
+      await client.query(
+        `INSERT INTO deployment_targets (
+           deployment_id, screen_id, wave_number, status, offered_at
+         )
+         SELECT $1, candidate.screen_id,
+                CASE WHEN candidate.ordinality <= $3 THEN 1 ELSE 2 END,
+                CASE WHEN candidate.ordinality <= $3 THEN 'offered' ELSE 'queued' END,
+                CASE WHEN candidate.ordinality <= $3 THEN now() ELSE NULL END
+         FROM unnest($2::uuid[]) WITH ORDINALITY AS candidate(screen_id, ordinality)`,
+        [id, screenIds, offeredCount],
+      );
+      await writeAudit(client, request, 'deployment.started', 'deployment', id, {
         releaseId,
         strategy,
         targetType,
         targetId,
+        offeredCount,
+        targetCount: screenIds.length,
       });
+      return { offeredCount, targetCount: screenIds.length };
     });
     return reply.code(201).send({
       id,
-      status: 'planned',
-      hardwareExecution: 'simulated-until-adapter-validation',
+      status: 'running',
+      offeredCount: planned.offeredCount,
+      targetCount: planned.targetCount,
+      hardwareExecution: 'download-and-verification-active-install-requires-device-owner',
+    });
+  });
+
+  app.post('/api/v1/deployments/:deploymentId/advance', {
+    preHandler: [authenticated, requirePermission('deployments:write'), csrf],
+  }, async (request) => {
+    const deploymentId = optionalUuid(request.params.deploymentId);
+    const batchSize = integerInRange(request.body?.batchSize, 'batch_size', 1, 100, 1);
+    return withTransaction(pool, async (client) => {
+      const deployment = await client.query(
+        "SELECT id, status FROM deployments WHERE id = $1 FOR UPDATE",
+        [deploymentId],
+      );
+      if (!deployment.rows[0]) throw Object.assign(new Error('deployment_not_found'), { statusCode: 404 });
+      if (deployment.rows[0].status !== 'running') {
+        throw Object.assign(new Error('deployment_not_running'), { statusCode: 409 });
+      }
+      const blockers = await client.query(
+        `SELECT status, count(*)::integer AS count
+         FROM deployment_targets
+         WHERE deployment_id = $1
+           AND status IN ('offered', 'downloading', 'downloaded', 'installing', 'failed')
+         GROUP BY status`,
+        [deploymentId],
+      );
+      if (blockers.rows.length > 0) {
+        throw Object.assign(new Error('deployment_wave_incomplete'), {
+          statusCode: 409,
+          states: blockers.rows,
+        });
+      }
+      const next = await client.query(
+        `WITH selected AS (
+           SELECT screen_id
+           FROM deployment_targets
+           WHERE deployment_id = $1 AND status = 'queued'
+           ORDER BY screen_id
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED
+         ),
+         wave AS (
+           SELECT COALESCE(max(wave_number), 0) + 1 AS number
+           FROM deployment_targets
+           WHERE deployment_id = $1
+         )
+         UPDATE deployment_targets target
+         SET status = 'offered', offered_at = now(), updated_at = now(),
+             wave_number = wave.number
+         FROM selected, wave
+         WHERE target.deployment_id = $1
+           AND target.screen_id = selected.screen_id
+         RETURNING target.screen_id, target.wave_number`,
+        [deploymentId, batchSize],
+      );
+      if (next.rows.length === 0) {
+        await client.query(
+          `UPDATE deployments
+           SET status = 'completed', completed_at = now()
+           WHERE id = $1`,
+          [deploymentId],
+        );
+        await writeAudit(client, request, 'deployment.completed', 'deployment', deploymentId);
+        return { id: deploymentId, status: 'completed', offeredCount: 0 };
+      }
+      await writeAudit(client, request, 'deployment.wave.advanced', 'deployment', deploymentId, {
+        wave: Number(next.rows[0].wave_number),
+        offeredCount: next.rows.length,
+      });
+      return {
+        id: deploymentId,
+        status: 'running',
+        wave: Number(next.rows[0].wave_number),
+        offeredCount: next.rows.length,
+      };
+    });
+  });
+
+  app.get('/api/v1/tv/update', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const { screen } = await resolveScreen({
+      request,
+      pool,
+      config,
+      sessionPermission: 'releases:read',
+    });
+    const target = await pool.query(
+      `SELECT target.deployment_id, target.status AS target_status,
+              deployment.strategy, release.id AS release_id, release.version,
+              release.verification
+       FROM deployment_targets target
+       JOIN deployments deployment ON deployment.id = target.deployment_id
+       JOIN release_history release ON release.id = deployment.release_id
+       WHERE target.screen_id = $1
+         AND target.status IN ('offered', 'downloading', 'downloaded', 'installing')
+         AND deployment.status = 'running'
+         AND release.status = 'verified'
+       ORDER BY target.offered_at NULLS LAST, deployment.created_at
+       LIMIT 1`,
+      [screen.id],
+    );
+    const row = target.rows[0];
+    if (!row) return { available: false };
+    const artifact = (row.verification?.apkArtifacts ?? []).find(
+      (candidate) => candidate.kind === 'home-apk',
+    );
+    if (!artifact) throw Object.assign(new Error('deployment_apk_unavailable'), { statusCode: 409 });
+    return {
+      available: true,
+      deployment: {
+        id: row.deployment_id,
+        strategy: row.strategy,
+        state: row.target_status,
+      },
+      release: {
+        id: row.release_id,
+        version: row.version,
+      },
+      artifact: {
+        packageName: artifact.packageName,
+        versionCode: artifact.versionCode,
+        sha256: artifact.sha256,
+        size: artifact.size,
+        signingCertificateSha256: artifact.signingCertificateSha256,
+        url: `/api/v1/tv/updates/${row.deployment_id}/apk`,
+      },
+      installation: {
+        packageInstaller: true,
+        silentRequiresDeviceOwner: true,
+      },
+    };
+  });
+
+  app.get('/api/v1/tv/updates/:deploymentId/apk', {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const deploymentId = optionalUuid(request.params.deploymentId);
+    const { screen } = await resolveScreen({
+      request,
+      pool,
+      config,
+      sessionPermission: 'releases:read',
+    });
+    const target = await withTransaction(pool, async (client) => {
+      const result = await client.query(
+        `SELECT target.status, release.verification
+         FROM deployment_targets target
+         JOIN deployments deployment ON deployment.id = target.deployment_id
+         JOIN release_history release ON release.id = deployment.release_id
+         WHERE target.deployment_id = $1
+           AND target.screen_id = $2
+           AND target.status IN ('offered', 'downloading', 'downloaded')
+           AND deployment.status = 'running'
+           AND release.status = 'verified'
+         FOR UPDATE OF target`,
+        [deploymentId, screen.id],
+      );
+      if (!result.rows[0]) {
+        throw Object.assign(new Error('update_download_not_authorized'), { statusCode: 403 });
+      }
+      await client.query(
+        `UPDATE deployment_targets
+         SET status = CASE WHEN status = 'downloaded' THEN status ELSE 'downloading' END,
+             updated_at = now()
+         WHERE deployment_id = $1 AND screen_id = $2`,
+        [deploymentId, screen.id],
+      );
+      return result.rows[0];
+    });
+    const artifact = (target.verification?.apkArtifacts ?? []).find(
+      (candidate) => candidate.kind === 'home-apk',
+    );
+    if (!artifact?.storagePath) {
+      throw Object.assign(new Error('deployment_apk_unavailable'), { statusCode: 409 });
+    }
+    const artifactRoot = path.resolve(config.releasesDir, 'artifacts');
+    const file = path.resolve(artifact.storagePath);
+    if (!file.startsWith(`${artifactRoot}${path.sep}`)) {
+      throw Object.assign(new Error('deployment_apk_storage_invalid'), { statusCode: 500 });
+    }
+    const info = await lstat(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.size !== artifact.size) {
+      throw Object.assign(new Error('deployment_apk_storage_invalid'), { statusCode: 500 });
+    }
+    reply.header('content-type', 'application/vnd.android.package-archive');
+    reply.header('content-length', String(info.size));
+    reply.header('cache-control', 'private, no-store');
+    reply.header('etag', `"${artifact.sha256}"`);
+    reply.header('x-content-type-options', 'nosniff');
+    return reply.send(createReadStream(file));
+  });
+
+  app.post('/api/v1/tv/updates/:deploymentId/status', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request) => {
+    const deploymentId = optionalUuid(request.params.deploymentId);
+    const { screen } = await resolveScreen({
+      request,
+      pool,
+      config,
+      sessionPermission: 'deployments:write',
+    });
+    const nextStatus = String(request.body?.status ?? '');
+    if (!['downloaded', 'installing', 'installed', 'failed', 'deferred'].includes(nextStatus)) {
+      throw Object.assign(new Error('invalid_update_status'), { statusCode: 400 });
+    }
+    const reportedVersion = request.body?.version
+      ? cleanText(request.body.version, 'reported_version', 100)
+      : null;
+    const errorCode = request.body?.errorCode
+      ? cleanText(request.body.errorCode, 'update_error_code', 80)
+      : null;
+    if (errorCode && !/^[A-Za-z0-9._-]+$/.test(errorCode)) {
+      throw Object.assign(new Error('invalid_update_error_code'), { statusCode: 400 });
+    }
+    return withTransaction(pool, async (client) => {
+      const locked = await client.query(
+        `SELECT target.status, release.version
+         FROM deployment_targets target
+         JOIN deployments deployment ON deployment.id = target.deployment_id
+         JOIN release_history release ON release.id = deployment.release_id
+         WHERE target.deployment_id = $1 AND target.screen_id = $2
+         FOR UPDATE OF target`,
+        [deploymentId, screen.id],
+      );
+      const current = locked.rows[0];
+      if (!current) throw Object.assign(new Error('deployment_target_not_found'), { statusCode: 404 });
+      const transitions = {
+        offered: new Set(['downloaded', 'failed', 'deferred']),
+        downloading: new Set(['downloaded', 'failed', 'deferred']),
+        downloaded: new Set(['installing', 'failed', 'deferred']),
+        installing: new Set(['installed', 'failed']),
+      };
+      if (!transitions[current.status]?.has(nextStatus)) {
+        throw Object.assign(new Error('invalid_update_status_transition'), { statusCode: 409 });
+      }
+      await client.query(
+        `UPDATE deployment_targets
+         SET status = $3,
+             downloaded_at = CASE WHEN $3 = 'downloaded' THEN now() ELSE downloaded_at END,
+             installed_at = CASE WHEN $3 = 'installed' THEN now() ELSE installed_at END,
+             reported_version = $4,
+             error_code = $5,
+             updated_at = now()
+         WHERE deployment_id = $1 AND screen_id = $2`,
+        [deploymentId, screen.id, nextStatus, reportedVersion, errorCode],
+      );
+      if (nextStatus === 'installed') {
+        await client.query(
+          `UPDATE screens
+           SET home_version = $2, updated_at = now(), last_seen_at = now()
+           WHERE id = $1`,
+          [screen.id, current.version],
+        );
+      }
+      const progress = await client.query(
+        `SELECT status, count(*)::integer AS count
+         FROM deployment_targets
+         WHERE deployment_id = $1
+         GROUP BY status`,
+        [deploymentId],
+      );
+      const progressDocument = Object.fromEntries(
+        progress.rows.map((entry) => [entry.status, Number(entry.count)]),
+      );
+      await client.query(
+        'UPDATE deployments SET progress = $2 WHERE id = $1',
+        [deploymentId, JSON.stringify(progressDocument)],
+      );
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: `tv.update.${nextStatus}`,
+        targetType: 'deployment',
+        targetId: deploymentId,
+        remoteAddress: request.ip,
+        details: { screenId: screen.id, reportedVersion, errorCode },
+      });
+      return { deploymentId, status: nextStatus, progress: progressDocument };
     });
   });
 

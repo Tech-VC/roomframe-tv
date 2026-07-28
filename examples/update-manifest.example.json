@@ -16,7 +16,10 @@
       "path": "android/roomframe-home.apk",
       "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
       "size": 0,
-      "kind": "home-apk"
+      "kind": "home-apk",
+      "packageName": "org.roomframe.tv",
+      "versionCode": 4,
+      "signingCertificateSha256": "0000000000000000000000000000000000000000000000000000000000000000"
     }
   ]
 }

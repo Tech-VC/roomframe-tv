@@ -1,7 +1,9 @@
 import crypto from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { copyFile, lstat, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { Transform } from 'node:stream';
 import semver from 'semver';
 import yauzl from 'yauzl';
 
@@ -317,11 +319,16 @@ export const quarantineVerifiedUpdate = async ({ source, releasesDir, bundleSha2
   );
   const destination = path.join(verified, `${bundleSha256}.rfupdate`);
   try {
-    await stat(destination);
-    if (await hashFile(destination) === bundleSha256) {
+    const destinationInfo = await lstat(destination);
+    if (
+      destinationInfo.isFile()
+      && !destinationInfo.isSymbolicLink()
+      && await hashFile(destination) === bundleSha256
+    ) {
       await unlink(source).catch(() => {});
       return destination;
     }
+    await unlink(destination);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
@@ -335,5 +342,78 @@ export const quarantineVerifiedUpdate = async ({ source, releasesDir, bundleSha2
     return destination;
   } finally {
     await unlink(staged).catch(() => {});
+  }
+};
+
+export const materializeVerifiedApkArtifacts = async ({
+  bundleFile,
+  manifest,
+  releasesDir,
+}) => {
+  const apkArtifacts = manifest.artifacts.filter(
+    (artifact) => artifact.kind === 'home-apk' || artifact.kind === 'agent-apk',
+  );
+  if (apkArtifacts.length === 0) return [];
+  const releaseRoot = path.join(releasesDir, 'artifacts', manifest.releaseId);
+  await mkdir(releaseRoot, { recursive: true, mode: 0o700 });
+  const archive = await openZip(bundleFile);
+  try {
+    const entries = await collectEntries(archive);
+    const materialized = [];
+    for (const artifact of apkArtifacts) {
+      const entry = entries.get(artifact.path);
+      if (!entry) throw invalidUpdate('missing_update_artifact');
+      const destination = path.join(releaseRoot, `${artifact.sha256}.apk`);
+      try {
+        const destinationInfo = await lstat(destination);
+        if (
+          destinationInfo.isFile()
+          && !destinationInfo.isSymbolicLink()
+          && destinationInfo.size === artifact.size
+          && await hashFile(destination) === artifact.sha256
+        ) {
+          materialized.push({ ...artifact, storagePath: destination });
+          continue;
+        }
+        await unlink(destination);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+
+      const staged = path.join(
+        releaseRoot,
+        `.${artifact.sha256}.${crypto.randomUUID()}.part`,
+      );
+      const digest = crypto.createHash('sha256');
+      let size = 0;
+      const meter = new Transform({
+        transform(chunk, _encoding, callback) {
+          size += chunk.length;
+          if (size > artifact.size) {
+            callback(invalidUpdate('update_artifact_size_mismatch'));
+            return;
+          }
+          digest.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      try {
+        await pipeline(
+          await openEntryStream(archive, entry),
+          meter,
+          createWriteStream(staged, { flags: 'wx', mode: 0o600 }),
+        );
+        if (size !== artifact.size || digest.digest('hex') !== artifact.sha256) {
+          throw invalidUpdate('update_artifact_hash_mismatch');
+        }
+        await rename(staged, destination);
+        materialized.push({ ...artifact, storagePath: destination });
+      } finally {
+        await unlink(staged).catch(() => {});
+      }
+    }
+    return materialized;
+  } finally {
+    archive.close();
   }
 };

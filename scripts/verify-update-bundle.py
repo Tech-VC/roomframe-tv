@@ -31,6 +31,9 @@ SEMVER_RE = re.compile(
 PLAIN_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 ARTIFACT_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
+ANDROID_PACKAGE_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$"
+)
 ALLOWED_ARTIFACT_KINDS = {
     "agent-apk",
     "home-apk",
@@ -395,7 +398,15 @@ def verify_artifacts(
             raise VerificationError(
                 f"artifacts[{index}] incomplet: {', '.join(sorted(missing))}"
             )
-        unexpected = set(artifact) - {"path", "sha256", "size", "kind"}
+        unexpected = set(artifact) - {
+            "path",
+            "sha256",
+            "size",
+            "kind",
+            "packageName",
+            "versionCode",
+            "signingCertificateSha256",
+        }
         if unexpected:
             raise VerificationError(
                 f"artifacts[{index}] contient des champs inconnus: "
@@ -424,6 +435,39 @@ def verify_artifacts(
         kind = artifact["kind"]
         if kind not in ALLOWED_ARTIFACT_KINDS:
             raise VerificationError(f"type d'artefact invalide pour {path}: {kind!r}")
+        if kind in {"agent-apk", "home-apk"}:
+            apk_missing = {
+                "packageName",
+                "versionCode",
+                "signingCertificateSha256",
+            } - artifact.keys()
+            if apk_missing:
+                raise VerificationError(
+                    f"métadonnées APK absentes pour {path}: "
+                    f"{', '.join(sorted(apk_missing))}"
+                )
+            package_name = artifact["packageName"]
+            version_code = artifact["versionCode"]
+            signing_hash = artifact["signingCertificateSha256"]
+            if (
+                not isinstance(package_name, str)
+                or not ANDROID_PACKAGE_RE.fullmatch(package_name)
+            ):
+                raise VerificationError(f"package Android invalide pour {path}")
+            if (
+                not isinstance(version_code, int)
+                or isinstance(version_code, bool)
+                or version_code < 1
+                or version_code > 2_147_483_647
+            ):
+                raise VerificationError(f"versionCode invalide pour {path}")
+            if (
+                not isinstance(signing_hash, str)
+                or not SHA256_RE.fullmatch(signing_hash)
+            ):
+                raise VerificationError(
+                    f"empreinte de signature Android invalide pour {path}"
+                )
         info = members.get(path)
         if info is None or info.is_dir():
             raise VerificationError(f"artefact absent du ZIP: {path}")

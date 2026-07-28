@@ -12,10 +12,10 @@ sur chaque instance après l’installation.
 > État actuel : le jalon `0.3.0` est exécutable avec PostgreSQL, bootstrap à
 > usage unique, TOTP, sessions, Studio relié à l’API, pipeline média,
 > synchronisation TV et vérification des mises à jour signées. Le simulateur
-> démontre le cache IndexedDB, la vérification des hashes et la conservation de
-> la dernière révision valide hors ligne. Le client Android et les capacités
-> Philips, HDMI, veille/réveil, Device Owner, Cast et AirPlay restent à
-> finaliser et valider sur matériel.
+> et le client Android conservent la dernière révision valide hors ligne ; le
+> client natif rend la scène sans WebView et contrôle les APK distribués par
+> vagues. Device Owner, installation silencieuse, HDMI, veille/réveil, Cast et
+> AirPlay restent à valider sur matériel.
 
 ## Installation Debian
 
@@ -114,8 +114,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   révision précédente conservée et interrupteur de coupure API ;
 - import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles et
   hashes, puis quarantaine ;
-- création de plans de déploiement canari ou progressif, sans prétendre
-  exécuter les actions matérielles ;
+- distribution d’APK par canari ou vagues progressives avec état par TV ;
+- accueil Android natif, cache atomique, synchronisation HTTPS, enrôlement et
+  contrôle de l’APK avant `PackageInstaller` ;
 - diagnostic et sauvegarde cohérente avant migration.
 
 ## Exploitation
@@ -164,8 +165,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 16 tests Studio/synchronisation TV et
-19 tests API, contrôle de syntaxe serveur inclus, soit 35 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 17 tests Studio/synchronisation TV et
+20 tests API, contrôle de syntaxe serveur inclus, soit 37 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -179,15 +180,16 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- l’import et la planification des `.rfupdate` sont implémentés, mais pas encore
-  le poller GitHub ni le moteur qui applique automatiquement une release ;
+- l’import `.rfupdate`, le téléchargement APK affecté et les vagues
+  canari/progressives sont implémentés ; le poller GitHub et le moteur
+  privilégié qui applique le code serveur restent à livrer ;
 - le Studio édite actuellement la scène d’instance ; la sélection TV/groupe
   reste explicitement désactivée tant que l’API ne fournit pas l’affectation
   d’aperçu correspondante ;
-- le launcher Android dispose des contrats d’adaptateurs et d’un magasin de
-  révisions atomique, ainsi que d’un contrat d’installation d’APK vérifié ;
-  leur intégration au rendu, au réseau, à la PKI et à `PackageInstaller` reste
-  à terminer ;
+- le launcher Android rend la scène native depuis son cache vérifié,
+  synchronise en HTTPS, conserve la révision précédente et contrôle les APK
+  avant `PackageInstaller` ; le Device Owner et l’installation silencieuse
+  doivent encore être validés sur la TV réelle ;
 - les certificats individuels TV et le mTLS restent à finaliser ;
 - le rôle PostgreSQL initial cumule propriété, migrations et accès runtime ;
   le futur moteur d’application devra être séparé de l’API web ;

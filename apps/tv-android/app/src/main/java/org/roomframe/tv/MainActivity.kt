@@ -1,157 +1,162 @@
 package org.roomframe.tv
 
 import android.app.Activity
-import android.content.res.ColorStateList
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.BitmapFactory
-import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
-import android.text.TextUtils
-import android.util.TypedValue
-import android.view.Gravity
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
-import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import java.io.File
-import kotlin.math.min
-import kotlin.math.roundToInt
-import org.roomframe.tv.adapters.AdapterResult
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import org.roomframe.tv.adapters.DeviceAdapters
 import org.roomframe.tv.cache.FileExperienceStore
+import org.roomframe.tv.experience.ExperienceRepository
+import org.roomframe.tv.experience.ExperienceSnapshot
+import org.roomframe.tv.sync.DeviceCredentialStore
+import org.roomframe.tv.sync.HttpExperienceSyncClient
+import org.roomframe.tv.sync.SyncResult
+import org.roomframe.tv.ui.NativeSceneRenderer
+import org.roomframe.tv.update.HttpAppUpdateCoordinator
 
 /**
- * Squelette visuel local-first. La version de production chargera la dernière scène validée
- * depuis le cache, puis synchronisera en arrière-plan. Ce fallback ne dépend pas du réseau.
+ * Launcher local-first :
+ * 1. vérifie et affiche la dernière révision locale complète ;
+ * 2. utilise le bundle embarqué si le cache est absent ou corrompu ;
+ * 3. synchronise en arrière-plan sans bloquer le premier rendu ;
+ * 4. ne bascule qu'après téléchargement et validation atomiques.
  */
 class MainActivity : Activity() {
     private var okDownAt: Long? = null
-    private val adapters = DeviceAdapters.unsupported()
+    private val adapters by lazy { DeviceAdapters.forAndroid(this) }
+    private val syncExecutor = Executors.newSingleThreadExecutor()
+    private val syncRunning = AtomicBoolean(false)
+    private val scheduler = Handler(Looper.getMainLooper())
+    private val periodicSync = object : Runnable {
+        override fun run() {
+            synchronizeInBackground()
+            scheduler.postDelayed(this, SYNC_INTERVAL_MILLIS)
+        }
+    }
+    private lateinit var store: FileExperienceStore
+    private lateinit var repository: ExperienceRepository
+    private lateinit var credentialStore: DeviceCredentialStore
+    private var currentSnapshot: ExperienceSnapshot? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // La présence d'une révision active est consultée avant toute synchronisation réseau.
-        // Le renderer typé sera branché sur ce store dans le prochain jalon Android.
-        FileExperienceStore(File(filesDir, "experience")).loadActive()
+        store = FileExperienceStore(File(filesDir, "experience"))
+        repository = ExperienceRepository(this, store)
+        credentialStore = DeviceCredentialStore(this)
+        render(repository.load())
+    }
 
-        val localBackground = localDebugBrandingDrawable("background")
-        val root = FrameLayout(this)
-        root.addView(ImageView(this).apply {
-            setImageDrawable(
-                localBackground ?: resources.getDrawable(R.drawable.background_default, theme),
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-        }, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-        ))
-        if (localBackground != null) {
-            root.addView(View(this).apply {
-                setBackgroundColor(0x40000000)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT,
-            ))
-        }
+    override fun onResume() {
+        super.onResume()
+        scheduler.removeCallbacks(periodicSync)
+        periodicSync.run()
+        window.decorView.post { enterImmersiveMode() }
+    }
 
-        root.addView(TextView(this).apply {
-            text = getString(R.string.welcome_default)
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(44).toFloat())
-            setAutoSizeTextTypeUniformWithConfiguration(
-                scenePx(28),
-                scenePx(44),
-                1,
-                TypedValue.COMPLEX_UNIT_PX,
-            )
-            typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            includeFontPadding = false
-            isSingleLine = true
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }, FrameLayout.LayoutParams(scenePx(1180), scenePx(120), Gravity.START or Gravity.TOP).apply {
-            leftMargin = scenePx(72)
-            topMargin = scenePx(160)
-        })
+    override fun onPause() {
+        scheduler.removeCallbacks(periodicSync)
+        super.onPause()
+    }
 
-        val sources = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            listOf(
-                Triple(getString(R.string.source_airplay), R.drawable.ic_source_airplay, adapters.airPlay),
-                Triple(getString(R.string.source_cast), R.drawable.ic_source_cast, adapters.cast),
-                Triple(getString(R.string.source_hdmi), R.drawable.ic_source_hdmi, adapters.hdmi),
-            ).forEach { (label, icon, adapter) ->
-                addView(TextView(context).apply {
-                    text = label
-                    setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24).toFloat())
-                    typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(Color.WHITE)
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(scenePx(22), 0, scenePx(22), 0)
-                    setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
-                    compoundDrawablePadding = scenePx(18)
-                    compoundDrawableTintList = ColorStateList.valueOf(Color.WHITE)
-                    setBackgroundColor(0x18000000)
-                    isFocusable = true
-                    setOnFocusChangeListener { view, focused ->
-                        view.setBackgroundColor(if (focused) 0x553D5A48 else 0x18000000)
-                    }
-                    setOnClickListener {
-                        when (val result = adapter.activate()) {
-                            AdapterResult.Success -> Unit
-                            is AdapterResult.Unavailable -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
-                            is AdapterResult.Failure -> Toast.makeText(context, result.reason, Toast.LENGTH_SHORT).show()
+    override fun onDestroy() {
+        scheduler.removeCallbacks(periodicSync)
+        syncExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
+    private fun render(snapshot: ExperienceSnapshot) {
+        currentSnapshot = snapshot
+        val renderer = NativeSceneRenderer(
+            activity = this,
+            adapters = adapters,
+            debugBackground = localDebugBrandingDrawable("background"),
+            debugLogo = localDebugBrandingDrawable("logo"),
+        )
+        setContentView(renderer.render(snapshot))
+        window.decorView.post { enterImmersiveMode() }
+    }
+
+    private fun synchronizeInBackground() {
+        val credentials = credentialStore.load() ?: return
+        if (!syncRunning.compareAndSet(false, true)) return
+        val activeRevisionId = currentSnapshot?.revisionId
+        syncExecutor.execute {
+            try {
+                when (
+                    val result = HttpExperienceSyncClient(
+                        credentials = credentials,
+                        downloadRoot = File(cacheDir, "sync-downloads"),
+                    ).fetchAfter(activeRevisionId)
+                ) {
+                    SyncResult.UpToDate -> recordSyncState("up-to-date")
+                    is SyncResult.RevisionAvailable -> {
+                        store.stageAndActivate(result.revision)
+                        val updated = repository.load()
+                        recordSyncState("active:${updated.revisionId}")
+                        runOnUiThread {
+                            if (!isFinishing && !isDestroyed) render(updated)
                         }
                     }
-                }, LinearLayout.LayoutParams(scenePx(390), scenePx(92)).apply {
-                    bottomMargin = scenePx(14)
-                })
+                    is SyncResult.Failed -> recordSyncState("failed:${result.reason}")
+                }
+            } catch (error: Exception) {
+                recordSyncState("failed:${error.message?.take(140) ?: "internal"}")
+            } finally {
+                synchronizeAppUpdate(credentials)
+                syncRunning.set(false)
             }
         }
-        root.addView(sources, FrameLayout.LayoutParams(scenePx(390), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.TOP).apply {
-            leftMargin = scenePx(72)
-            topMargin = scenePx(430)
-        })
+    }
 
-        root.addView(ImageView(this).apply {
-            setImageDrawable(
-                localDebugBrandingDrawable("logo")
-                    ?: resources.getDrawable(R.drawable.logo_placeholder, theme),
-            )
-            scaleType = ImageView.ScaleType.FIT_END
-            contentDescription = getString(R.string.logo_content_description)
-        }, FrameLayout.LayoutParams(scenePx(300), scenePx(110), Gravity.END or Gravity.BOTTOM).apply {
-            rightMargin = scenePx(72)
-            bottomMargin = scenePx(46)
-        })
+    private fun synchronizeAppUpdate(credentials: org.roomframe.tv.sync.DeviceCredentials) {
+        val state = runCatching {
+            HttpAppUpdateCoordinator(
+                context = applicationContext,
+                credentials = credentials,
+                updateRoot = File(filesDir, "updates"),
+                adapter = adapters.appUpdate,
+            ).checkAndApply()
+        }.getOrElse { error ->
+            "failed:${error.message?.take(140) ?: "internal"}"
+        }
+        getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
+            .edit()
+            .putString("last_update_check", state.take(180))
+            .apply()
+    }
 
-        setContentView(root)
-        window.decorView.post { enterImmersiveMode() }
+    private fun recordSyncState(value: String) {
+        getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
+            .edit()
+            .putString("last_sync_state", value.take(180))
+            .apply()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) {
-            window.decorView.post { enterImmersiveMode() }
-        }
+        if (hasFocus) window.decorView.post { enterImmersiveMode() }
     }
 
     @Suppress("DEPRECATION")
     private fun enterImmersiveMode() {
+        // Sur le firmware Philips TPM231WW, le contrôleur ne doit être demandé
+        // qu'après attachement du décor, sinon le constructeur déclenche une NPE.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false)
             window.decorView.windowInsetsController?.apply {
@@ -168,21 +173,21 @@ class MainActivity : Activity() {
     }
 
     /**
-     * Surcharge locale réservée aux APK debuggables. La production recevra les
-     * médias validés par le pipeline de synchronisation, jamais par ce chemin.
+     * Surcharge locale réservée aux APK debuggables. Une révision serveur
+     * validée reste prioritaire sur ces fichiers de laboratoire.
      */
     private fun localDebugBrandingDrawable(name: String): Drawable? {
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+        if (
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0 ||
+            currentSnapshot?.bundled == false
+        ) {
             return null
         }
-
         val brandingDirectory = File(filesDir, "branding")
         val candidate = listOf("webp", "png", "jpg", "jpeg")
             .asSequence()
             .map { extension -> File(brandingDirectory, "$name.$extension") }
-            .firstOrNull { file ->
-                file.isFile && file.length() in 1..MAX_LOCAL_BRANDING_BYTES
-            }
+            .firstOrNull { file -> file.isFile && file.length() in 1..MAX_LOCAL_BRANDING_BYTES }
             ?: return null
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -197,20 +202,8 @@ class MainActivity : Activity() {
         ) {
             return null
         }
-
         val bitmap = BitmapFactory.decodeFile(candidate.absolutePath) ?: return null
         return BitmapDrawable(resources, bitmap)
-    }
-
-    /**
-     * Les coordonnées du renderer sont exprimées dans la scène logique 1920 × 1080.
-     * La densité Android ne doit pas les agrandir : seule la taille de la fenêtre
-     * détermine le facteur d'échelle.
-     */
-    private fun scenePx(value: Int): Int {
-        val metrics = resources.displayMetrics
-        val scale = min(metrics.widthPixels / 1920f, metrics.heightPixels / 1080f)
-        return (value * scale).roundToInt()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -221,12 +214,16 @@ class MainActivity : Activity() {
             if (event.action == KeyEvent.ACTION_UP) {
                 val held = System.currentTimeMillis() - (okDownAt ?: System.currentTimeMillis())
                 okDownAt = null
-                if (held >= 8_000) {
-                    Toast.makeText(
-                        this,
-                        "Menu administrateur indisponible dans ce jalon.",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                if (held >= ADMIN_HOLD_MILLIS) {
+                    if (credentialStore.load() == null) {
+                        startActivity(Intent(this, EnrollmentActivity::class.java))
+                    } else {
+                        Toast.makeText(
+                            this,
+                            getString(R.string.enrollment_already_done),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                     return true
                 }
             }
@@ -235,6 +232,8 @@ class MainActivity : Activity() {
     }
 
     private companion object {
+        const val ADMIN_HOLD_MILLIS = 8_000L
+        const val SYNC_INTERVAL_MILLIS = 5L * 60L * 1_000L
         const val MAX_LOCAL_BRANDING_BYTES = 25L * 1024 * 1024
         const val MAX_LOCAL_BRANDING_DIMENSION = 4096
         const val MAX_LOCAL_BRANDING_PIXELS = 3840L * 2160L

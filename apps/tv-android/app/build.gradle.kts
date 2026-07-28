@@ -16,8 +16,8 @@ android {
         applicationId = "org.roomframe.tv"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
     }
 
     buildTypes { release { isMinifyEnabled = true } }
@@ -25,4 +25,9 @@ android {
 
 kotlin {
     jvmToolchain(17)
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260522")
 }

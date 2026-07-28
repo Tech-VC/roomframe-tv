@@ -155,6 +155,10 @@ la rotation de clé et le mTLS doivent être finalisés avant production.
 GET  /api/v1/releases
 POST /api/v1/releases/import
 POST /api/v1/releases/:releaseId/deployments
+POST /api/v1/deployments/:deploymentId/advance
+GET  /api/v1/tv/update
+GET  /api/v1/tv/updates/:deploymentId/apk
+POST /api/v1/tv/updates/:deploymentId/status
 ```
 
 L’import multipart attend un champ `file` portant l’extension `.rfupdate`. Le
@@ -164,6 +168,13 @@ releases. Les clés JSON dupliquées sont refusées avant la validation du
 contrat, y compris lorsque le manifeste est correctement signé. Aucun
 artefact n’est exécuté par la requête web.
 
-Une release vérifiée peut recevoir un plan `canary` ou `progressive`. Le plan
-est persisté avec l’état `planned`; le moteur d’application et les actions sur
-les TV ne sont pas encore implémentés.
+Une release vérifiée qui contient un `home-apk` peut démarrer un plan `canary`
+sur une TV active ou `progressive` sur un groupe ou le parc. La première vague
+est offerte immédiatement ; les suivantes sont avancées explicitement après
+les retours des TV.
+
+Les trois routes `/tv/update*` exigent l’identité d’appareil et ne donnent
+accès qu’à la cible correspondante. L’APK est servi sans cache et les
+transitions de statut sont strictes. L’installation du code serveur et
+l’installation silencieuse Android sans Device Owner ne sont pas déduites de
+ce statut.

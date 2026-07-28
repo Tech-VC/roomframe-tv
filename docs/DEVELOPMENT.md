@@ -42,11 +42,12 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 16 scénarios : modèle Studio, salutation mono-ligne, flou borné et
+Ils comptent 17 scénarios : modèle Studio, salutation mono-ligne, flou borné et
 compatibilité avec le validateur API, normalisation du vrai manifeste TV,
 réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
 sûr des réponses API non JSON ou malformées, ainsi que la conservation des
-références de formulaire au-delà des appels asynchrones. Ce lot passe `16/16`.
+références de formulaire au-delà des appels asynchrones, ainsi que la présence
+et le nettoyage du flux de récupération locale. Ce lot passe `17/17`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -77,8 +78,8 @@ ROOMFRAME_TEST_DB_PASSWORD
 Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
-La suite API couvre actuellement 19 scénarios Node, auxquels s’ajoutent les
-16 tests UI, soit 35 tests sur un clone frais. Les workflows GitHub de
+La suite API couvre actuellement 20 scénarios Node, auxquels s’ajoutent les
+17 tests UI, soit 37 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -97,8 +98,9 @@ donc ce même ensemble. Les scénarios comprennent notamment :
   média ;
 - détourage automatique prudent des logos et sélection de la variante alpha ;
 - contrats de scène et fuseaux ;
-- import multipart `.rfupdate`, quarantaine, plan progressif et refus HTTP
-  d’un manifeste signé contenant des clés JSON dupliquées ;
+- import multipart `.rfupdate`, quarantaine, matérialisation APK, cycle canari
+  jusqu’à l’état installé et refus HTTP d’un manifeste signé contenant des
+  clés JSON dupliquées ;
 - mise à jour Ed25519 valide et refus des altérations, artefacts non listés et
   downgrades, ainsi que remplacement sûr d’une quarantaine corrompue.
 
@@ -145,7 +147,7 @@ Le build nécessite JDK 17, Android SDK Platform 35 et Android SDK Build Tools
 
 ```bash
 cd apps/tv-android
-./gradlew --no-daemon clean :app:assembleDebug
+./gradlew --no-daemon clean testDebugUnitTest lintDebug :app:assembleDebug
 ```
 
 L’APK de développement est produit dans
@@ -203,11 +205,15 @@ l’utilisateur Android afin de tester la CA Caddy locale. Les builds release
 continuent de faire confiance uniquement aux CA système tant que le client
 HTTPS n’a pas reçu la CA d’instance par le flux d’enrôlement.
 
-Le launcher compile un fallback d’accueil natif sans WebView et contient :
+Le launcher compile un accueil natif sans WebView et contient :
 
 - `cache/FileExperienceStore`, qui vérifie les hashes, écrit un staging,
   bascule les pointeurs atomiquement et conserve la révision précédente ;
-- les interfaces `ExperienceSyncClient` et `ManifestVerifier` ;
+- `HttpExperienceSyncClient`, le parseur strict des documents et le renderer
+  logique 1920 × 1080 ;
+- l’enrôlement HTTPS et le stockage chiffré de la clé TV dans Android Keystore ;
+- `HttpAppUpdateCoordinator`, le contrôle de l’APK et l’adaptateur
+  `PackageInstaller` conditionné à Device Owner ;
 - les contrats HDMI, Cast, AirPlay et puissance ;
 - des adaptateurs qui répondent honnêtement `unsupported` et des simulateurs
   réservés aux tests.
@@ -215,6 +221,12 @@ Le launcher compile un fallback d’accueil natif sans WebView et contient :
 Le build debug 0.3.0 a été installé et lancé sur le matériel Philips documenté
 dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
-client HTTPS, de la PKI et de l’installation APK pilotée par l’administration
-reste incomplète. Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour
-silencieuse ne peut être déduit des adaptateurs `unsupported` ou simulés.
+client HTTPS et de la distribution APK est maintenant codée et testée hors
+matériel. Le provisionnement Device Owner, l’installation silencieuse réelle
+et la PKI individuelle restent à valider. Aucun résultat HDMI, Cast, AirPlay,
+puissance ou mise à jour silencieuse ne peut être déduit des adaptateurs
+`unsupported` ou des tests JVM.
+
+La build suivante est `0.3.1` / `versionCode 4`, afin de tester une vraie
+montée de version depuis l’APK `0.3.0` / code 3 déjà installé. Elle n’est pas
+considérée installée tant que la TV n’a pas été reconnectée et contrôlée.

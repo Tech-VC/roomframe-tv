@@ -23,11 +23,26 @@ SEMVER_RE = re.compile(
 )
 KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
 MIGRATION_RE = re.compile(r"^[0-9]{4}_[a-z0-9_]+\.sql$")
+SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
+ANDROID_PACKAGE_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$"
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifact", required=True, type=Path)
+    parser.add_argument(
+        "--artifact",
+        type=Path,
+        help="archive serveur .tar.gz (optionnelle si --home-apk est fourni)",
+    )
+    parser.add_argument("--home-apk", type=Path, help="APK RoomFrame Home signé")
+    parser.add_argument("--home-package", help="package Android de --home-apk")
+    parser.add_argument("--home-version-code", type=int, help="versionCode Android")
+    parser.add_argument(
+        "--home-signing-cert-sha256",
+        help="SHA-256 du certificat de signature de l'APK",
+    )
     parser.add_argument("--version", required=True)
     parser.add_argument("--private-key", required=True, type=Path)
     parser.add_argument("--key-id", required=True)
@@ -55,7 +70,27 @@ def regular_file(path: Path, label: str) -> None:
 
 def main() -> int:
     args = parse_args()
-    regular_file(args.artifact, "L'artefact")
+    if args.artifact is None and args.home_apk is None:
+        raise SystemExit("Fournir au moins --artifact ou --home-apk.")
+    if args.artifact is not None:
+        regular_file(args.artifact, "L'archive serveur")
+    if args.home_apk is not None:
+        regular_file(args.home_apk, "L'APK RoomFrame Home")
+        if not ANDROID_PACKAGE_RE.fullmatch(args.home_package or ""):
+            raise SystemExit("--home-package doit être un nom de package Android valide.")
+        if args.home_version_code is None or not 1 <= args.home_version_code <= 2_147_483_647:
+            raise SystemExit("--home-version-code doit être compris entre 1 et 2147483647.")
+        if not SHA256_RE.fullmatch(args.home_signing_cert_sha256 or ""):
+            raise SystemExit("--home-signing-cert-sha256 doit contenir 64 caractères hexadécimaux.")
+    elif any(
+        value is not None
+        for value in (
+            args.home_package,
+            args.home_version_code,
+            args.home_signing_cert_sha256,
+        )
+    ):
+        raise SystemExit("Les métadonnées --home-* nécessitent --home-apk.")
     regular_file(args.private_key, "La clé privée")
     if not SEMVER_RE.fullmatch(args.version):
         raise SystemExit(f"Version SemVer invalide: {args.version}")
@@ -69,7 +104,38 @@ def main() -> int:
     if args.output.exists() and args.output.is_symlink():
         raise SystemExit("Le fichier de sortie ne peut pas être un lien symbolique")
 
-    artifact_name = f"server/roomframe-server-{args.version}.tar.gz"
+    artifact_specs: list[tuple[Path, str, dict[str, object]]] = []
+    if args.artifact is not None:
+        artifact_name = f"server/roomframe-server-{args.version}.tar.gz"
+        artifact_specs.append(
+            (
+                args.artifact,
+                artifact_name,
+                {
+                    "path": artifact_name,
+                    "sha256": sha256_file(args.artifact),
+                    "size": args.artifact.stat().st_size,
+                    "kind": "server-archive",
+                },
+            )
+        )
+    if args.home_apk is not None:
+        apk_name = f"android/roomframe-home-{args.version}.apk"
+        artifact_specs.append(
+            (
+                args.home_apk,
+                apk_name,
+                {
+                    "path": apk_name,
+                    "sha256": sha256_file(args.home_apk),
+                    "size": args.home_apk.stat().st_size,
+                    "kind": "home-apk",
+                    "packageName": args.home_package,
+                    "versionCode": args.home_version_code,
+                    "signingCertificateSha256": args.home_signing_cert_sha256.lower(),
+                },
+            )
+        )
     migrations = []
     if args.migrations_dir.is_dir():
         migrations = sorted(
@@ -87,14 +153,7 @@ def main() -> int:
             "algorithm": "Ed25519",
             "keyId": args.key_id,
         },
-        "artifacts": [
-            {
-                "path": artifact_name,
-                "sha256": sha256_file(args.artifact),
-                "size": args.artifact.stat().st_size,
-                "kind": "server-archive",
-            }
-        ],
+        "artifacts": [descriptor for _, _, descriptor in artifact_specs],
         "migrations": migrations,
         "preservesInstanceData": True,
     }
@@ -146,7 +205,8 @@ def main() -> int:
             ) as archive:
                 archive.writestr("manifest.json", manifest_bytes, compress_type=zipfile.ZIP_STORED)
                 archive.writestr("manifest.sig", signature, compress_type=zipfile.ZIP_STORED)
-                archive.write(args.artifact, artifact_name)
+                for source, archive_name, _ in artifact_specs:
+                    archive.write(source, archive_name)
             os.chmod(staged, 0o644)
             os.replace(staged, args.output)
         finally:

@@ -89,10 +89,21 @@ manifeste, chaque document et chaque asset, puis active le staging dans une
 transaction qui conserve la révision précédente. Son interrupteur « Couper
 l’API » et le rechargement du cache démontrent le rendu sans serveur.
 
-Le client Android fournit maintenant `FileExperienceStore`, les interfaces de
-synchronisation/vérification et des adaptateurs `unsupported` ou explicitement
-simulés. L’intégration HTTPS/PKI, le branchement du magasin au rendu et les
-tests Gradle sur appareil restent à réaliser.
+Le client Android rend d’abord la révision active vérifiée, ou l’expérience
+embarquée en secours, puis synchronise l’origine HTTPS en arrière-plan. Il
+vérifie le manifeste canonique, chaque document et chaque média, active le
+staging par renommage atomique et revient au pointeur précédent si l’actif est
+corrompu. Les identifiants TV sont chiffrés via Android Keystore.
+
+`NativeSceneRenderer` rend la scène logique 1920 × 1080 avec des vues Android,
+sans WebView : fonds image/vidéo, flou Android 12, textes, heure, messages,
+logo global, médias, boutons source et ordre de focus D-pad. La couche logique
+reste indépendante de la résolution 4K/HDR des applications natives ouvertes.
+
+Après la synchronisation d’expérience, le client peut récupérer une mise à
+jour APK affectée. Il vérifie l’artefact et utilise `PackageInstaller`
+uniquement derrière `AppUpdateAdapter`; l’installation silencieuse reste
+conditionnée à Device Owner et à une validation physique.
 
 ## Studio
 

@@ -42,6 +42,28 @@ Le script :
 - signe le manifeste avec OpenSSL ;
 - écrit le ZIP par staging puis renommage.
 
+## Ajouter l’application TV
+
+Le même bundle peut contenir le serveur et l’APK, ou seulement l’APK. Les
+métadonnées doivent provenir de l’APK signé qui sera distribué :
+
+```bash
+python3 scripts/build-signed-update.py \
+  --artifact dist/roomframe-tv-v0.3.1.tar.gz \
+  --home-apk apps/tv-android/app/build/outputs/apk/release/app-release.apk \
+  --home-package org.roomframe.tv \
+  --home-version-code 4 \
+  --home-signing-cert-sha256 SHA256_CERTIFICAT_ANDROID \
+  --version 0.3.1 \
+  --private-key /chemin-protege/release-private.pem \
+  --key-id release-main \
+  --output dist/roomframe-tv-v0.3.1.rfupdate
+```
+
+`--artifact` et `--home-apk` sont optionnels séparément, mais au moins l’un des
+deux est requis. La clé Android et la clé Ed25519 de release restent distinctes
+et hors du dépôt.
+
 Vérification :
 
 ```bash

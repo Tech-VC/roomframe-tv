@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui3">
-  <script type="module" src="/app.js?v=0.3.0-ui3"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui4">
+  <script type="module" src="/app.js?v=0.3.0-ui4"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -238,7 +238,28 @@
 
       <section class="workspace-panel full-panel" id="view-fleet" aria-labelledby="fleetTitle">
         <aside class="panel-index"><div class="eyebrow">Parc local</div><h1 class="editorial-title" id="fleetTitle">Les salles<br>comme une<br>constellation.</h1><p class="note">Les capacités non remontées restent explicitement inconnues.</p></aside>
-        <div class="panel-content"><div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div></div>
+        <div class="panel-content fleet-workbench">
+          <section class="enrollment-console" aria-labelledby="enrollmentTitle">
+            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La clé expire après 30 minutes et disparaît de cette régie dès que vous la masquez.</p></div>
+            <form id="enrollmentForm">
+              <label for="enrollmentDisplayName">Nom de la TV<input id="enrollmentDisplayName" name="displayName" maxlength="100" required placeholder="Écran salle 1"></label>
+              <label for="enrollmentRoomName">Salle<input id="enrollmentRoomName" name="roomName" maxlength="100" required placeholder="Salle de réunion 1"></label>
+              <button class="tool primary" type="submit">Créer l’enrôlement</button>
+              <p class="form-error hidden" id="enrollmentError" role="alert"></p>
+            </form>
+          </section>
+          <section class="enrollment-ticket hidden" id="enrollmentTicket" aria-live="polite" aria-labelledby="enrollmentTicketTitle">
+            <div><span>USAGE UNIQUE</span><h2 id="enrollmentTicketTitle">À remettre à la TV</h2><p id="enrollmentExpiry"></p></div>
+            <label for="enrollmentServer">Serveur HTTPS<input id="enrollmentServer" readonly></label>
+            <label for="enrollmentDeviceId">Identifiant TV<input id="enrollmentDeviceId" readonly></label>
+            <label for="enrollmentSecret">Clé d’enrôlement<input id="enrollmentSecret" readonly></label>
+            <div class="ticket-actions">
+              <button class="tool primary" id="copyEnrollmentButton" type="button">Copier les trois valeurs</button>
+              <button class="tool" id="hideEnrollmentButton" type="button">Masquer maintenant</button>
+            </div>
+          </section>
+          <div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div>
+        </div>
       </section>
 
       <section class="workspace-panel full-panel" id="view-releases" aria-labelledby="releasesTitle">
@@ -250,6 +271,23 @@
             <button class="tool primary" type="submit">Vérifier</button>
           </form>
           <div class="release-result" id="releaseResult" aria-live="polite"><p class="empty-copy">Aucun bundle importé.</p></div>
+          <section class="deployment-console" aria-labelledby="deploymentTitle">
+            <div class="console-index">
+              <span>VAGUES CONTRÔLÉES</span>
+              <h2 id="deploymentTitle">Ouvrir une voie de distribution</h2>
+              <p>Le canari cible une seule TV. Le progressif attend la validation de la vague active avant d’offrir la suivante.</p>
+            </div>
+            <form id="deploymentForm">
+              <label for="deploymentRelease">Version vérifiée<select id="deploymentRelease" name="releaseId" required></select></label>
+              <label for="deploymentStrategy">Stratégie<select id="deploymentStrategy" name="strategy"><option value="canary">Canari · une TV</option><option value="progressive">Progressive · groupe ou parc</option></select></label>
+              <label for="deploymentTargetType">Portée<select id="deploymentTargetType" name="targetType"><option value="tv">Une TV</option><option value="group">Un groupe</option><option value="fleet">Tout le parc</option></select></label>
+              <label for="deploymentTarget" id="deploymentTargetField">Cible<select id="deploymentTarget" name="targetId" required></select></label>
+              <label for="deploymentBatchSize">Taille de vague<input id="deploymentBatchSize" name="batchSize" type="number" min="1" max="100" value="1" required></label>
+              <button class="tool primary" type="submit">Démarrer la vague</button>
+              <p class="form-error hidden" id="deploymentError" role="alert"></p>
+            </form>
+          </section>
+          <div class="release-board" id="releaseBoard" aria-live="polite"></div>
         </div>
       </section>
 
@@ -281,6 +319,7 @@
         </div>
         <p class="form-error hidden" id="loginError" role="alert"></p>
         <button class="next" type="submit"><span>Entrer</span><b aria-hidden="true">→</b></button>
+        <button class="gate-switch" id="openRecoveryButton" type="button">Utiliser une récupération locale root-only</button>
       </form>
     </section>
     <section class="gate-panel hidden" id="bootstrapPanel" aria-labelledby="bootstrapTitle">
@@ -309,6 +348,32 @@
         </div>
         <p class="form-error hidden" id="bootstrapError" role="alert"></p>
         <button class="next" type="submit">Initialiser et verrouiller</button>
+      </form>
+    </section>
+    <section class="gate-panel hidden" id="recoveryPanel" aria-labelledby="recoveryTitle">
+      <div class="access-state"><span class="access-pulse warning"></span><span>Autorité locale temporaire</span><b>Usage unique</b></div>
+      <form class="gate-form" id="recoveryForm">
+        <span class="form-index">SECOURS / ROOT</span>
+        <h2 id="recoveryTitle">Reprendre le contrôle.</h2>
+        <p>Cette procédure exige le jeton affiché localement par <code>roomframe-recover-admin</code>. Elle remplace le mot de passe et le TOTP puis révoque les anciennes sessions.</p>
+        <div class="form-grid">
+          <label class="wide" for="recoveryToken">Jeton de récupération<input id="recoveryToken" name="recoveryToken" type="password" autocomplete="off" minlength="20" required></label>
+          <label class="wide" for="recoveryUsername">Compte à récupérer<input id="recoveryUsername" name="username" autocomplete="username" required></label>
+          <label for="recoveryPassword">Nouvelle phrase de passe<input id="recoveryPassword" name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+          <label for="recoveryPasswordConfirm">Confirmation<input id="recoveryPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="12" required></label>
+        </div>
+        <div class="totp-enrolment">
+          <button class="tool" id="prepareRecoveryTotpButton" type="button">Créer le nouveau TOTP</button>
+          <div class="hidden" id="recoveryTotpDetails">
+            <p>Ajoutez ce nouveau secret à votre application d’authentification, puis saisissez le code courant.</p>
+            <output id="recoveryTotpSecret" aria-label="Nouveau secret TOTP"></output>
+            <a id="recoveryTotpUri" href="#">Ouvrir l’application compatible</a>
+            <label for="recoveryTotpCode">Code TOTP<input id="recoveryTotpCode" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6"></label>
+          </div>
+        </div>
+        <p class="form-error hidden" id="recoveryError" role="alert"></p>
+        <button class="next" type="submit">Réinitialiser et révoquer les sessions</button>
+        <button class="gate-switch" id="cancelRecoveryButton" type="button">Retour à la connexion</button>
       </form>
     </section>
   </div>

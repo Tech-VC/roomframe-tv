@@ -327,7 +327,9 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(invalidUpload.statusCode, 415);
   assert.deepEqual(await readdir(config.processingDir), []);
 
-  const updateFixture = await buildTestUpdate(path.join(temporary, 'api-update'));
+  const updateFixture = await buildTestUpdate(path.join(temporary, 'api-update'), {
+    includeHomeApk: true,
+  });
   await mkdir(config.updateTrustDir, { recursive: true, mode: 0o700 });
   await copyFile(
     updateFixture.publicKeyPath,
@@ -353,6 +355,8 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(importedRelease.releaseId, updateFixture.manifest.releaseId);
   assert.equal(importedRelease.status, 'verified');
   assert.match(importedRelease.bundleSha256, /^[a-f0-9]{64}$/);
+  assert.equal(importedRelease.apkArtifacts.length, 1);
+  assert.equal(importedRelease.apkArtifacts[0].packageName, 'org.roomframe.tv');
   const quarantinedBundle = await readFile(path.join(
     config.releasesDir,
     'verified',
@@ -361,22 +365,6 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(
     crypto.createHash('sha256').update(quarantinedBundle).digest('hex'),
     importedRelease.bundleSha256,
-  );
-
-  const plannedDeployment = await app.inject({
-    method: 'POST',
-    url: `/api/v1/releases/${importedRelease.releaseId}/deployments`,
-    headers: { cookie, 'x-csrf-token': csrfToken },
-    payload: {
-      strategy: 'progressive',
-      targetType: 'fleet',
-    },
-  });
-  assert.equal(plannedDeployment.statusCode, 201, plannedDeployment.body);
-  assert.equal(plannedDeployment.json().status, 'planned');
-  assert.equal(
-    plannedDeployment.json().hardwareExecution,
-    'simulated-until-adapter-validation',
   );
 
   const invalidUpdateFixture = await buildTestUpdate(
@@ -524,6 +512,80 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(deviceSync.statusCode, 200);
+
+  const plannedDeployment = await app.inject({
+    method: 'POST',
+    url: `/api/v1/releases/${importedRelease.releaseId}/deployments`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      strategy: 'progressive',
+      targetType: 'fleet',
+      batchSize: 1,
+    },
+  });
+  assert.equal(plannedDeployment.statusCode, 201, plannedDeployment.body);
+  const deployment = plannedDeployment.json();
+  assert.equal(deployment.status, 'running');
+  assert.equal(deployment.offeredCount, 1);
+  assert.equal(
+    deployment.hardwareExecution,
+    'download-and-verification-active-install-requires-device-owner',
+  );
+
+  const updateOffer = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/update',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(updateOffer.statusCode, 200, updateOffer.body);
+  assert.equal(updateOffer.json().available, true);
+  assert.equal(updateOffer.json().artifact.packageName, 'org.roomframe.tv');
+  assert.equal(updateOffer.json().installation.silentRequiresDeviceOwner, true);
+
+  const apkDownload = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/updates/${deployment.id}/apk`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(apkDownload.statusCode, 200, apkDownload.body);
+  assert.equal(apkDownload.headers['content-type'], 'application/vnd.android.package-archive');
+  assert.equal(
+    crypto.createHash('sha256').update(apkDownload.rawPayload).digest('hex'),
+    updateOffer.json().artifact.sha256,
+  );
+
+  for (const status of ['downloaded', 'installing', 'installed']) {
+    const report = await app.inject({
+      method: 'POST',
+      url: `/api/v1/tv/updates/${deployment.id}/status`,
+      headers: {
+        'x-roomframe-device-id': pendingDevice.id,
+        'x-roomframe-device-key': deviceCredential.deviceKey,
+      },
+      payload: {
+        status,
+        version: status === 'installed' ? importedRelease.version : '0.3.0',
+      },
+    });
+    assert.equal(report.statusCode, 200, report.body);
+    assert.equal(report.json().status, status);
+  }
+
+  const completedDeployment = await app.inject({
+    method: 'POST',
+    url: `/api/v1/deployments/${deployment.id}/advance`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { batchSize: 1 },
+  });
+  assert.equal(completedDeployment.statusCode, 200, completedDeployment.body);
+  assert.equal(completedDeployment.json().status, 'completed');
+
   const unrelatedDefaultAsset = await app.inject({
     method: 'GET',
     url: `/api/v1/default-assets/background-default.jpg?deviceId=${pendingDevice.id}`,

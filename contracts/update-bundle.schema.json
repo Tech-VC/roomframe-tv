@@ -37,8 +37,35 @@
           "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$"},
           "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "size": {"type": "integer", "minimum": 0, "maximum": 4294967296},
-          "kind": {"enum": ["agent-apk", "home-apk", "server-archive", "oci-images", "migration", "compose-lock"]}
+          "kind": {"enum": ["agent-apk", "home-apk", "server-archive", "oci-images", "migration", "compose-lock"]},
+          "packageName": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$"
+          },
+          "versionCode": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+          "signingCertificateSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {"enum": ["agent-apk", "home-apk"]}
+              },
+              "required": ["kind"]
+            },
+            "then": {
+              "properties": {
+                "packageName": true,
+                "versionCode": true,
+                "signingCertificateSha256": true
+              },
+              "required": ["packageName", "versionCode", "signingCertificateSha256"]
+            }
+          }
+        ],
         "additionalProperties": false
       }
     },

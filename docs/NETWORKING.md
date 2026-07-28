@@ -86,6 +86,7 @@ l’interface LAN déjà configurée.
 Aucun balayage massif de ports n'est prévu.
 
 Le jalon `0.3.0` prend en charge le FQDN, l’URL IP de secours, HTTPS et
-l’enrôlement explicite côté serveur. La découverte locale signée et l’écran de
-saisie manuelle du client Android restent à implémenter ; ils ne doivent pas
-être remplacés par une découverte mDNS non authentifiée.
+l’enrôlement explicite côté serveur. L’écran Android accepte manuellement
+l’origine HTTPS, l’identifiant TV et la clé à usage unique. La découverte locale
+signée reste à implémenter ; elle ne doit pas être remplacée par une découverte
+mDNS non authentifiée.

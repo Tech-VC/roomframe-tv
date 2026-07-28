@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui3";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui3";
+} from "./scene-model.js?v=0.3.0-ui4";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui4";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -83,8 +83,13 @@ const state = {
   messages: [],
   targets: [],
   televisions: [],
+  groups: [],
+  releases: [],
+  deployments: [],
+  enrollmentTicket: null,
   interaction: null,
   totpSetupId: null,
+  recoveryChallengeId: null,
   studioLoaded: false,
 };
 
@@ -93,6 +98,7 @@ const refs = {
   authGate: $("#authGate"),
   loginPanel: $("#loginPanel"),
   bootstrapPanel: $("#bootstrapPanel"),
+  recoveryPanel: $("#recoveryPanel"),
   globalStatus: $("#globalStatus"),
   globalStatusText: $("#globalStatusText"),
   retryButton: $("#retryButton"),
@@ -146,11 +152,22 @@ const showGate = (panel) => {
   refs.authGate.classList.remove("hidden");
   refs.loginPanel.classList.toggle("hidden", panel !== "login");
   refs.bootstrapPanel.classList.toggle("hidden", panel !== "bootstrap");
-  $("#gateNumber").textContent = panel === "login" ? "AUTH / 02" : "INIT / 01";
-  $("#gateHeadline").textContent = panel === "login" ? "Poste de composition" : "Préparer l’instance";
-  $("#gateAside").textContent = panel === "login" ? "Administration locale" : "Configuration applicative";
+  refs.recoveryPanel.classList.toggle("hidden", panel !== "recovery");
+  const gateCopy = {
+    login: ["AUTH / 02", "Poste de composition", "Administration locale"],
+    bootstrap: ["INIT / 01", "Préparer l’instance", "Configuration applicative"],
+    recovery: ["SECOURS / 03", "Récupération contrôlée", "Autorité locale temporaire"],
+  }[panel];
+  $("#gateNumber").textContent = gateCopy[0];
+  $("#gateHeadline").textContent = gateCopy[1];
+  $("#gateAside").textContent = gateCopy[2];
   refs.logoutButton.classList.add("hidden");
-  setTimeout(() => (panel === "login" ? $("#loginUsername") : $("#bootstrapDisplayName")).focus(), 0);
+  const focusTarget = panel === "login"
+    ? $("#loginUsername")
+    : panel === "bootstrap"
+      ? $("#bootstrapDisplayName")
+      : $("#recoveryToken");
+  setTimeout(() => focusTarget.focus(), 0);
 };
 
 const hideGate = () => {
@@ -257,6 +274,9 @@ const loadStudio = async () => {
       ...(Array.isArray(payload.tvs) ? payload.tvs.map((tv) => ({ ...tv, name: `TV · ${tv.display_name ?? tv.displayName ?? tv.id}` })) : []),
     ];
     state.televisions = Array.isArray(payload.televisions) ? payload.televisions : Array.isArray(payload.tvs) ? payload.tvs : [];
+    state.groups = Array.isArray(payload.groups) ? payload.groups : [];
+    state.releases = Array.isArray(payload.releases) ? payload.releases : [];
+    state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
     state.selectedId = state.scene.nodes[0]?.id ?? null;
     state.studioLoaded = true;
     renderStudio();
@@ -283,6 +303,8 @@ const renderStudio = () => {
     refs.revisionList.replaceChildren(make("p", "empty-copy", "Aucune révision chargée."));
     renderProperties();
     renderCollections();
+    renderEnrollmentTicket();
+    renderReleases();
     return;
   }
   refs.sceneName.value = state.scene.name;
@@ -300,6 +322,8 @@ const renderStudio = () => {
   renderProperties();
   renderRevisions();
   renderCollections();
+  renderEnrollmentTicket();
+  renderReleases();
 };
 
 const renderTargets = () => {
@@ -481,10 +505,20 @@ const renderCollections = () => {
 
   const tvRows = state.televisions.map((tv) => {
     const card = make("article", "tv-cell");
+    const enrollmentState = tv.enrollmentState ?? tv.enrollment_state;
+    const connectionState = enrollmentState === "pending"
+      ? "Enrôlement en attente"
+      : enrollmentState === "revoked"
+        ? "Accès révoqué"
+        : tv.online === true
+          ? "En ligne"
+          : tv.online === false
+            ? "Hors ligne"
+            : "État inconnu";
     card.append(
       make("h3", "", tv.displayName ?? tv.display_name ?? tv.name ?? tv.id),
       make("p", "", [
-        tv.online === true ? "En ligne" : tv.online === false ? "Hors ligne" : "État inconnu",
+        connectionState,
         `Source : ${tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"}`,
         `Version : ${tv.version ?? tv.home_version ?? "inconnue"}`,
       ].join("\n")),
@@ -492,6 +526,122 @@ const renderCollections = () => {
     return card;
   });
   $("#fleetList").replaceChildren(...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]));
+};
+
+const renderEnrollmentTicket = () => {
+  const ticket = state.enrollmentTicket;
+  $("#enrollmentTicket").classList.toggle("hidden", !ticket);
+  if (!ticket) {
+    $("#enrollmentServer").value = "";
+    $("#enrollmentDeviceId").value = "";
+    $("#enrollmentSecret").value = "";
+    $("#enrollmentExpiry").textContent = "";
+    return;
+  }
+  $("#enrollmentServer").value = location.origin;
+  $("#enrollmentDeviceId").value = ticket.id;
+  $("#enrollmentSecret").value = ticket.enrollmentKey;
+  $("#enrollmentExpiry").textContent = `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. Après échange, cette clé ne fonctionne plus.`;
+};
+
+const releaseHasHomeApk = (release) => (
+  release.status === "verified"
+  && Array.isArray(release.verification?.apkArtifacts)
+  && release.verification.apkArtifacts.some((artifact) => artifact.kind === "home-apk")
+);
+
+const updateDeploymentTargetControls = () => {
+  const strategy = $("#deploymentStrategy").value;
+  const type = $("#deploymentTargetType");
+  if (strategy === "canary") {
+    type.value = "tv";
+    type.disabled = true;
+  } else {
+    type.disabled = false;
+    if (type.value === "tv") type.value = "fleet";
+  }
+  const targetType = type.value;
+  const target = $("#deploymentTarget");
+  const targetField = $("#deploymentTargetField");
+  const candidates = targetType === "tv"
+    ? state.televisions.filter((tv) => (tv.enrollmentState ?? tv.enrollment_state) === "active")
+    : targetType === "group"
+      ? state.groups
+      : [];
+  target.replaceChildren(...candidates.map((candidate) => {
+    const option = make("option", "", candidate.displayName ?? candidate.display_name ?? candidate.name ?? candidate.id);
+    option.value = candidate.id;
+    return option;
+  }));
+  const needsTarget = targetType !== "fleet";
+  targetField.classList.toggle("hidden", !needsTarget);
+  target.disabled = !needsTarget;
+  target.required = needsTarget;
+  $("#deploymentBatchSize").disabled = strategy === "canary";
+  if (strategy === "canary") $("#deploymentBatchSize").value = "1";
+};
+
+const renderReleases = () => {
+  const eligible = state.releases.filter(releaseHasHomeApk);
+  const releaseSelect = $("#deploymentRelease");
+  const selectedRelease = releaseSelect.value;
+  releaseSelect.replaceChildren(...eligible.map((release) => {
+    const option = make("option", "", `v${release.version} · APK vérifié`);
+    option.value = release.id;
+    return option;
+  }));
+  if (eligible.some((release) => release.id === selectedRelease)) {
+    releaseSelect.value = selectedRelease;
+  }
+  $("#deploymentForm").querySelector('button[type="submit"]').disabled = eligible.length === 0;
+  updateDeploymentTargetControls();
+
+  const releaseRows = state.releases.map((release) => {
+    const row = make("article", "release-record");
+    const apk = release.verification?.apkArtifacts?.find((artifact) => artifact.kind === "home-apk");
+    row.append(
+      make("span", "record-kicker", releaseHasHomeApk(release) ? "APK HOME PRÊT" : "SERVEUR / ARCHIVE"),
+      make("h3", "", `RoomFrame ${release.version}`),
+      make("p", "", [
+        release.status ?? "statut inconnu",
+        apk ? `${apk.packageName} · code ${apk.versionCode}` : "Aucun APK Home dans ce bundle",
+        release.imported_at ? new Date(release.imported_at).toLocaleString("fr-FR") : null,
+      ].filter(Boolean).join("\n")),
+    );
+    return row;
+  });
+  const deploymentRows = state.deployments.map((deployment) => {
+    const row = make("article", "deployment-record");
+    const progress = typeof deployment.progress === "object" && deployment.progress ? deployment.progress : {};
+    const line = Object.entries(progress)
+      .map(([status, count]) => `${status} ${count}`)
+      .join(" · ");
+    row.append(
+      make("span", "record-kicker", `${deployment.strategy ?? "vague"} · ${deployment.target_type ?? "cible"}`),
+      make("h3", "", deployment.status === "completed" ? "Vague terminée" : "Distribution en cours"),
+      make("p", "", line || "En attente du premier retour TV"),
+    );
+    if (deployment.status === "running") {
+      const advance = make("button", "tool");
+      advance.type = "button";
+      advance.dataset.advanceDeployment = deployment.id;
+      advance.textContent = "Valider et ouvrir la suite";
+      row.append(advance);
+    }
+    return row;
+  });
+  const board = $("#releaseBoard");
+  board.replaceChildren(
+    ...(releaseRows.length ? releaseRows : [make("p", "empty-copy", "Aucune version vérifiée.")]),
+    ...(deploymentRows.length ? deploymentRows : []),
+  );
+};
+
+const refreshReleases = async () => {
+  const payload = await api.get("releases");
+  state.releases = Array.isArray(payload.releases) ? payload.releases : [];
+  state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
+  renderReleases();
 };
 
 const populateBrandForm = () => {
@@ -763,6 +913,92 @@ $("#loginForm").addEventListener("submit", async (event) => {
   }
 });
 
+$("#openRecoveryButton").addEventListener("click", () => {
+  formError("loginError");
+  showGate("recovery");
+});
+$("#cancelRecoveryButton").addEventListener("click", () => {
+  state.recoveryChallengeId = null;
+  $("#recoveryForm").reset();
+  $("#recoveryTotpDetails").classList.add("hidden");
+  $("#recoveryTotpSecret").textContent = "";
+  $("#recoveryTotpCode").required = false;
+  $("#recoveryTotpUri").removeAttribute("href");
+  showGate("login");
+});
+$("#prepareRecoveryTotpButton").addEventListener("click", async () => {
+  formError("recoveryError");
+  const form = $("#recoveryForm");
+  const data = new FormData(form);
+  if (!form.reportValidity()) return;
+  if (data.get("password") !== data.get("passwordConfirm")) {
+    formError("recoveryError", "Les phrases de passe ne correspondent pas.");
+    return;
+  }
+  const button = $("#prepareRecoveryTotpButton");
+  button.disabled = true;
+  try {
+    const payload = await api.post("auth/recovery/totp", {
+      recoveryToken: String(data.get("recoveryToken") || ""),
+      username: String(data.get("username") || "").trim(),
+    }, false);
+    state.recoveryChallengeId = payload.challengeId ?? payload.setupId ?? null;
+    const secret = payload.secret ?? payload.totpSecret;
+    const uri = payload.otpauthUrl ?? payload.otpauthUri ?? payload.uri;
+    if (!state.recoveryChallengeId || !secret) throw new Error("Réponse TOTP incomplète.");
+    $("#recoveryTotpSecret").textContent = secret;
+    $("#recoveryTotpUri").classList.toggle("hidden", !uri);
+    if (uri) $("#recoveryTotpUri").href = uri;
+    $("#recoveryTotpDetails").classList.remove("hidden");
+    $("#recoveryTotpCode").required = true;
+    $("#recoveryTotpCode").focus();
+  } catch (error) {
+    formError("recoveryError", error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#recoveryForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("recoveryError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const username = String(data.get("username") || "").trim();
+  if (data.get("password") !== data.get("passwordConfirm")) {
+    formError("recoveryError", "Les phrases de passe ne correspondent pas.");
+    return;
+  }
+  if (!state.recoveryChallengeId) {
+    formError("recoveryError", "Créez et validez d’abord le nouveau TOTP.");
+    return;
+  }
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    await api.post("auth/recovery/complete", {
+      recoveryToken: String(data.get("recoveryToken") || ""),
+      challengeId: state.recoveryChallengeId,
+      username,
+      password: String(data.get("password") || ""),
+      totpCode: String(data.get("totpCode") || "").trim(),
+    }, false);
+    state.recoveryChallengeId = null;
+    form.reset();
+    $("#recoveryTotpDetails").classList.add("hidden");
+    $("#recoveryTotpSecret").textContent = "";
+    $("#recoveryTotpCode").required = false;
+    $("#recoveryTotpUri").removeAttribute("href");
+    showGate("login");
+    $("#loginUsername").value = username;
+    $("#loginPassword").focus();
+    toast("Compte récupéré. Toutes les anciennes sessions ont été révoquées.");
+  } catch (error) {
+    formError("recoveryError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+
 $("#prepareTotpButton").addEventListener("click", async () => {
   formError("bootstrapError");
   const form = $("#bootstrapForm");
@@ -900,6 +1136,70 @@ refs.backgroundBlur.addEventListener("input", () => {
   refs.backgroundBlurValue.value = `${refs.backgroundBlur.value} px`;
   refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
   renderBackground();
+});
+$("#enrollmentForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("enrollmentError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const data = new FormData(form);
+  const displayName = String(data.get("displayName") || "").trim();
+  const roomName = String(data.get("roomName") || "").trim();
+  submit.disabled = true;
+  try {
+    const ticket = await api.post("tvs/enrollment", { displayName, roomName });
+    if (
+      !/^[0-9a-f-]{36}$/i.test(String(ticket.id || "")) ||
+      typeof ticket.enrollmentKey !== "string" ||
+      ticket.enrollmentKey.length < 20 ||
+      !ticket.expiresAt
+    ) {
+      throw new Error("Réponse d’enrôlement incomplète.");
+    }
+    state.enrollmentTicket = ticket;
+    if (!state.televisions.some((tv) => (tv.id ?? tv.deviceId) === ticket.id)) {
+      state.televisions.unshift({
+        id: ticket.id,
+        displayName,
+        roomName,
+        enrollmentState: "pending",
+      });
+    }
+    form.reset();
+    renderCollections();
+    renderEnrollmentTicket();
+    const delay = Math.max(0, Math.min(30 * 60 * 1000, new Date(ticket.expiresAt).getTime() - Date.now()));
+    setTimeout(() => {
+      if (state.enrollmentTicket?.id === ticket.id) {
+        state.enrollmentTicket = null;
+        renderEnrollmentTicket();
+      }
+    }, delay);
+    toast("Enrôlement créé. La clé ne sera plus réaffichée après masquage.");
+  } catch (error) {
+    formError("enrollmentError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+$("#copyEnrollmentButton").addEventListener("click", async () => {
+  const ticket = state.enrollmentTicket;
+  if (!ticket) return;
+  try {
+    await navigator.clipboard.writeText(JSON.stringify({
+      serverUrl: location.origin,
+      deviceId: ticket.id,
+      enrollmentKey: ticket.enrollmentKey,
+    }));
+    toast("Paramètres d’enrôlement copiés. Effacez le presse-papiers après usage.");
+  } catch {
+    toast("Copie indisponible. Utilisez les trois champs affichés.", true);
+  }
+});
+$("#hideEnrollmentButton").addEventListener("click", () => {
+  state.enrollmentTicket = null;
+  renderEnrollmentTicket();
+  toast("Clé masquée. Créez un nouvel enrôlement si elle n’a pas été utilisée.");
 });
 $("#palette").addEventListener("click", (event) => {
   const button = event.target.closest("[data-add-kind]");
@@ -1049,8 +1349,54 @@ $("#releaseForm").addEventListener("submit", (event) => {
       line.append(make("b", "", label), make("span", "", value));
       result.append(line);
     }
-    toast("Résultat de vérification reçu.");
+    refreshReleases().catch((error) => toast(`Version importée, actualisation impossible : ${error.message}`, true));
+    toast("Bundle vérifié. Aucun déploiement n’a été lancé automatiquement.");
   });
+});
+$("#deploymentStrategy").addEventListener("change", updateDeploymentTargetControls);
+$("#deploymentTargetType").addEventListener("change", updateDeploymentTargetControls);
+$("#deploymentForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("deploymentError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const releaseId = String(data.get("releaseId") || "");
+  const strategy = String(data.get("strategy") || "canary");
+  const targetType = strategy === "canary" ? "tv" : String(data.get("targetType") || "fleet");
+  const targetId = targetType === "fleet" ? null : String(data.get("targetId") || "");
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const deployment = await api.post(`releases/${encodeURIComponent(releaseId)}/deployments`, {
+      strategy,
+      targetType,
+      targetId,
+      batchSize: strategy === "canary" ? 1 : Number(data.get("batchSize") || 1),
+    });
+    await refreshReleases();
+    toast(`Vague ouverte pour ${deployment.offeredCount} TV sur ${deployment.targetCount}.`);
+  } catch (error) {
+    formError("deploymentError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+$("#releaseBoard").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-advance-deployment]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const result = await api.post(
+      `deployments/${encodeURIComponent(button.dataset.advanceDeployment)}/advance`,
+      { batchSize: Number($("#deploymentBatchSize").value || 1) },
+    );
+    await refreshReleases();
+    toast(result.status === "completed" ? "Déploiement terminé." : `${result.offeredCount} nouvelle(s) TV ont reçu la vague.`);
+  } catch (error) {
+    toast(`La vague ne peut pas avancer : ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 boot();

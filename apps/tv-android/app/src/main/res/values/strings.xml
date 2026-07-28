@@ -7,4 +7,15 @@
     <string name="logo_content_description">Logo de l’espace</string>
     <string name="device_admin_label">Agent RoomFrame</string>
     <string name="device_admin_description">Administration locale de la TV dédiée</string>
+    <string name="enrollment_title">Enrôler cette TV</string>
+    <string name="enrollment_explanation">Créez un enrôlement dans la régie RoomFrame, puis saisissez ici son serveur HTTPS, son identifiant TV et sa clé à usage unique.</string>
+    <string name="enrollment_server_url">Serveur HTTPS, par exemple https://roomframe.example.local</string>
+    <string name="enrollment_device_id">Identifiant TV</string>
+    <string name="enrollment_key">Clé d’enrôlement à usage unique</string>
+    <string name="enrollment_submit">Enrôler et synchroniser</string>
+    <string name="enrollment_in_progress">Validation HTTPS et enrôlement en cours…</string>
+    <string name="enrollment_success">TV enrôlée. Chargement de la dernière scène valide…</string>
+    <string name="enrollment_error">Enrôlement impossible : %1$s</string>
+    <string name="enrollment_unknown_error">erreur inconnue</string>
+    <string name="enrollment_already_done">Cette TV est déjà enrôlée. La réinitialisation doit être autorisée localement.</string>
 </resources>

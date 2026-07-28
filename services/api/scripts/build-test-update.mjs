@@ -28,6 +28,7 @@ export const buildTestUpdate = async (outputDirectory, {
   tamperArtifact = false,
   extraEntries = [],
   manifestTextTransform = (value) => value,
+  includeHomeApk = false,
 } = {}) => {
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -42,6 +43,25 @@ export const buildTestUpdate = async (outputDirectory, {
 
   const artifactPath = 'server/test-release.txt';
   const artifact = Buffer.from('RoomFrame signed local test update\n', 'utf8');
+  const artifacts = [{
+    path: artifactPath,
+    sha256: crypto.createHash('sha256').update(artifact).digest('hex'),
+    size: artifact.length,
+    kind: 'oci-images',
+  }];
+  const homeApkPath = 'android/roomframe-home-test.apk';
+  const homeApk = Buffer.from('RoomFrame local test APK placeholder\n', 'utf8');
+  if (includeHomeApk) {
+    artifacts.push({
+      path: homeApkPath,
+      sha256: crypto.createHash('sha256').update(homeApk).digest('hex'),
+      size: homeApk.length,
+      kind: 'home-apk',
+      packageName: 'org.roomframe.tv',
+      versionCode: 4,
+      signingCertificateSha256: '1'.repeat(64),
+    });
+  }
   const manifest = {
     formatVersion: 1,
     releaseId: crypto.randomUUID(),
@@ -55,12 +75,7 @@ export const buildTestUpdate = async (outputDirectory, {
       keyId,
     },
     migrations: [],
-    artifacts: [{
-      path: artifactPath,
-      sha256: crypto.createHash('sha256').update(artifact).digest('hex'),
-      size: artifact.length,
-      kind: 'oci-images',
-    }],
+    artifacts,
   };
   const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
   const manifestBytes = Buffer.from(manifestTextTransform(manifestText), 'utf8');
@@ -73,6 +88,9 @@ export const buildTestUpdate = async (outputDirectory, {
     artifactPath,
     { compress: true },
   );
+  if (includeHomeApk) {
+    archive.addBuffer(homeApk, homeApkPath, { compress: true });
+  }
   for (const entry of extraEntries) {
     archive.addBuffer(Buffer.from(entry.content ?? ''), entry.path, { compress: true });
   }

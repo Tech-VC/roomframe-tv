@@ -185,6 +185,17 @@ Le workflow de signature utilise l’environnement GitHub
 et approbateurs ; le job de vérification non privilégié n’a pas accès à la clé
 et le job de packaging reçoit `contents: write` seulement après validation.
 
+Pour un artefact APK, le manifeste signé lie aussi le package, le
+`versionCode` et l’empreinte du certificat Android. La TV télécharge dans son
+répertoire privé, recalcule le hash, lit les métadonnées de l’archive avec
+`PackageManager`, puis compare le certificat à la lignée de signature de
+l’application installée avant tout appel à `PackageInstaller`.
+
+La clé d’appareil conservée par l’APK est chiffrée en AES-256-GCM avec une clé
+non exportable de l’Android Keystore. L’origine HTTPS et l’identifiant de la TV
+sont liés comme données authentifiées. Cette protection locale ne remplace pas
+encore les certificats individuels et le mTLS prévus avant production.
+
 ## Sauvegardes
 
 `roomframe-backup` produit un dump PostgreSQL et des archives avec
