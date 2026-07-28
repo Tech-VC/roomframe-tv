@@ -209,6 +209,8 @@ sudo systemctl status roomframe-update-broker.timer
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
+sudo roomframe-trust-update-key --revoke --key-id release-main \
+  --sha256 EMPREINTE_SHA256
 ```
 
 Les mêmes outils sont présents sous `/opt/roomframe/scripts/`. La commande
@@ -319,6 +321,11 @@ La commande refuse les liens symboliques, les clés autres qu’Ed25519 et toute
 empreinte différente. Elle installe la clé en `0640`, root et groupe
 `roomframe`. Une clé existante identique rend la commande idempotente ; une
 rotation différente exige `--replace`.
+
+Pour une compromission ou un retrait, `--revoke` exige la même empreinte,
+retire atomiquement la clé du magasin actif et la conserve sous
+`/var/lib/roomframe/pki/update-revoked/`. Le moteur refusera ensuite toute
+nouvelle application signée seulement par cette clé.
 
 ## Bootstrap initial
 

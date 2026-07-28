@@ -88,6 +88,41 @@ jobs:
           sudo test ! -e "$test_root/install/local-hardware"
           sudo test ! -e "$test_root/install/prototype/admin/._private-test-only.js"
           sudo test ! -e "$test_root/install/prototype/admin/.DS_Store"
+          openssl genpkey -algorithm ED25519 -out "$test_root/update-test-private.pem"
+          openssl pkey \
+            -in "$test_root/update-test-private.pem" \
+            -pubout \
+            -out "$test_root/update-test-public.pem"
+          update_key_sha="$(sha256sum "$test_root/update-test-public.pem" | awk '{print $1}')"
+          sudo env \
+            ROOMFRAME_RUNTIME_CONFIG="$test_root/config/runtime.conf" \
+            ./scripts/roomframe-trust-update-key.sh \
+              --key-id ci-test \
+              --public-key "$test_root/update-test-public.pem" \
+              --sha256 "$update_key_sha"
+          if sudo env \
+            ROOMFRAME_RUNTIME_CONFIG="$test_root/config/runtime.conf" \
+            ./scripts/roomframe-trust-update-key.sh \
+              --revoke \
+              --key-id ci-test \
+              --sha256 "$(printf '0%.0s' {1..64})"
+          then
+            echo 'Une révocation avec une mauvaise empreinte a été acceptée.' >&2
+            exit 1
+          fi
+          sudo test -f "$test_root/data/pki/update-trust/ci-test.pem"
+          sudo env \
+            ROOMFRAME_RUNTIME_CONFIG="$test_root/config/runtime.conf" \
+            ./scripts/roomframe-trust-update-key.sh \
+              --revoke \
+              --key-id ci-test \
+              --sha256 "$update_key_sha"
+          sudo test ! -e "$test_root/data/pki/update-trust/ci-test.pem"
+          sudo find "$test_root/data/pki/update-revoked" \
+            -mindepth 1 -maxdepth 1 -type f \
+            -name "ci-test-*-${update_key_sha}.pem" \
+            -print -quit \
+            | grep -q .
       - name: Reject private artifacts and local identifiers
         run: |
           forbidden_paths="$(

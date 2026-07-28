@@ -155,6 +155,8 @@ sudo roomframe-apply-update \
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
+sudo roomframe-trust-update-key --revoke --key-id release-main \
+  --sha256 EMPREINTE_SHA256
 ```
 
 Les données sont séparées du code :

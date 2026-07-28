@@ -109,6 +109,20 @@ sudo roomframe-trust-update-key \
   --sha256 EMPREINTE_SHA256
 ```
 
+Révoquer une clé exige son identifiant et son empreinte exacte :
+
+```bash
+sudo roomframe-trust-update-key \
+  --revoke \
+  --key-id release-main \
+  --sha256 EMPREINTE_SHA256
+```
+
+La clé quitte immédiatement `update-trust/` et est conservée en lecture seule
+sous `update-revoked/` pour l’analyse forensique. Une release historique reste
+auditée, mais ne peut plus être appliquée : le moteur exige toujours une clé
+encore approuvée lors de sa nouvelle vérification.
+
 Publier un asset signé ne signifie pas qu’il sera appliqué sans décision
 locale. Le poller peut le récupérer et l’importer. L’application serveur peut
 ensuite être demandée dans le Studio, où la version doit être retapée, ou

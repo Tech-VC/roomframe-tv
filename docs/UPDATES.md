@@ -89,6 +89,19 @@ sudo roomframe-trust-update-key \
 La commande est idempotente pour la même empreinte et exige `--replace` pour
 une rotation explicite. Le magasin est monté en lecture seule dans l’API.
 
+Une clé compromise ou retirée est révoquée avec la même preuve d’empreinte :
+
+```bash
+sudo roomframe-trust-update-key \
+  --revoke \
+  --key-id release-main \
+  --sha256 EMPREINTE_SHA256
+```
+
+RoomFrame la déplace atomiquement de `update-trust/` vers l’archive root-only
+`update-revoked/`. Les bundles historiques restent audités, mais ne passent
+plus la nouvelle vérification obligatoire avant application.
+
 ## Import hors ligne
 
 L’endpoint `POST /api/v1/releases/import` accepte un multipart `file` portant

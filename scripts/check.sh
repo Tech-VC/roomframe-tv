@@ -60,6 +60,12 @@ grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {
   exit 1
 }
 
+trust_key_help="$(bash scripts/roomframe-trust-update-key.sh --help)"
+grep -Fq -- '--revoke' <<<"$trust_key_help" || {
+  echo "La commande de confiance doit documenter la révocation par empreinte." >&2
+  exit 1
+}
+
 broker_unit="infra/systemd/roomframe-update-broker.service"
 grep -Eq '^RestrictAddressFamilies=.*AF_NETLINK([[:space:]]|$)' "$broker_unit" || {
   echo "La sandbox du courtier doit autoriser AF_NETLINK pour la détection réseau." >&2

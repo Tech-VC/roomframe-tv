@@ -7,6 +7,7 @@ KEY_ID=""
 PUBLIC_KEY=""
 EXPECTED_SHA256=""
 REPLACE=0
+REVOKE=0
 
 usage() {
   cat <<'USAGE'
@@ -16,8 +17,14 @@ Usage:
     --public-key /chemin/release-main.pem \
     --sha256 EMPREINTE_SHA256 [--replace]
 
+  sudo roomframe-trust-update-key \
+    --revoke \
+    --key-id release-main \
+    --sha256 EMPREINTE_SHA256
+
 Installe une clé publique Ed25519 après vérification d'une empreinte reçue par
-un canal indépendant. Aucune clé privée n'est acceptée.
+un canal indépendant, ou la révoque en la déplaçant hors du magasin de
+confiance. Aucune clé privée n'est acceptée.
 USAGE
 }
 
@@ -39,6 +46,7 @@ while (($#)); do
       shift 2
       ;;
     --replace) REPLACE=1; shift ;;
+    --revoke) REVOKE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Option inconnue: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -56,10 +64,17 @@ done
   echo "--sha256 doit être une empreinte hexadécimale de 64 caractères." >&2
   exit 2
 }
-[[ -f "$PUBLIC_KEY" && ! -L "$PUBLIC_KEY" ]] || {
-  echo "La clé publique doit être un fichier régulier, pas un lien symbolique." >&2
-  exit 2
-}
+if [[ "$REVOKE" -eq 1 ]]; then
+  [[ -z "$PUBLIC_KEY" && "$REPLACE" -eq 0 ]] || {
+    echo "--revoke est incompatible avec --public-key et --replace." >&2
+    exit 2
+  }
+else
+  [[ -f "$PUBLIC_KEY" && ! -L "$PUBLIC_KEY" ]] || {
+    echo "La clé publique doit être un fichier régulier, pas un lien symbolique." >&2
+    exit 2
+  }
+fi
 [[ -r "$RUNTIME_CONFIG" ]] || {
   echo "Configuration runtime introuvable: $RUNTIME_CONFIG" >&2
   exit 1
@@ -72,10 +87,49 @@ set +a
 
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
 RUNTIME_GID="${ROOMFRAME_RUNTIME_GID:-}"
-[[ "$RUNTIME_GID" =~ ^[0-9]+$ ]] && ((RUNTIME_GID > 0)) || {
+if [[ ! "$RUNTIME_GID" =~ ^[0-9]+$ ]] || ((RUNTIME_GID <= 0)); then
   echo "ROOMFRAME_RUNTIME_GID est absent ou invalide." >&2
   exit 1
+fi
+TRUST_DIR="$DATA_DIR/pki/update-trust"
+DESTINATION="$TRUST_DIR/${KEY_ID}.pem"
+[[ ! -L "$TRUST_DIR" && ! -L "$DESTINATION" ]] || {
+  echo "Un lien symbolique est interdit dans le magasin de confiance." >&2
+  exit 1
 }
+
+if [[ "$REVOKE" -eq 1 ]]; then
+  [[ -f "$DESTINATION" && ! -L "$DESTINATION" ]] || {
+    echo "Clé approuvée introuvable ou non régulière: $KEY_ID" >&2
+    exit 1
+  }
+  ACTUAL_SHA256="$(sha256sum "$DESTINATION" | awk '{print $1}')"
+  [[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || {
+    echo "Empreinte différente; révocation refusée." >&2
+    exit 1
+  }
+  REVOKED_DIR="$DATA_DIR/pki/update-revoked"
+  [[ ! -L "$REVOKED_DIR" ]] || {
+    echo "Un lien symbolique est interdit dans l'archive des clés révoquées." >&2
+    exit 1
+  }
+  mkdir -p "$REVOKED_DIR"
+  chmod 0750 "$REVOKED_DIR"
+  chown "root:${RUNTIME_GID}" "$REVOKED_DIR"
+  REVOKED_AT="$(date -u +%Y%m%dT%H%M%SZ)"
+  REVOKED_DESTINATION="$REVOKED_DIR/${KEY_ID}-${REVOKED_AT}-${EXPECTED_SHA256}.pem"
+  [[ ! -e "$REVOKED_DESTINATION" && ! -L "$REVOKED_DESTINATION" ]] || {
+    echo "Une archive de révocation identique existe déjà." >&2
+    exit 1
+  }
+  mv -- "$DESTINATION" "$REVOKED_DESTINATION"
+  chmod 0640 "$REVOKED_DESTINATION"
+  chown "root:${RUNTIME_GID}" "$REVOKED_DESTINATION"
+  printf 'Clé publique révoquée: %s (%s)\n' "$KEY_ID" "$EXPECTED_SHA256"
+  printf 'Archive forensique: %s\n' "$REVOKED_DESTINATION"
+  exit 0
+fi
+
 ACTUAL_SHA256="$(sha256sum "$PUBLIC_KEY" | awk '{print $1}')"
 [[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || {
   echo "Empreinte de clé publique invalide; installation refusée." >&2
@@ -90,12 +144,6 @@ grep -qi 'ED25519' <<<"$KEY_DESCRIPTION" || {
   exit 1
 }
 
-TRUST_DIR="$DATA_DIR/pki/update-trust"
-DESTINATION="$TRUST_DIR/${KEY_ID}.pem"
-[[ ! -L "$TRUST_DIR" && ! -L "$DESTINATION" ]] || {
-  echo "Un lien symbolique est interdit dans le magasin de confiance." >&2
-  exit 1
-}
 mkdir -p "$TRUST_DIR"
 chmod 0750 "$TRUST_DIR"
 chown "root:${RUNTIME_GID}" "$TRUST_DIR"
