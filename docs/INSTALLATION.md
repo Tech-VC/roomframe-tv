@@ -151,6 +151,13 @@ installation tant que la première est active. Il protège la sauvegarde, la
 copie du code, les migrations et la recréation des conteneurs contre deux
 exécutions concurrentes.
 
+Après construction réussie des images applicatives, l’installateur arrête
+brièvement la pile sans supprimer aucun volume, puis recrée les réseaux
+Compose. Cette étape est nécessaire pour appliquer réellement un durcissement
+de réseau `internal` à une instance déjà installée ; un simple
+`--force-recreate` des conteneurs ne modifie pas les propriétés d’un réseau
+Docker existant.
+
 Le répertoire `/etc/roomframe/secrets` reste `root:root` en mode `0700`. Ses
 fichiers sont `root:root` en mode `0444` : ils restent inaccessibles directement
 aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-root
