@@ -236,7 +236,7 @@ SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
 
 install_dependencies() {
   local need_apt=0 command_name
-  for command_name in curl openssl python3 tar ip sha256sum; do
+  for command_name in curl openssl python3 tar ip sha256sum flock; do
     command -v "$command_name" >/dev/null 2>&1 || need_apt=1
   done
   command -v docker >/dev/null 2>&1 || need_apt=1
@@ -246,7 +246,7 @@ install_dependencies() {
     log "Installation des dépendances système manquantes…"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils docker.io
+    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils util-linux docker.io
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
@@ -277,6 +277,12 @@ install_dependencies() {
 }
 
 install_dependencies
+
+INSTALL_LOCK_FILE="/run/lock/roomframe-install.lock"
+mkdir -p "$(dirname "$INSTALL_LOCK_FILE")"
+exec 9>"$INSTALL_LOCK_FILE"
+flock -n 9 \
+  || fail "Une installation ou mise à jour RoomFrame est déjà en cours."
 
 RUNTIME_USER="roomframe"
 if ! getent passwd "$RUNTIME_USER" >/dev/null 2>&1; then

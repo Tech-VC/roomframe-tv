@@ -129,6 +129,11 @@ Les secrets PostgreSQL, bootstrap, session et chiffrement TOTP sont créés
 uniquement lorsqu’ils sont absents. Une seconde exécution conserve les fichiers
 existants ; aucun secret n’est régénéré silencieusement.
 
+Un verrou local `/run/lock/roomframe-install.lock` refuse une seconde
+installation tant que la première est active. Il protège la sauvegarde, la
+copie du code, les migrations et la recréation des conteneurs contre deux
+exécutions concurrentes.
+
 Le répertoire `/etc/roomframe/secrets` reste `root:root` en mode `0700`. Ses
 fichiers sont `root:root` en mode `0444` : ils restent inaccessibles directement
 aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-root
