@@ -26,6 +26,8 @@ uniquement à son propriétaire :
 
 ```bash
 chmod 0600 /chemin-protege/release-private.pem
+COPYFILE_DISABLE=1 tar -C /chemin/source-roomframe -czf \
+  dist/roomframe-tv-v0.3.0.tar.gz .
 python3 scripts/build-signed-update.py \
   --artifact dist/roomframe-tv-v0.3.0.tar.gz \
   --version 0.3.0 \
@@ -37,6 +39,8 @@ python3 scripts/build-signed-update.py \
 Le script :
 
 - refuse une clé privée trop permissive ;
+- refuse les liens, périphériques, traversées et métadonnées AppleDouble du
+  tar serveur, et exige la même liste de migrations que le dépôt ;
 - calcule le SHA-256 et la taille de l’archive serveur ;
 - liste les identifiants de migrations présents dans le dépôt ;
 - signe le manifeste avec OpenSSL ;

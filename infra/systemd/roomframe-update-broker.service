@@ -8,6 +8,9 @@ Type=oneshot
 User=root
 Group=root
 UMask=0077
+RuntimeDirectory=roomframe-update-broker
+RuntimeDirectoryMode=0700
+Environment=DOCKER_CONFIG=/run/roomframe-update-broker/docker
 ExecStart=/usr/local/sbin/roomframe-update-broker
 NoNewPrivileges=true
 PrivateTmp=true

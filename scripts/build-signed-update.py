@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import tarfile
 import tempfile
 import uuid
 import zipfile
@@ -68,6 +69,48 @@ def regular_file(path: Path, label: str) -> None:
         raise SystemExit(f"{label} doit être un fichier régulier: {path}")
 
 
+def validate_server_archive(path: Path, expected_migrations: set[str]) -> None:
+    actual_migrations: set[str] = set()
+    seen: set[str] = set()
+    try:
+        with tarfile.open(path, mode="r:gz") as archive:
+            for member in archive.getmembers():
+                name = member.name
+                while name.startswith("./"):
+                    name = name[2:]
+                if name in {"", "."} and member.isdir():
+                    continue
+                relative = PurePosixPath(name)
+                if (
+                    relative.is_absolute()
+                    or not relative.parts
+                    or any(part in {"", ".", ".."} for part in relative.parts)
+                    or relative.as_posix() in seen
+                    or not (member.isfile() or member.isdir())
+                ):
+                    raise SystemExit(
+                        f"Entrée non sûre dans l'archive serveur: {member.name!r}"
+                    )
+                seen.add(relative.as_posix())
+                if relative.name == ".DS_Store" or relative.name.startswith("._"):
+                    raise SystemExit(
+                        "Métadonnée macOS interdite dans l'archive serveur; "
+                        "reconstruire le tar avec COPYFILE_DISABLE=1."
+                    )
+                if (
+                    member.isfile()
+                    and relative.parts[:-1] == ("database", "migrations")
+                    and MIGRATION_RE.fullmatch(relative.name)
+                ):
+                    actual_migrations.add(relative.stem)
+    except (OSError, tarfile.TarError) as error:
+        raise SystemExit(f"Archive serveur tar.gz invalide: {error}") from error
+    if actual_migrations != expected_migrations:
+        raise SystemExit(
+            "Les migrations de l'archive serveur diffèrent de --migrations-dir."
+        )
+
+
 def main() -> int:
     args = parse_args()
     if args.artifact is None and args.home_apk is None:
@@ -104,6 +147,16 @@ def main() -> int:
     if args.output.exists() and args.output.is_symlink():
         raise SystemExit("Le fichier de sortie ne peut pas être un lien symbolique")
 
+    migrations = []
+    if args.migrations_dir.is_dir():
+        migrations = sorted(
+            path.stem
+            for path in args.migrations_dir.iterdir()
+            if path.is_file() and MIGRATION_RE.fullmatch(path.name)
+        )
+    if args.artifact is not None:
+        validate_server_archive(args.artifact, set(migrations))
+
     artifact_specs: list[tuple[Path, str, dict[str, object]]] = []
     if args.artifact is not None:
         artifact_name = f"server/roomframe-server-{args.version}.tar.gz"
@@ -135,13 +188,6 @@ def main() -> int:
                     "signingCertificateSha256": args.home_signing_cert_sha256.lower(),
                 },
             )
-        )
-    migrations = []
-    if args.migrations_dir.is_dir():
-        migrations = sorted(
-            path.stem
-            for path in args.migrations_dir.iterdir()
-            if path.is_file() and MIGRATION_RE.fullmatch(path.name)
         )
     manifest = {
         "formatVersion": 1,
