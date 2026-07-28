@@ -73,3 +73,14 @@ test("l’automatisation serveur reste un opt-in éditorial et explicite", () =>
   assert.match(source, /state\.serverUpdatePolicy = payload\.policy/);
   assert.match(source, /Un échec exige ensuite une décision humaine/);
 });
+
+test("les scènes programmées gardent un retour explicite vers l’affectation habituelle", () => {
+  assert.match(markup, /id="sceneScheduleForm"/);
+  assert.match(markup, /Programmer une scène temporaire/);
+  assert.match(markup, /À la fin, l’affectation habituelle revient automatiquement/);
+  assert.match(markup, /Deux créneaux d’une même cible ne peuvent pas se chevaucher/);
+  assert.match(markup, /id="sceneScheduleError" role="alert"/);
+  assert.match(source, /api\.post\("scene-schedules"/);
+  assert.match(source, /scene-schedules\/\$\{encodeURIComponent\(scheduleId\)\}\/cancel/);
+  assert.match(source, /Le worker activera la révision à l’heure prévue/);
+});

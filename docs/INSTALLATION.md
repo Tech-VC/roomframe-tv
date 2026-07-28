@@ -176,6 +176,12 @@ explicitement activée, le courtier systemd root vérifie le délai, la fenêtre
 le fuseau, la provenance GitHub et l’absence de tentative antérieure avant de
 mettre au plus une release en file. L’API ne reçoit toujours ni Docker ni sudo.
 
+Le worker média traite également les transitions de scènes programmées toutes
+les quelques secondes. Une activation ou une fin effective incrémente la
+révision de synchronisation afin que les TV reçoivent le changement au prochain
+poll. Une fenêtre entièrement manquée pendant un arrêt du worker est clôturée
+et auditée sans être annoncée comme affichée.
+
 `runtime.conf` mémorise également l’UID/GID du compte `roomframe`. Les médias,
 traitements et releases lui appartiennent. La demande de récupération reste
 écrite par root, lisible par le groupe runtime et montée en lecture seule dans

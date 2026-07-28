@@ -21,6 +21,7 @@ import { createPool, runMigrations } from '../src/database.mjs';
 import { pollGithubUpdates } from '../src/github-update-poller.mjs';
 import { processOneMediaJob } from '../src/media-worker.mjs';
 import { importReleaseBundle } from '../src/release-importer.mjs';
+import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 
@@ -655,6 +656,13 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     return `${'__Host-roomframe_session'}=${sessionToken}`;
   };
   const contentCookie = await makeRoleSession('content', 'content-test');
+  const contentSession = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/session',
+    headers: { cookie: contentCookie },
+  });
+  assert.equal(contentSession.statusCode, 200, contentSession.body);
+  const contentCsrfToken = contentSession.json().csrfToken;
   const contentStudio = await app.inject({
     method: 'GET',
     url: '/api/v1/studio',
@@ -1283,6 +1291,20 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(unpublishedAssignment.statusCode, 409, unpublishedAssignment.body);
   assert.equal(unpublishedAssignment.json().error, 'scene_not_published');
+  const unpublishedSchedule = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scene-schedules',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: secondarySceneId,
+      targetType: 'group',
+      targetId: groupId,
+      startsAt: new Date(Date.now() + 60_000).toISOString(),
+      endsAt: new Date(Date.now() + 120_000).toISOString(),
+    },
+  });
+  assert.equal(unpublishedSchedule.statusCode, 409, unpublishedSchedule.body);
+  assert.equal(unpublishedSchedule.json().error, 'scene_not_published');
   const secondaryPublication = await app.inject({
     method: 'POST',
     url: `/api/v1/scenes/${secondarySceneId}/publish`,
@@ -1321,6 +1343,201 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(assignedGroupPreview.statusCode, 200, assignedGroupPreview.body);
   assert.equal(assignedGroupPreview.json().scene.id, secondarySceneId);
+  await pool.query(
+    'UPDATE screens SET group_id = $2, updated_at = now() WHERE id = $1',
+    [pendingDevice.id, groupId],
+  );
+  const assignedGroupSync = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(assignedGroupSync.statusCode, 200, assignedGroupSync.body);
+  assert.equal(assignedGroupSync.json().manifest.sceneId, secondarySceneId);
+
+  const scheduleStart = new Date(Date.now() + 5 * 60_000);
+  const scheduleEnd = new Date(Date.now() + 10 * 60_000);
+  const scheduledScene = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scene-schedules',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: studioState.scene.id,
+      targetType: 'group',
+      targetId: groupId,
+      startsAt: scheduleStart.toISOString(),
+      endsAt: scheduleEnd.toISOString(),
+    },
+  });
+  assert.equal(scheduledScene.statusCode, 201, scheduledScene.body);
+  assert.equal(scheduledScene.json().schedule.status, 'scheduled');
+  assert.equal(scheduledScene.json().syncRevision, null);
+  const scheduledSceneId = scheduledScene.json().schedule.id;
+  const overlappingSchedule = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scene-schedules',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: studioState.scene.id,
+      targetType: 'group',
+      targetId: groupId,
+      startsAt: new Date(scheduleStart.getTime() + 60_000).toISOString(),
+      endsAt: new Date(scheduleEnd.getTime() + 60_000).toISOString(),
+    },
+  });
+  assert.equal(overlappingSchedule.statusCode, 409, overlappingSchedule.body);
+  assert.equal(overlappingSchedule.json().error, 'scene_schedule_overlap');
+  const forbiddenGroupSchedule = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scene-schedules',
+    headers: { cookie: contentCookie, 'x-csrf-token': contentCsrfToken },
+    payload: {
+      sceneId: studioState.scene.id,
+      targetType: 'group',
+      targetId: groupId,
+      startsAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+      endsAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+    },
+  });
+  assert.equal(forbiddenGroupSchedule.statusCode, 403, forbiddenGroupSchedule.body);
+  const revisionBeforeScheduleActivation = await pool.query(
+    'SELECT revision FROM sync_state WHERE singleton = true',
+  );
+  await pool.query(
+    `UPDATE scene_schedules
+     SET starts_at = now() - interval '1 minute',
+         ends_at = now() + interval '1 minute'
+     WHERE id = $1`,
+    [scheduledSceneId],
+  );
+  const activation = await processSceneScheduleTransitions(pool);
+  assert.deepEqual(
+    {
+      transitioned: activation.transitioned,
+      effectiveChanges: activation.effectiveChanges,
+    },
+    { transitioned: 1, effectiveChanges: 1 },
+  );
+  assert.equal(
+    activation.syncRevision,
+    Number(revisionBeforeScheduleActivation.rows[0].revision) + 1,
+  );
+  const scheduledGroupPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=group&targetId=${groupId}`,
+    headers: { cookie },
+  });
+  assert.equal(scheduledGroupPreview.statusCode, 200, scheduledGroupPreview.body);
+  assert.equal(scheduledGroupPreview.json().scene.id, studioState.scene.id);
+  const scheduledDeviceSync = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}&revision=${assignedGroupSync.json().revision}`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(scheduledDeviceSync.statusCode, 200, scheduledDeviceSync.body);
+  assert.equal(scheduledDeviceSync.json().upToDate, false);
+  assert.equal(scheduledDeviceSync.json().manifest.sceneId, studioState.scene.id);
+  await pool.query(
+    `UPDATE scene_schedules
+     SET ends_at = now() - interval '1 second'
+     WHERE id = $1`,
+    [scheduledSceneId],
+  );
+  const completion = await processSceneScheduleTransitions(pool);
+  assert.equal(completion.transitioned, 1);
+  assert.equal(completion.effectiveChanges, 1);
+  assert.equal(completion.syncRevision, activation.syncRevision + 1);
+  const restoredGroupPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=group&targetId=${groupId}`,
+    headers: { cookie },
+  });
+  assert.equal(restoredGroupPreview.statusCode, 200, restoredGroupPreview.body);
+  assert.equal(restoredGroupPreview.json().scene.id, secondarySceneId);
+  const restoredDeviceSync = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}&revision=${scheduledDeviceSync.json().revision}`,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(restoredDeviceSync.statusCode, 200, restoredDeviceSync.body);
+  assert.equal(restoredDeviceSync.json().upToDate, false);
+  assert.equal(restoredDeviceSync.json().manifest.sceneId, secondarySceneId);
+
+  const activeSceneSchedule = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scene-schedules',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: studioState.scene.id,
+      targetType: 'group',
+      targetId: groupId,
+      startsAt: new Date().toISOString(),
+      endsAt: null,
+    },
+  });
+  assert.equal(activeSceneSchedule.statusCode, 201, activeSceneSchedule.body);
+  assert.equal(activeSceneSchedule.json().schedule.status, 'active');
+  assert.ok(Number.isSafeInteger(activeSceneSchedule.json().syncRevision));
+  const activeScheduleId = activeSceneSchedule.json().schedule.id;
+  const cancelWithoutCsrf = await app.inject({
+    method: 'POST',
+    url: `/api/v1/scene-schedules/${activeScheduleId}/cancel`,
+    headers: { cookie },
+    payload: {},
+  });
+  assert.equal(cancelWithoutCsrf.statusCode, 403, cancelWithoutCsrf.body);
+  const cancelledSchedule = await app.inject({
+    method: 'POST',
+    url: `/api/v1/scene-schedules/${activeScheduleId}/cancel`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(cancelledSchedule.statusCode, 200, cancelledSchedule.body);
+  assert.equal(cancelledSchedule.json().schedule.status, 'cancelled');
+  assert.ok(Number.isSafeInteger(cancelledSchedule.json().syncRevision));
+  const duplicateCancellation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/scene-schedules/${activeScheduleId}/cancel`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(duplicateCancellation.statusCode, 409, duplicateCancellation.body);
+  assert.equal(duplicateCancellation.json().error, 'scene_schedule_not_cancellable');
+  const scheduleStudio = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio?sceneId=${secondarySceneId}`,
+    headers: { cookie },
+  });
+  assert.equal(scheduleStudio.statusCode, 200, scheduleStudio.body);
+  assert.equal(scheduleStudio.json().sceneSchedules.length, 2);
+  assert.ok(scheduleStudio.json().sceneSchedules.some(
+    (schedule) => schedule.id === scheduledSceneId && schedule.status === 'completed',
+  ));
+  assert.ok(scheduleStudio.json().sceneSchedules.some(
+    (schedule) => schedule.id === activeScheduleId && schedule.status === 'cancelled',
+  ));
+  const sceneScheduleAudit = await pool.query(
+    `SELECT action, count(*)::integer AS count
+     FROM audit_log
+     WHERE action LIKE 'scene.schedule.%'
+     GROUP BY action`,
+  );
+  const sceneScheduleAuditCounts = Object.fromEntries(
+    sceneScheduleAudit.rows.map((row) => [row.action, row.count]),
+  );
+  assert.equal(sceneScheduleAuditCounts['scene.schedule.created'], 2);
+  assert.equal(sceneScheduleAuditCounts['scene.schedule.activated'], 1);
+  assert.equal(sceneScheduleAuditCounts['scene.schedule.completed'], 1);
+  assert.equal(sceneScheduleAuditCounts['scene.schedule.cancelled'], 1);
 
   await pool.query(
     "UPDATE screens SET last_seen_at = TIMESTAMPTZ '2000-01-01T00:00:00Z' WHERE enrollment_state = 'simulated'",
@@ -1372,6 +1589,13 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     minimum_import_age_minutes: 15,
     timezone: 'UTC',
   });
+  const schedulesAfterMigrations = await pool.query(
+    'SELECT status, count(*)::integer AS count FROM scene_schedules GROUP BY status',
+  );
+  assert.deepEqual(
+    Object.fromEntries(schedulesAfterMigrations.rows.map((row) => [row.status, row.count])),
+    { cancelled: 1, completed: 1 },
+  );
   const groupPolicyAfterMigrations = await pool.query(
     `SELECT return_home_when_inactive_minutes, home_sleep_minutes, rules
      FROM power_schedules

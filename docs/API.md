@@ -62,6 +62,8 @@ POST /api/v1/scenes
 POST /api/v1/scenes/:sceneId/revisions
 POST /api/v1/scenes/:sceneId/publish
 PUT  /api/v1/scene-assignments
+POST /api/v1/scene-schedules
+POST /api/v1/scene-schedules/:scheduleId/cancel
 GET  /api/v1/media
 POST /api/v1/media
 PATCH /api/v1/media/:assetId
@@ -96,6 +98,19 @@ Une scène est un document typé conforme à `contracts/layout.schema.json`.
 `PUT /scene-assignments` n’accepte qu’une scène publiée et vérifie l’existence
 du groupe ou de la TV avant de remplacer atomiquement l’affectation de cette
 cible. L’héritage reste TV, puis groupe, puis instance.
+
+Une programmation exige aussi une scène publiée. Elle accepte une cible
+`instance`, `group` ou `tv`, un `startsAt` ISO et un `endsAt` ISO optionnel,
+au maximum 366 jours à l’avance. Deux fenêtres actives ou futures d’une même
+cible ne peuvent pas se chevaucher. `studio:write` suffit pour l’instance ;
+une cible groupe/TV exige en plus `fleet:write`.
+
+Le worker transforme `scheduled` en `active`, puis `active` en `completed`.
+Chaque transition qui change réellement la scène incrémente `sync_state` :
+une TV qui présente l’ancienne révision reçoit donc le nouveau manifeste au
+lieu d’une réponse `upToDate`. À la fin, l’affectation statique reprend
+automatiquement. L’annulation conserve l’historique, écrit l’audit et
+incrémente aussi la révision si la scène était active.
 Créer une révision exige `baseRevision`; une base obsolète renvoie `409` et la
 révision courante. Publier déplace le pointeur publié et incrémente la révision
 globale de synchronisation dans la même transaction.

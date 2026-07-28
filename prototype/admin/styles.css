@@ -216,6 +216,12 @@ textarea { min-height: 58px; resize: vertical; }
   gap: 1px; background: var(--ink); border: 1px solid var(--ink);
 }
 .assignment-ledger .ledger-row { padding: 13px; background: var(--paper); border: 0; }
+.scene-schedule-console form { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+.scene-schedule-console input { display: block; width: 100%; margin-top: 6px; }
+.scene-schedule-console .schedule-note {
+  grid-column: 1 / -1; margin: -8px 0 0; color: var(--muted);
+  font: 600 10px/1.5 var(--mono, monospace);
+}
 .operations-console {
   display: grid; grid-template-columns: minmax(210px, .38fr) minmax(520px, 1fr);
   gap: 24px 34px; padding: 24px 0; border-top: 6px solid var(--ink);

@@ -127,6 +127,13 @@ Les téléchargements d’une TV sont limités aux assets de sa scène. Les
 métriques et événements acceptent des champs et types fermés, des tailles
 bornées et une rétention de 90 jours par défaut.
 
+Les programmations de scènes n’acceptent qu’un UUID de scène déjà publiée, une
+cible existante et des timestamps ISO bornés. Elles n’embarquent ni commande,
+ni HTML, ni script. Les cibles groupe/TV exigent `fleet:write` en plus de
+`studio:write`, les chevauchements sont refusés sous verrou et toute création,
+transition ou annulation laisse une trace d’audit. Le worker ne modifie que le
+statut fermé de la programmation et la révision de synchronisation.
+
 Limites avant production :
 
 - clés TV bearer sans rotation administrée ;

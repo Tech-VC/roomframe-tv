@@ -36,6 +36,12 @@ const formatBytes = (value) => {
   return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
 };
 
+const localDateTimeInputValue = (date) => {
+  const value = new Date(date);
+  value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+  return value.toISOString().slice(0, 16);
+};
+
 const DEFAULT_BRANDING = Object.freeze({
   primary: "#151511",
   accent: "#ff4f1f",
@@ -91,6 +97,7 @@ const state = {
   scene: null,
   scenes: [],
   sceneAssignments: [],
+  sceneSchedules: [],
   selectedId: null,
   currentRevisionId: null,
   sceneId: null,
@@ -294,6 +301,7 @@ const loadStudio = async (sceneId = null) => {
     state.currentRevisionId = payload.scene?.currentRevision ?? payload.currentRevisionId ?? payload.draft?.revision ?? payload.currentRevision?.revision ?? null;
     state.scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
     state.sceneAssignments = Array.isArray(payload.sceneAssignments) ? payload.sceneAssignments : [];
+    state.sceneSchedules = Array.isArray(payload.sceneSchedules) ? payload.sceneSchedules : [];
     state.revisions = Array.isArray(payload.revisions) ? payload.revisions : [];
     state.media = Array.isArray(payload.media) ? payload.media : [];
     state.messages = Array.isArray(payload.messages) ? payload.messages : [];
@@ -728,6 +736,72 @@ const renderSceneManagement = () => {
   ));
   $("#sceneAssignmentList").replaceChildren(
     ...(rows.length ? rows : [make("p", "empty-copy", "Aucune affectation.")]),
+  );
+
+  const scheduleTarget = $("#sceneScheduleTarget");
+  const previousScheduleTarget = scheduleTarget.value || "instance";
+  scheduleTarget.replaceChildren(...operationalTargetOptions());
+  scheduleTarget.value = [...scheduleTarget.options].some(
+    (option) => option.value === previousScheduleTarget,
+  )
+    ? previousScheduleTarget
+    : "instance";
+  const scheduleScene = $("#sceneScheduleScene");
+  const previousScheduleScene = scheduleScene.value;
+  scheduleScene.replaceChildren(...publishedScenes.map((scene) => {
+    const option = make("option", "", scene.name);
+    option.value = scene.id;
+    return option;
+  }));
+  if (publishedScenes.some((scene) => scene.id === previousScheduleScene)) {
+    scheduleScene.value = previousScheduleScene;
+  }
+  $("#sceneScheduleForm").querySelector('button[type="submit"]').disabled = publishedScenes.length === 0;
+  const scheduleForm = $("#sceneScheduleForm");
+  $("#sceneScheduleTimezone").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone
+    || "local du navigateur";
+  if (scheduleForm.dataset.defaultsSet !== "true") {
+    $("#sceneScheduleStartsAt").value = localDateTimeInputValue(Date.now() + 10 * 60 * 1000);
+    $("#sceneScheduleEndsAt").value = localDateTimeInputValue(Date.now() + 2 * 60 * 60 * 1000);
+    scheduleForm.dataset.defaultsSet = "true";
+  }
+  const scheduleStatus = {
+    scheduled: "prévue",
+    active: "en cours",
+    completed: "terminée",
+    cancelled: "annulée",
+  };
+  const scheduleRows = state.sceneSchedules
+    .filter((schedule) => schedule.status !== "cancelled")
+    .map((schedule) => {
+      const row = ledgerRow(
+        targetName(schedule),
+        [
+          `Scène · ${sceneName(schedule.sceneId ?? schedule.scene_id)}`,
+          `${new Date(schedule.startsAt ?? schedule.starts_at).toLocaleString("fr-FR")} → ${
+            schedule.endsAt ?? schedule.ends_at
+              ? new Date(schedule.endsAt ?? schedule.ends_at).toLocaleString("fr-FR")
+              : "sans fin"
+          }`,
+          scheduleStatus[schedule.status] ?? schedule.status,
+        ].join(" · "),
+      );
+      if (["scheduled", "active"].includes(schedule.status)) {
+        const cancel = make("button", "danger-link", "Annuler");
+        cancel.type = "button";
+        cancel.dataset.cancelSceneSchedule = schedule.id;
+        cancel.setAttribute(
+          "aria-label",
+          `Annuler la scène programmée pour ${targetName(schedule)}`,
+        );
+        row.append(cancel);
+      }
+      return row;
+    });
+  $("#sceneScheduleList").replaceChildren(
+    ...(scheduleRows.length
+      ? scheduleRows
+      : [make("p", "empty-copy", "Aucune scène programmée.")]),
   );
 };
 
@@ -1650,6 +1724,76 @@ $("#sceneAssignmentForm").addEventListener("submit", async (event) => {
     formError("sceneAssignmentError", error.message);
   } finally {
     submit.disabled = false;
+  }
+});
+$("#sceneScheduleForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("sceneScheduleError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  let target;
+  try {
+    target = parseOperationalTarget($("#sceneScheduleTarget").value);
+  } catch (error) {
+    formError("sceneScheduleError", error.message);
+    return;
+  }
+  const startsAt = new Date($("#sceneScheduleStartsAt").value);
+  const endValue = $("#sceneScheduleEndsAt").value;
+  const endsAt = endValue ? new Date(endValue) : null;
+  if (
+    Number.isNaN(startsAt.getTime())
+    || (endsAt && Number.isNaN(endsAt.getTime()))
+    || (endsAt && endsAt <= startsAt)
+  ) {
+    formError("sceneScheduleError", "La fenêtre de programmation est invalide.");
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const payload = await api.post("scene-schedules", {
+      sceneId: $("#sceneScheduleScene").value,
+      ...target,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt?.toISOString() ?? null,
+    });
+    state.sceneSchedules.unshift(payload.schedule);
+    form.reset();
+    delete form.dataset.defaultsSet;
+    renderSceneManagement();
+    toast(
+      payload.syncRevision == null
+        ? "Scène programmée. Le worker activera la révision à l’heure prévue."
+        : `Scène activée · synchronisation r${payload.syncRevision}.`,
+    );
+  } catch (error) {
+    formError("sceneScheduleError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
+$("#sceneScheduleList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-cancel-scene-schedule]");
+  if (!button) return;
+  const scheduleId = button.dataset.cancelSceneSchedule;
+  button.disabled = true;
+  try {
+    const payload = await api.post(
+      `scene-schedules/${encodeURIComponent(scheduleId)}/cancel`,
+      {},
+    );
+    state.sceneSchedules = state.sceneSchedules.map((schedule) => (
+      schedule.id === scheduleId ? payload.schedule : schedule
+    ));
+    renderSceneManagement();
+    toast(
+      payload.syncRevision == null
+        ? "Programmation annulée."
+        : `Scène retirée · synchronisation r${payload.syncRevision}.`,
+    );
+  } catch (error) {
+    button.disabled = false;
+    toast(`Annulation refusée : ${error.message}`, true);
   }
 });
 refs.targetSelect.addEventListener("change", () => {

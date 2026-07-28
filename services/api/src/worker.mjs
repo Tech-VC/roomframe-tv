@@ -5,6 +5,7 @@ import {
   processOneMediaJob,
   recoverAbandonedMediaJobs,
 } from './media-worker.mjs';
+import { processSceneScheduleTransitions } from './scene-scheduler.mjs';
 
 const config = await loadConfig({
   applicationName: 'roomframe-worker',
@@ -49,12 +50,13 @@ process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
 
 while (!stopping) {
-  const processed = await processOneMediaJob(pool, config);
+  const scheduleTransitions = await processSceneScheduleTransitions(pool);
+  const processedMedia = await processOneMediaJob(pool, config);
   if (Date.now() >= nextMaintenance) {
     await runMaintenance();
     nextMaintenance = Date.now() + 60 * 60 * 1000;
   }
-  if (!processed) await delay(1500);
+  if (!processedMedia && scheduleTransitions.transitioned === 0) await delay(1500);
 }
 
 await workerLease.query(

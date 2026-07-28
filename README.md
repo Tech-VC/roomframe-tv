@@ -109,6 +109,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   configurables par instance, groupe ou TV sans prétendre exécuter le matériel ;
 - bibliothèque de scènes, copie de brouillon et affectation publiée par
   instance, groupe ou TV avec aperçu résolu ;
+- programmation temporaire d’une scène par instance, groupe ou TV, avec refus
+  des chevauchements, activation/retour par le worker et révision TV à chaque
+  transition effective ;
 - validation des scènes typées 1920 × 1080, sans HTML ni JavaScript libre ;
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
@@ -194,8 +197,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 21 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 44 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 22 tests Studio/synchronisation TV et
+23 tests API, contrôle de syntaxe serveur inclus, soit 45 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -204,15 +207,14 @@ la stabilité des formulaires asynchrones, le détourage prudent des logos et le
 bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test
 d’intégration couvre aussi l’upload et le traitement réel d’une image ainsi
 que l’import multipart d’un `.rfupdate`, la découverte GitHub conditionnelle,
-le contrôle des redirections, l’import automatique idempotent et la sélection
-bornée d’une release serveur par la politique opt-in.
+le contrôle des redirections, l’import automatique idempotent, la sélection
+bornée d’une release serveur par la politique opt-in et les transitions
+temporelles de scènes sans réponse `upToDate` périmée.
 
 Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Limites connues
 
-- le Studio gère plusieurs scènes et leurs affectations publiées ; la
-  programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,
   synchronise en HTTPS, conserve la révision précédente et contrôle les APK
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse

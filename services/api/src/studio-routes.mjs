@@ -278,6 +278,30 @@ const serverUpdateWindowTime = (value, field) => {
   return time;
 };
 
+const sceneScheduleTimestamp = (value, field, required = true) => {
+  if (!required && (value === undefined || value === null || value === '')) return null;
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
+  }
+  return timestamp;
+};
+
+const serializeSceneSchedule = (row) => ({
+  id: row.id,
+  sceneId: row.scene_id,
+  targetType: row.target_type,
+  targetId: row.target_id,
+  startsAt: row.starts_at,
+  endsAt: row.ends_at,
+  status: row.status,
+  activatedAt: row.activated_at,
+  completedAt: row.completed_at,
+  cancelledAt: row.cancelled_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
 const saveUpload = async (part, target, maximum) => {
   let bytes = 0;
   const meter = new Transform({
@@ -342,13 +366,36 @@ const resolveScreen = async ({
 
 const sceneForScreen = async (pool, screen) => {
   const assigned = await pool.query(
-    `SELECT scene_id
-     FROM scene_assignments
-     WHERE
-       (target_type = 'tv' AND target_id = $1)
-       OR (target_type = 'group' AND target_id = $2)
-       OR (target_type = 'instance' AND target_id IS NULL)
-     ORDER BY CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+    `WITH candidates AS (
+       SELECT
+         scene_id,
+         1 AS source_rank,
+         CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END AS target_rank,
+         starts_at AS ordering_time
+       FROM scene_schedules
+       WHERE status = 'active'
+         AND starts_at <= now()
+         AND (ends_at IS NULL OR ends_at > now())
+         AND (
+           (target_type = 'tv' AND target_id = $1)
+           OR (target_type = 'group' AND target_id = $2)
+           OR (target_type = 'instance' AND target_id IS NULL)
+         )
+       UNION ALL
+       SELECT
+         scene_id,
+         2 AS source_rank,
+         CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END AS target_rank,
+         created_at AS ordering_time
+       FROM scene_assignments
+       WHERE
+         (target_type = 'tv' AND target_id = $1)
+         OR (target_type = 'group' AND target_id = $2)
+         OR (target_type = 'instance' AND target_id IS NULL)
+     )
+     SELECT scene_id
+     FROM candidates
+     ORDER BY source_rank, target_rank, ordering_time DESC
      LIMIT 1`,
     [screen.id, screen.group_id],
   );
@@ -627,6 +674,7 @@ export const registerStudioRoutes = ({
       sceneResult,
       revisionsResult,
       assignmentsResult,
+      sceneSchedulesResult,
       assetsResult,
       screensResult,
       groupsResult,
@@ -656,6 +704,16 @@ export const registerStudioRoutes = ({
         [selectedSceneId],
       ),
       pool.query('SELECT * FROM scene_assignments ORDER BY target_type, created_at'),
+      pool.query(
+        `SELECT id, scene_id, target_type, target_id, starts_at, ends_at,
+                status, activated_at, completed_at, cancelled_at,
+                created_at, updated_at
+         FROM scene_schedules
+         ORDER BY
+           CASE status WHEN 'active' THEN 1 WHEN 'scheduled' THEN 2 ELSE 3 END,
+           starts_at DESC
+         LIMIT 200`,
+      ),
       pool.query('SELECT * FROM assets ORDER BY created_at DESC LIMIT 200'),
       pool.query(
         `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
@@ -748,6 +806,9 @@ export const registerStudioRoutes = ({
       })) : [],
       groups: can('fleet:read') ? groupsResult.rows : [],
       sceneAssignments: can('fleet:read') ? assignmentsResult.rows : [],
+      sceneSchedules: sceneSchedulesResult.rows
+        .filter((row) => can('fleet:read') || row.target_type === 'instance')
+        .map(serializeSceneSchedule),
       messages: can('messages:read') ? messagesResult.rows : [],
       sourceSettings: can('fleet:read') ? sourcesResult.rows : [],
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
@@ -847,6 +908,153 @@ export const registerStudioRoutes = ({
         targetType,
         targetId,
         syncRevision: Number(sync.rows[0].revision),
+      };
+    });
+  });
+
+  app.post('/api/v1/scene-schedules', {
+    preHandler: [authenticated, requirePermission('studio:write'), csrf],
+  }, async (request, reply) => {
+    const sceneId = optionalUuid(request.body?.sceneId);
+    if (!sceneId) throw Object.assign(new Error('scene_id_required'), { statusCode: 400 });
+    const targetType = request.body?.targetType ?? 'instance';
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    if (
+      targetType !== 'instance'
+      && !hasPermission(request.roomframeSession.permissions, 'fleet:write')
+    ) {
+      throw Object.assign(new Error('permission_denied'), { statusCode: 403 });
+    }
+    const targetId = targetIdFor(targetType, request.body?.targetId);
+    const startsAt = sceneScheduleTimestamp(request.body?.startsAt, 'scene_schedule_start');
+    const endsAt = sceneScheduleTimestamp(request.body?.endsAt, 'scene_schedule_end', false);
+    const now = new Date();
+    if (
+      startsAt.getTime() < now.getTime() - 5 * 60 * 1000
+      || startsAt.getTime() > now.getTime() + 366 * 24 * 60 * 60 * 1000
+      || (endsAt && (
+        endsAt <= startsAt
+        || endsAt <= now
+        || endsAt.getTime() > now.getTime() + 366 * 24 * 60 * 60 * 1000
+      ))
+    ) {
+      throw Object.assign(new Error('invalid_scene_schedule_window'), { statusCode: 400 });
+    }
+    const id = crypto.randomUUID();
+    const created = await withTransaction(pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('roomframe-scene-schedule-write'))",
+      );
+      const scene = await client.query(
+        'SELECT id, published_revision FROM scenes WHERE id = $1 FOR SHARE',
+        [sceneId],
+      );
+      if (!scene.rows[0]) throw Object.assign(new Error('scene_not_found'), { statusCode: 404 });
+      if (scene.rows[0].published_revision === null) {
+        throw Object.assign(new Error('scene_not_published'), { statusCode: 409 });
+      }
+      await assertTargetExists(client, targetType, targetId);
+      const overlap = await client.query(
+        `SELECT id
+         FROM scene_schedules
+         WHERE status IN ('scheduled', 'active')
+           AND target_type = $1
+           AND target_id IS NOT DISTINCT FROM $2
+           AND tstzrange(starts_at, ends_at, '[)')
+             && tstzrange($3::timestamptz, $4::timestamptz, '[)')
+         LIMIT 1
+         FOR UPDATE`,
+        [targetType, targetId, startsAt, endsAt],
+      );
+      if (overlap.rows[0]) {
+        throw Object.assign(new Error('scene_schedule_overlap'), { statusCode: 409 });
+      }
+      const status = startsAt <= now ? 'active' : 'scheduled';
+      const inserted = await client.query(
+        `INSERT INTO scene_schedules (
+           id, scene_id, target_type, target_id, starts_at, ends_at,
+           status, created_by, activated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [
+          id,
+          sceneId,
+          targetType,
+          targetId,
+          startsAt,
+          endsAt,
+          status,
+          request.roomframeSession.user_id,
+          status === 'active' ? now : null,
+        ],
+      );
+      const sync = status === 'active' ? await bumpSyncRevision(client) : null;
+      const syncRevision = sync ? Number(sync.rows[0].revision) : null;
+      await writeAudit(client, request, 'scene.schedule.created', 'scene-schedule', id, {
+        sceneId,
+        targetType,
+        targetId,
+        startsAt,
+        endsAt,
+        status,
+        syncRevision,
+      });
+      return {
+        schedule: serializeSceneSchedule(inserted.rows[0]),
+        syncRevision,
+      };
+    });
+    return reply.code(201).send(created);
+  });
+
+  app.post('/api/v1/scene-schedules/:scheduleId/cancel', {
+    preHandler: [authenticated, requirePermission('studio:write'), csrf],
+  }, async (request) => {
+    const scheduleId = optionalUuid(request.params.scheduleId);
+    return withTransaction(pool, async (client) => {
+      const current = await client.query(
+        'SELECT * FROM scene_schedules WHERE id = $1 FOR UPDATE',
+        [scheduleId],
+      );
+      const schedule = current.rows[0];
+      if (!schedule) {
+        throw Object.assign(new Error('scene_schedule_not_found'), { statusCode: 404 });
+      }
+      if (
+        schedule.target_type !== 'instance'
+        && !hasPermission(request.roomframeSession.permissions, 'fleet:write')
+      ) {
+        throw Object.assign(new Error('permission_denied'), { statusCode: 403 });
+      }
+      if (!['scheduled', 'active'].includes(schedule.status)) {
+        throw Object.assign(new Error('scene_schedule_not_cancellable'), { statusCode: 409 });
+      }
+      const updated = await client.query(
+        `UPDATE scene_schedules
+         SET status = 'cancelled', cancelled_at = now(), updated_at = now()
+         WHERE id = $1
+         RETURNING *`,
+        [scheduleId],
+      );
+      const sync = schedule.status === 'active' ? await bumpSyncRevision(client) : null;
+      const syncRevision = sync ? Number(sync.rows[0].revision) : null;
+      await writeAudit(
+        client,
+        request,
+        'scene.schedule.cancelled',
+        'scene-schedule',
+        scheduleId,
+        {
+          sceneId: schedule.scene_id,
+          previousStatus: schedule.status,
+          syncRevision,
+        },
+      );
+      return {
+        schedule: serializeSceneSchedule(updated.rows[0]),
+        syncRevision,
       };
     });
   });

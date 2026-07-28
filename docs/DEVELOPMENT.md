@@ -79,7 +79,7 @@ Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-21 tests UI, soit 44 tests sur un clone frais. Les workflows GitHub de
+22 tests UI, soit 45 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -108,7 +108,10 @@ donc ce même ensemble. Les scénarios comprennent notamment :
   redirections limitées, contrôle taille/digest et réimport idempotent ;
 - politique serveur manuelle par défaut, activation protégée, fenêtre
   traversant minuit, refus des imports manuels et absence de relance
-  automatique après échec.
+  automatique après échec ;
+- création, chevauchement refusé, activation, fin et annulation d’une scène
+  programmée, avec résolution réelle dans le manifeste TV et conservation
+  après réexécution des migrations.
 
 ## Installateur
 

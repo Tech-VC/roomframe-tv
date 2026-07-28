@@ -281,9 +281,26 @@
             </form>
             <div class="assignment-ledger" id="sceneAssignmentList"><p class="empty-copy">Aucune affectation chargée.</p></div>
           </section>
-          <section class="operations-console" aria-labelledby="operationsTitle">
+          <section class="assignment-console scene-schedule-console" aria-labelledby="sceneScheduleTitle">
             <div class="console-index">
               <span>PARC / 03</span>
+              <h2 id="sceneScheduleTitle">Programmer une scène temporaire</h2>
+              <p>À l’heure prévue, le worker publie une nouvelle révision de synchronisation. À la fin, l’affectation habituelle revient automatiquement.</p>
+            </div>
+            <form id="sceneScheduleForm">
+              <label for="sceneScheduleTarget">Cible<select id="sceneScheduleTarget"></select></label>
+              <label for="sceneScheduleScene">Scène publiée<select id="sceneScheduleScene"></select></label>
+              <label for="sceneScheduleStartsAt">Début<input id="sceneScheduleStartsAt" name="startsAt" type="datetime-local" required></label>
+              <label for="sceneScheduleEndsAt">Fin optionnelle<input id="sceneScheduleEndsAt" name="endsAt" type="datetime-local"></label>
+              <button class="tool primary" type="submit">Programmer</button>
+              <p class="form-error hidden" id="sceneScheduleError" role="alert"></p>
+            </form>
+            <p class="schedule-note">Heures saisies dans le fuseau <b id="sceneScheduleTimezone">local du navigateur</b>. Sans fin, la scène reste prioritaire jusqu’à une annulation explicite. Deux créneaux d’une même cible ne peuvent pas se chevaucher.</p>
+            <div class="assignment-ledger" id="sceneScheduleList" aria-live="polite"><p class="empty-copy">Aucune scène programmée.</p></div>
+          </section>
+          <section class="operations-console" aria-labelledby="operationsTitle">
+            <div class="console-index">
+              <span>PARC / 04</span>
               <h2 id="operationsTitle">Règles de salle</h2>
               <p>Les intégrations matérielles restent soumises à la sonde de capacité de chaque TV.</p>
             </div>

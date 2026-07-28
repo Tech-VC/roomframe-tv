@@ -67,7 +67,7 @@ Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
-automatique opt-in et l’audit.
+automatique opt-in, les programmations de scènes et l’audit.
 
 ## Une seule origine HTTPS
 
@@ -138,6 +138,12 @@ Le sélecteur d’aperçu TV/groupe résout côté serveur les affectations publ
 et reste distinct du brouillon modifiable. Le Studio expose également la
 politique d’application serveur dans la même direction éditoriale, sans donner
 de privilège système au navigateur.
+
+Une scène programmée est un remplacement temporaire prioritaire sur
+l’affectation statique. Le worker sérialise les transitions sous verrou,
+incrémente la révision TV à l’activation et au retour, puis écrit l’audit. Si le
+worker a été arrêté pendant toute une fenêtre, il la clôt sans prétendre
+qu’elle a été affichée ; aucune transition matérielle n’est simulée.
 
 ## Frontière matérielle
 
