@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui8">
-  <script type="module" src="/app.js?v=0.3.0-ui8"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui9">
+  <script type="module" src="/app.js?v=0.3.0-ui9"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -42,6 +42,15 @@
             <div class="eyebrow">Scène active / configuration</div>
             <h1 class="bigtitle" id="surfaceTitle"><span>01</span>Table<br>de composition</h1>
 
+            <div class="field scene-library">
+              <label for="sceneLibrarySelect">Scène de travail</label>
+              <select id="sceneLibrarySelect"></select>
+              <button class="text-button" id="sceneLoadButton" type="button">Charger la scène</button>
+              <label for="sceneCloneName">Créer depuis le brouillon</label>
+              <input id="sceneCloneName" maxlength="100" placeholder="Nom de la nouvelle scène">
+              <button class="text-button" id="sceneCloneButton" type="button">Créer la copie</button>
+              <small>Charger une autre scène abandonne les modifications non enregistrées.</small>
+            </div>
             <div class="field">
               <label for="targetSelect">Aperçu</label>
               <select id="targetSelect" disabled><option value="">Brouillon local · édition</option></select>
@@ -258,9 +267,23 @@
               <button class="tool" id="hideEnrollmentButton" type="button">Masquer maintenant</button>
             </div>
           </section>
-          <section class="operations-console" aria-labelledby="operationsTitle">
+          <section class="assignment-console" aria-labelledby="assignmentTitle">
             <div class="console-index">
               <span>PARC / 02</span>
+              <h2 id="assignmentTitle">Affecter une scène</h2>
+              <p>Une scène publiée peut remplacer l’accueil de toute l’instance, d’un groupe ou d’une TV.</p>
+            </div>
+            <form id="sceneAssignmentForm">
+              <label for="sceneAssignmentTarget">Cible<select id="sceneAssignmentTarget"></select></label>
+              <label for="sceneAssignmentScene">Scène publiée<select id="sceneAssignmentScene"></select></label>
+              <button class="tool primary" type="submit">Affecter</button>
+              <p class="form-error hidden" id="sceneAssignmentError" role="alert"></p>
+            </form>
+            <div class="assignment-ledger" id="sceneAssignmentList"><p class="empty-copy">Aucune affectation chargée.</p></div>
+          </section>
+          <section class="operations-console" aria-labelledby="operationsTitle">
+            <div class="console-index">
+              <span>PARC / 03</span>
               <h2 id="operationsTitle">Règles de salle</h2>
               <p>Les intégrations matérielles restent soumises à la sonde de capacité de chaque TV.</p>
             </div>

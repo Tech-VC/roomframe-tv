@@ -10,8 +10,8 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui8";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui8";
+} from "./scene-model.js?v=0.3.0-ui9";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui9";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -89,6 +89,8 @@ const state = {
   instance: null,
   session: null,
   scene: null,
+  scenes: [],
+  sceneAssignments: [],
   selectedId: null,
   currentRevisionId: null,
   sceneId: null,
@@ -275,16 +277,20 @@ const enterStudio = async () => {
   await loadStudio();
 };
 
-const loadStudio = async () => {
+const loadStudio = async (sceneId = null) => {
   setBusy(true);
   setStatus("loading", "Chargement de la régie…");
   try {
-    const payload = await api.get("studio");
+    const payload = await api.get(
+      sceneId ? `studio?sceneId=${encodeURIComponent(sceneId)}` : "studio",
+    );
     applyBranding(payload.instance ?? state.bootstrapStatus?.identity ?? {});
     const sourceScene = payload.scene?.document ?? payload.scene ?? payload.draft?.scene ?? payload.currentRevision?.scene ?? payload.layout;
     state.scene = normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE));
     state.sceneId = payload.scene?.id ?? state.scene.layoutId;
     state.currentRevisionId = payload.scene?.currentRevision ?? payload.currentRevisionId ?? payload.draft?.revision ?? payload.currentRevision?.revision ?? null;
+    state.scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
+    state.sceneAssignments = Array.isArray(payload.sceneAssignments) ? payload.sceneAssignments : [];
     state.revisions = Array.isArray(payload.revisions) ? payload.revisions : [];
     state.media = Array.isArray(payload.media) ? payload.media : [];
     state.messages = Array.isArray(payload.messages) ? payload.messages : [];
@@ -655,6 +661,68 @@ const operationalTargetOptions = () => {
   });
 };
 
+const renderSceneManagement = () => {
+  const library = $("#sceneLibrarySelect");
+  const previousLibrary = library.value;
+  library.replaceChildren(...state.scenes.map((scene) => {
+    const published = scene.publishedRevision ?? scene.published_revision;
+    const option = make(
+      "option",
+      "",
+      `${scene.name} · ${published == null ? "brouillon" : `publiée r${published}`}`,
+    );
+    option.value = scene.id;
+    return option;
+  }));
+  library.value = state.scenes.some((scene) => scene.id === state.sceneId)
+    ? state.sceneId
+    : previousLibrary;
+  library.disabled = state.scenes.length === 0;
+  $("#sceneLoadButton").disabled = state.scenes.length === 0;
+  $("#sceneCloneButton").disabled = !state.scene || Boolean(state.preview);
+
+  const targetSelect = $("#sceneAssignmentTarget");
+  const previousTarget = targetSelect.value || "instance";
+  targetSelect.replaceChildren(...operationalTargetOptions());
+  targetSelect.value = [...targetSelect.options].some((option) => option.value === previousTarget)
+    ? previousTarget
+    : "instance";
+
+  const publishedScenes = state.scenes.filter(
+    (scene) => (scene.publishedRevision ?? scene.published_revision) != null,
+  );
+  const sceneSelect = $("#sceneAssignmentScene");
+  const previousScene = sceneSelect.value;
+  sceneSelect.replaceChildren(...publishedScenes.map((scene) => {
+    const option = make("option", "", scene.name);
+    option.value = scene.id;
+    return option;
+  }));
+  if (publishedScenes.some((scene) => scene.id === previousScene)) {
+    sceneSelect.value = previousScene;
+  }
+  $("#sceneAssignmentForm").querySelector('button[type="submit"]').disabled = publishedScenes.length === 0;
+
+  const sceneName = (id) => state.scenes.find((scene) => scene.id === id)?.name ?? id;
+  const targetName = (assignment) => {
+    const type = assignment.targetType ?? assignment.target_type;
+    const id = assignment.targetId ?? assignment.target_id;
+    if (type === "instance") return "Toute l’instance";
+    if (type === "group") {
+      return `Groupe · ${state.groups.find((group) => group.id === id)?.name ?? id}`;
+    }
+    const tv = state.televisions.find((screen) => screen.id === id);
+    return `TV · ${tv?.displayName ?? tv?.display_name ?? id}`;
+  };
+  const rows = state.sceneAssignments.map((assignment) => ledgerRow(
+    targetName(assignment),
+    `Scène · ${sceneName(assignment.sceneId ?? assignment.scene_id)}`,
+  ));
+  $("#sceneAssignmentList").replaceChildren(
+    ...(rows.length ? rows : [make("p", "empty-copy", "Aucune affectation.")]),
+  );
+};
+
 const sourceSettingFor = (kind, selection) => {
   const { targetType, targetId } = parseOperationalTarget(selection);
   return state.sourceSettings.find((setting) => (
@@ -810,6 +878,7 @@ const renderCollections = () => {
     ...(fleetSummary ? [fleetSummary] : []),
     ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
   );
+  renderSceneManagement();
   renderOperationalSettings();
 };
 
@@ -1158,7 +1227,7 @@ const publishRevision = async () => {
     const count = payload.targetCount ?? payload.deployment?.targetCount;
     toast(count == null ? "Révision publiée par le serveur." : `Révision publiée vers ${count} cible${count > 1 ? "s" : ""}.`);
     setStatus("ok", `Publication atomique confirmée${payload.manifestHash ? ` · ${payload.manifestHash.slice(0, 12)}` : ""}`);
-    await loadStudio();
+    await loadStudio(state.sceneId);
   } catch (error) {
     toast(`Publication refusée : ${error.message}`, true);
     setStatus("error", `Publication impossible : ${error.message}`, false);
@@ -1389,10 +1458,74 @@ refs.logoutButton.addEventListener("click", async () => {
 });
 
 refs.retryButton.addEventListener("click", boot);
-$("#reloadStudioButton").addEventListener("click", loadStudio);
+$("#reloadStudioButton").addEventListener("click", () => loadStudio(state.sceneId));
 $("#saveButton").addEventListener("click", saveRevision);
 $("#publishButton").addEventListener("click", publishRevision);
 $("#deleteNodeButton").addEventListener("click", deleteSelectedNode);
+$("#sceneLoadButton").addEventListener("click", async () => {
+  const sceneId = $("#sceneLibrarySelect").value;
+  if (!sceneId || sceneId === state.sceneId) return;
+  await loadStudio(sceneId);
+});
+$("#sceneCloneButton").addEventListener("click", async () => {
+  if (!state.scene || state.preview) return;
+  const name = $("#sceneCloneName").value.trim();
+  if (!name) {
+    toast("Donnez un nom à la nouvelle scène.", true);
+    $("#sceneCloneName").focus();
+    return;
+  }
+  const button = $("#sceneCloneButton");
+  button.disabled = true;
+  try {
+    const scene = validateScene(cloneScene(state.scene));
+    scene.name = name;
+    const created = await api.post("scenes", { name, scene });
+    $("#sceneCloneName").value = "";
+    await loadStudio(created.id);
+    toast(`Scène « ${name} » créée en brouillon.`);
+  } catch (error) {
+    toast(`Création refusée : ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#sceneAssignmentForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("sceneAssignmentError");
+  const form = event.currentTarget;
+  const submit = form.querySelector('button[type="submit"]');
+  const sceneId = $("#sceneAssignmentScene").value;
+  let target;
+  try {
+    target = parseOperationalTarget($("#sceneAssignmentTarget").value);
+  } catch (error) {
+    formError("sceneAssignmentError", error.message);
+    return;
+  }
+  submit.disabled = true;
+  try {
+    const payload = await api.put("scene-assignments", { sceneId, ...target });
+    const key = operationalTargetKey(target.targetType, target.targetId);
+    state.sceneAssignments = state.sceneAssignments.filter((assignment) => (
+      operationalTargetKey(
+        assignment.targetType ?? assignment.target_type,
+        assignment.targetId ?? assignment.target_id ?? null,
+      ) !== key
+    ));
+    state.sceneAssignments.push({
+      scene_id: sceneId,
+      target_type: target.targetType,
+      target_id: target.targetId,
+    });
+    renderSceneManagement();
+    toast(`Scène affectée · synchronisation r${payload.syncRevision}.`);
+  } catch (error) {
+    formError("sceneAssignmentError", error.message);
+  } finally {
+    submit.disabled = false;
+  }
+});
 refs.targetSelect.addEventListener("change", () => {
   loadTargetPreview(refs.targetSelect.value);
 });

@@ -62,6 +62,16 @@ const targetIdFor = (targetType, value) => {
   return id;
 };
 
+const assertTargetExists = async (client, targetType, targetId) => {
+  if (targetType === 'instance' || targetType === 'fleet') return;
+  const target = targetType === 'group'
+    ? await client.query('SELECT id FROM tv_groups WHERE id = $1', [targetId])
+    : await client.query('SELECT id FROM screens WHERE id = $1', [targetId]);
+  if (!target.rows[0]) {
+    throw Object.assign(new Error(`${targetType}_not_found`), { statusCode: 404 });
+  }
+};
+
 const integerInRange = (value, field, minimum, maximum, fallback = undefined) => {
   const candidate = value === undefined ? fallback : value;
   const number = Number(candidate);
@@ -549,10 +559,25 @@ export const registerStudioRoutes = ({
   app.get('/api/v1/studio', {
     preHandler: [authenticated, requirePermission('studio:read')],
   }, async (request) => {
+    const requestedSceneId = request.query?.sceneId
+      ? optionalUuid(request.query.sceneId)
+      : null;
+    const scenesResult = await pool.query(
+      `SELECT id, name, current_revision, published_revision, created_at, updated_at
+       FROM scenes ORDER BY created_at, id`,
+    );
+    const selectedSceneId = requestedSceneId ?? scenesResult.rows[0]?.id ?? null;
+    if (
+      requestedSceneId
+      && !scenesResult.rows.some((scene) => scene.id === requestedSceneId)
+    ) {
+      throw Object.assign(new Error('scene_not_found'), { statusCode: 404 });
+    }
     const [
       instanceResult,
       sceneResult,
       revisionsResult,
+      assignmentsResult,
       assetsResult,
       screensResult,
       groupsResult,
@@ -568,12 +593,17 @@ export const registerStudioRoutes = ({
         `SELECT s.*, r.document
          FROM scenes s
          JOIN scene_revisions r ON r.scene_id = s.id AND r.revision = s.current_revision
-         ORDER BY s.created_at LIMIT 1`,
+         WHERE s.id = $1`,
+        [selectedSceneId],
       ),
       pool.query(
         `SELECT scene_id, revision, sha256, change_summary, created_at, published_at
-         FROM scene_revisions ORDER BY created_at DESC LIMIT 100`,
+         FROM scene_revisions
+         WHERE scene_id = $1
+         ORDER BY created_at DESC LIMIT 100`,
+        [selectedSceneId],
       ),
+      pool.query('SELECT * FROM scene_assignments ORDER BY target_type, created_at'),
       pool.query('SELECT * FROM assets ORDER BY created_at DESC LIMIT 200'),
       pool.query(
         `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
@@ -626,6 +656,13 @@ export const registerStudioRoutes = ({
     );
     return {
       instance: instanceResult.rows[0].config,
+      scenes: scenesResult.rows.map((row) => ({
+        ...row,
+        current_revision: Number(row.current_revision),
+        published_revision: row.published_revision === null
+          ? null
+          : Number(row.published_revision),
+      })),
       scene: scene ? {
         id: scene.id,
         name: scene.name,
@@ -643,6 +680,7 @@ export const registerStudioRoutes = ({
         active_revision: row.active_revision === null ? null : Number(row.active_revision),
       })) : [],
       groups: can('fleet:read') ? groupsResult.rows : [],
+      sceneAssignments: can('fleet:read') ? assignmentsResult.rows : [],
       messages: can('messages:read') ? messagesResult.rows : [],
       sourceSettings: can('fleet:read') ? sourcesResult.rows : [],
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
@@ -655,6 +693,92 @@ export const registerStudioRoutes = ({
         reportingScreens: screensResult.rows.filter((row) => row.latest_metric !== null).length,
       } : null,
     };
+  });
+
+  app.post('/api/v1/scenes', {
+    preHandler: [authenticated, requirePermission('studio:write'), csrf],
+  }, async (request, reply) => {
+    const id = crypto.randomUUID();
+    const name = cleanText(request.body?.name, 'scene_name', 100);
+    const document = structuredClone(request.body?.scene ?? request.body?.document);
+    if (!document || typeof document !== 'object' || Array.isArray(document)) {
+      throw Object.assign(new Error('scene_document_required'), { statusCode: 400 });
+    }
+    document.layoutId = id;
+    document.name = name;
+    validators.assertLayout(document);
+    const digest = sha256(canonicalize(document));
+    await withTransaction(pool, async (client) => {
+      await client.query(
+        `INSERT INTO scenes (id, name, current_revision, published_revision)
+         VALUES ($1, $2, 1, NULL)`,
+        [id, name],
+      );
+      await client.query(
+        `INSERT INTO scene_revisions (
+           scene_id, revision, document, sha256, change_summary, created_by
+         ) VALUES ($1, 1, $2, $3, $4, $5)`,
+        [
+          id,
+          JSON.stringify(document),
+          digest,
+          'Création depuis le Studio',
+          request.roomframeSession.user_id,
+        ],
+      );
+      await writeAudit(client, request, 'scene.created', 'scene', id, { revision: 1 });
+    });
+    return reply.code(201).send({ id, revision: 1, sha256: digest });
+  });
+
+  app.put('/api/v1/scene-assignments', {
+    preHandler: [
+      authenticated,
+      requirePermission('studio:write'),
+      requirePermission('fleet:write'),
+      csrf,
+    ],
+  }, async (request) => {
+    const sceneId = optionalUuid(request.body?.sceneId);
+    if (!sceneId) throw Object.assign(new Error('scene_id_required'), { statusCode: 400 });
+    const targetType = request.body?.targetType ?? 'instance';
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    const targetId = targetIdFor(targetType, request.body?.targetId);
+    return withTransaction(pool, async (client) => {
+      const scene = await client.query(
+        'SELECT id, published_revision FROM scenes WHERE id = $1 FOR SHARE',
+        [sceneId],
+      );
+      if (!scene.rows[0]) throw Object.assign(new Error('scene_not_found'), { statusCode: 404 });
+      if (scene.rows[0].published_revision === null) {
+        throw Object.assign(new Error('scene_not_published'), { statusCode: 409 });
+      }
+      await assertTargetExists(client, targetType, targetId);
+      await client.query(
+        'DELETE FROM scene_assignments WHERE target_type = $1 AND target_id IS NOT DISTINCT FROM $2',
+        [targetType, targetId],
+      );
+      await client.query(
+        `INSERT INTO scene_assignments (id, scene_id, target_type, target_id)
+         VALUES ($1, $2, $3, $4)`,
+        [crypto.randomUUID(), sceneId, targetType, targetId],
+      );
+      const sync = await bumpSyncRevision(client);
+      await writeAudit(client, request, 'scene.assigned', 'scene', sceneId, {
+        targetType,
+        targetId,
+        syncRevision: Number(sync.rows[0].revision),
+      });
+      return {
+        assigned: true,
+        sceneId,
+        targetType,
+        targetId,
+        syncRevision: Number(sync.rows[0].revision),
+      };
+    });
   });
 
   app.post('/api/v1/scenes/:sceneId/revisions', {
@@ -693,8 +817,10 @@ export const registerStudioRoutes = ({
         ],
       );
       await client.query(
-        'UPDATE scenes SET current_revision = $2, updated_at = now() WHERE id = $1',
-        [sceneId, revision],
+        `UPDATE scenes
+         SET current_revision = $2, name = $3, updated_at = now()
+         WHERE id = $1`,
+        [sceneId, revision, cleanText(document.name ?? scene.name, 'scene_name', 100)],
       );
       await writeAudit(client, request, 'scene.revision.created', 'scene', sceneId, { revision });
       return { revision, sha256: digest };

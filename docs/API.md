@@ -56,9 +56,12 @@ compte sont révoquées après succès.
 GET  /api/v1/instance
 PUT  /api/v1/instance/branding
 GET  /api/v1/studio
+GET  /api/v1/studio?sceneId=<uuid>
 GET  /api/v1/studio/preview?targetType=tv|group&targetId=<uuid>
+POST /api/v1/scenes
 POST /api/v1/scenes/:sceneId/revisions
 POST /api/v1/scenes/:sceneId/publish
+PUT  /api/v1/scene-assignments
 GET  /api/v1/media
 POST /api/v1/media
 PATCH /api/v1/media/:assetId
@@ -88,6 +91,11 @@ la page de connexion peut être personnalisée sans publier de média ni
 d’information réseau.
 
 Une scène est un document typé conforme à `contracts/layout.schema.json`.
+`POST /scenes` crée une nouvelle scène en révision 1 sans la publier.
+`GET /studio?sceneId=` charge uniquement son brouillon et son historique.
+`PUT /scene-assignments` n’accepte qu’une scène publiée et vérifie l’existence
+du groupe ou de la TV avant de remplacer atomiquement l’affectation de cette
+cible. L’héritage reste TV, puis groupe, puis instance.
 Créer une révision exige `baseRevision`; une base obsolète renvoie `409` et la
 révision courante. Publier déplace le pointeur publié et incrémente la révision
 globale de synchronisation dans la même transaction.

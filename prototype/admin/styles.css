@@ -76,6 +76,8 @@ main { min-height: 0; }
 .field input, .field textarea, .field select, .editor-form input, .editor-form textarea, .gate-form input, #propertiesForm input, #propertiesForm textarea, #propertiesForm select {
   width: 100%; border: 0; border-bottom: 1px solid var(--ink); border-radius: 0; background: transparent; padding: 7px 0; outline: none;
 }
+.scene-library .text-button { margin: 9px 0 15px; }
+.scene-library small { display: block; color: var(--muted); font-size: 9px; line-height: 1.4; }
 textarea { min-height: 58px; resize: vertical; }
 .choice { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { border: 1px solid var(--ink); background: transparent; padding: 7px 9px; font-size: 10px; font-weight: 800; text-transform: uppercase; }
@@ -195,6 +197,25 @@ textarea { min-height: 58px; resize: vertical; }
 .enrollment-ticket input { color: #f7fbfc; border-color: rgba(255,255,255,.45); }
 .ticket-actions { grid-column: 2 / -1; display: flex; justify-content: flex-end; gap: 10px; }
 .enrollment-ticket .tool:not(.primary) { color: #fff; border-color: #fff; }
+.assignment-console {
+  display: grid; grid-template-columns: minmax(210px, .38fr) minmax(520px, 1fr);
+  gap: 24px 34px; padding: 24px 0; border-top: 6px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.assignment-console form {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 14px; align-items: end;
+}
+.assignment-console label {
+  font-family: var(--font-mono); font-size: 9px; font-weight: 900;
+  letter-spacing: .08em; text-transform: uppercase;
+}
+.assignment-console select { display: block; width: 100%; margin-top: 6px; }
+.assignment-console .form-error { grid-column: 1 / -1; }
+.assignment-ledger {
+  grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 1px; background: var(--ink); border: 1px solid var(--ink);
+}
+.assignment-ledger .ledger-row { padding: 13px; background: var(--paper); border: 0; }
 .operations-console {
   display: grid; grid-template-columns: minmax(210px, .38fr) minmax(520px, 1fr);
   gap: 24px 34px; padding: 24px 0; border-top: 6px solid var(--ink);
@@ -320,7 +341,8 @@ textarea { min-height: 58px; resize: vertical; }
   .enrollment-console { grid-template-columns: 1fr; }
   .enrollment-console form { grid-template-columns: 1fr 1fr; }
   .enrollment-ticket { grid-template-columns: 1fr 1fr; }
-  .operations-console { grid-template-columns: 1fr; }
+  .assignment-console, .operations-console { grid-template-columns: 1fr; }
+  .assignment-ledger { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
   .source-settings-form, .power-settings-form { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
   .ticket-actions { grid-column: 1 / -1; }
 }
@@ -340,6 +362,7 @@ textarea { min-height: 58px; resize: vertical; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .wide { grid-column: auto; }
   .enrollment-console form, .enrollment-ticket { grid-template-columns: 1fr; }
+  .assignment-console form, .assignment-ledger,
   .operations-targets, .source-settings-form, .power-settings-form { grid-template-columns: 1fr; }
   .source-settings-form fieldset, .power-settings-form fieldset,
   .source-settings-form > .tool, .power-settings-form > .tool,

@@ -43,3 +43,14 @@ test("les règles de salle utilisent des formulaires structurés et l’API atom
   assert.match(source, /api\.put\("settings\/power"/);
   assert.doesNotMatch(markup, /textarea[^>]*id="(?:source|power)/);
 });
+
+test("la bibliothèque de scènes sépare chargement, copie et affectation publiée", () => {
+  assert.match(markup, /id="sceneLibrarySelect"/);
+  assert.match(markup, /id="sceneLoadButton"/);
+  assert.match(markup, /id="sceneCloneName"/);
+  assert.match(markup, /id="sceneAssignmentForm"/);
+  assert.match(source, /api\.post\("scenes", \{ name, scene \}\)/);
+  assert.match(source, /api\.put\("scene-assignments"/);
+  assert.match(source, /studio\?sceneId=/);
+  assert.match(markup, /abandonne les modifications non enregistrées/);
+});

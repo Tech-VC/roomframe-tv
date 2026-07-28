@@ -79,7 +79,7 @@ Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
 qu’elle est réservée aux tests.
 
 La suite API couvre actuellement 20 scénarios Node, auxquels s’ajoutent les
-17 tests UI, soit 37 tests sur un clone frais. Les workflows GitHub de
+20 tests UI, soit 40 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -88,7 +88,8 @@ donc ce même ensemble. Les scénarios comprennent notamment :
 - cookie sécurisé, session, permissions, origine et CSRF ;
 - identité publique bornée, charte globale protégée par permission/CSRF et
   document `branding.json` hashé pour les TV ;
-- révision, conflit, publication et manifeste de synchronisation ;
+- bibliothèque de scènes, révision, conflit, publication, affectation ciblée
+  et manifeste de synchronisation ;
 - enrôlement temporaire puis clé TV à remise unique ;
 - isolation des assets d’une TV ;
 - seed appliqué une seule fois et migrations rejouables ;

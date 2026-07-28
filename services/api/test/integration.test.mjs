@@ -996,6 +996,80 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(publication.statusCode, 200);
   assert.equal(publication.json().published, true);
 
+  const secondaryDocument = structuredClone(personalizedScene);
+  secondaryDocument.name = 'Accueil groupe projet';
+  const secondaryScene = await app.inject({
+    method: 'POST',
+    url: '/api/v1/scenes',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      name: secondaryDocument.name,
+      scene: secondaryDocument,
+    },
+  });
+  assert.equal(secondaryScene.statusCode, 201, secondaryScene.body);
+  const secondarySceneId = secondaryScene.json().id;
+  const secondaryStudio = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio?sceneId=${secondarySceneId}`,
+    headers: { cookie },
+  });
+  assert.equal(secondaryStudio.statusCode, 200, secondaryStudio.body);
+  assert.equal(secondaryStudio.json().scene.id, secondarySceneId);
+  assert.equal(secondaryStudio.json().scene.document.layoutId, secondarySceneId);
+  assert.equal(secondaryStudio.json().scenes.length, 2);
+  assert.equal(secondaryStudio.json().revisions.length, 1);
+  const unpublishedAssignment = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/scene-assignments',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: secondarySceneId,
+      targetType: 'group',
+      targetId: groupId,
+    },
+  });
+  assert.equal(unpublishedAssignment.statusCode, 409, unpublishedAssignment.body);
+  assert.equal(unpublishedAssignment.json().error, 'scene_not_published');
+  const secondaryPublication = await app.inject({
+    method: 'POST',
+    url: `/api/v1/scenes/${secondarySceneId}/publish`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { revision: 1 },
+  });
+  assert.equal(secondaryPublication.statusCode, 200, secondaryPublication.body);
+  const missingTargetAssignment = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/scene-assignments',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: secondarySceneId,
+      targetType: 'group',
+      targetId: crypto.randomUUID(),
+    },
+  });
+  assert.equal(missingTargetAssignment.statusCode, 404, missingTargetAssignment.body);
+  assert.equal(missingTargetAssignment.json().error, 'group_not_found');
+  const groupAssignment = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/scene-assignments',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      sceneId: secondarySceneId,
+      targetType: 'group',
+      targetId: groupId,
+    },
+  });
+  assert.equal(groupAssignment.statusCode, 200, groupAssignment.body);
+  assert.equal(groupAssignment.json().assigned, true);
+  const assignedGroupPreview = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=group&targetId=${groupId}`,
+    headers: { cookie },
+  });
+  assert.equal(assignedGroupPreview.statusCode, 200, assignedGroupPreview.body);
+  assert.equal(assignedGroupPreview.json().scene.id, secondarySceneId);
+
   await pool.query(
     "UPDATE screens SET last_seen_at = TIMESTAMPTZ '2000-01-01T00:00:00Z' WHERE enrollment_state = 'simulated'",
   );

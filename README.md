@@ -106,6 +106,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   propriétés, clavier et historique ;
 - règles AirPlay, Cast, HDMI, application privée, retour accueil et horaires
   configurables par instance, groupe ou TV sans prétendre exécuter le matériel ;
+- bibliothèque de scènes, copie de brouillon et affectation publiée par
+  instance, groupe ou TV avec aperçu résolu ;
 - validation des scènes typées 1920 × 1080, sans HTML ni JavaScript libre ;
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
@@ -169,8 +171,8 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 19 tests Studio/synchronisation TV et
-20 tests API, contrôle de syntaxe serveur inclus, soit 39 tests. Les workflows GitHub de
+test n’est pas fourni. Il exécute 20 tests Studio/synchronisation TV et
+20 tests API, contrôle de syntaxe serveur inclus, soit 40 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
@@ -187,9 +189,8 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - l’import `.rfupdate`, le téléchargement APK affecté et les vagues
   canari/progressives sont implémentés ; le poller GitHub et le moteur
   privilégié qui applique le code serveur restent à livrer ;
-- le Studio édite actuellement la scène d’instance et peut prévisualiser en
-  lecture seule l’affectation publiée d’une TV ou d’un groupe ; l’édition de
-  plusieurs scènes et l’assignation visuelle restent à livrer ;
+- le Studio gère plusieurs scènes et leurs affectations publiées ; la
+  programmation temporelle d’un changement de scène reste à livrer ;
 - le launcher Android rend la scène native depuis son cache vérifié,
   synchronise en HTTPS, conserve la révision précédente et contrôle les APK
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse
