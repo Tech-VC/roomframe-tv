@@ -79,6 +79,26 @@ grep -Fq '<type>_roomframe._tcp</type>' infra/avahi/roomframe.service || {
   echo "L'annonce DNS-SD RoomFrame est absente." >&2
   exit 1
 }
+grep -Fq '"sbom-spdx"' contracts/update-bundle.schema.json || {
+  echo "Le contrat d'update doit accepter le SBOM SPDX signé." >&2
+  exit 1
+}
+grep -Fq -- '--source-revision "$GITHUB_SHA"' .github/workflows/release.yml || {
+  echo "La release doit lier le .rfupdate au commit Git source." >&2
+  exit 1
+}
+grep -Fq 'actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26' \
+  .github/workflows/release.yml || {
+  echo "La provenance GitHub doit utiliser l'action attest épinglée." >&2
+  exit 1
+}
+python3 - <<'PY'
+import ast
+import pathlib
+
+for source in pathlib.Path("scripts").glob("*.py"):
+    ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+PY
 grep -Fq 'formatVersion": 2' scripts/roomframe-backup.sh || {
   echo "Les nouvelles sauvegardes doivent utiliser le format chiffré version 2." >&2
   exit 1
@@ -148,6 +168,16 @@ grep -Fq "l'API web ne l'exécute jamais" <<<"$broker_help" || {
 automatic_queue_sql="database/queries/queue_automatic_server_update.sql"
 grep -Fq "release.verification #>> '{source,provider}' = 'github'" "$automatic_queue_sql" || {
   echo "La file automatique doit être limitée aux imports GitHub vérifiés." >&2
+  exit 1
+}
+grep -Fq "release.verification #> '{supplyChain,signedSource}' = release.manifest -> 'source'" \
+  "$automatic_queue_sql" || {
+  echo "La file automatique doit exiger la source signée du manifeste." >&2
+  exit 1
+}
+grep -Fq "release.verification #>> '{supplyChain,sbom,kind}' = 'sbom-spdx'" \
+  "$automatic_queue_sql" || {
+  echo "La file automatique doit exiger un SBOM SPDX vérifié." >&2
   exit 1
 }
 grep -Fq "WHERE previous.release_id = release.id" "$automatic_queue_sql" || {

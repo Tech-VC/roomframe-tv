@@ -137,8 +137,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
-- import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles et
-  hashes, puis quarantaine ;
+- import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles,
+  hashes, source Git signée et SBOM SPDX 2.3 embarqué, puis quarantaine ;
 - découverte GitHub `stable` ou `preview`, ETag, téléchargement borné,
   redirections GitHub contrôlées et import automatique idempotent sans
   exécution de l’artefact ;
@@ -227,6 +227,7 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 ```bash
 ./scripts/check.sh
 ./scripts/test.sh
+./scripts/test-supply-chain.sh
 ```
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
@@ -234,10 +235,11 @@ puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur d
 test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
 runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
 27 tests Studio/synchronisation TV et
-24 tests API, contrôle de syntaxe serveur inclus, soit 51 tests. Les workflows
+25 tests API, contrôle de syntaxe serveur inclus, soit 52 tests. Les workflows
 GitHub de validation et de release ajoutent trois scénarios root dédiés au
 chiffrement, à la rétention, au trousseau et à la restauration PostgreSQL
-isolée d’une sauvegarde, ainsi qu’à la découverte locale signée. Les scénarios
+isolée d’une sauvegarde, ainsi qu’à la découverte locale signée, plus un test
+non privilégié du SBOM et de la provenance. Les scénarios
 couvrent notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 WebAuthn avec signatures réelles, CSRF, les révisions, l’enrôlement TV, le seed
 unique, la récupération locale,
@@ -245,7 +247,8 @@ les invitations administrateur one-shot, l’activation TOTP sans mot de passe
 temporaire, la révocation de session et la protection du dernier propriétaire,
 la compatibilité des scènes UI, le rejet concis des réponses API non JSON,
 la stabilité des formulaires asynchrones, le détourage prudent des logos et le refus des
-bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test
+bundles de mise à jour altérés, contenant des clés JSON dupliquées ou un SBOM
+incohérent avec l’archive serveur. Le test
 d’intégration couvre aussi l’upload et le traitement réel d’une image ainsi
 que l’import multipart d’un `.rfupdate`, la découverte GitHub conditionnelle,
 le contrôle des redirections, l’import automatique idempotent, la sélection

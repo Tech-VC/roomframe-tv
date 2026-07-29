@@ -26,6 +26,7 @@ jobs:
           sudo ./scripts/test-backup-encryption.sh
           sudo ./scripts/test-backup-verify-e2e.sh
           sudo ./scripts/test-discovery.sh
+          ./scripts/test-supply-chain.sh
 
   package:
     needs: verify
@@ -34,6 +35,9 @@ jobs:
       name: release-signing
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,6 +79,17 @@ jobs:
           GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
           ARCHIVE_PATH="dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" \
           ./scripts/build-release-installer.sh
+      - name: Build SPDX 2.3 SBOM
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          created_at="$(git show -s --format=%cI "$GITHUB_SHA")"
+          python scripts/build-sbom.py \
+            --version "$version" \
+            --source-archive "dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --source-revision "$GITHUB_SHA" \
+            --created-at "$created_at" \
+            --output "dist/roomframe-tv-${GITHUB_REF_NAME}.spdx.json"
       - name: Build and verify signed update
         env:
           SIGNING_KEY_B64: ${{ secrets.ROOMFRAME_RELEASE_SIGNING_KEY_B64 }}
@@ -98,6 +113,10 @@ jobs:
           sha256sum "$published_key" >"${published_key}.sha256"
           python scripts/build-signed-update.py \
             --artifact "dist/roomframe-tv-${GITHUB_REF_NAME}.tar.gz" \
+            --sbom "dist/roomframe-tv-${GITHUB_REF_NAME}.spdx.json" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --source-revision "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
             --version "$version" \
             --private-key "$key_file" \
             --key-id "$key_id" \
@@ -105,12 +124,26 @@ jobs:
           python scripts/verify-update-bundle.py \
             "dist/roomframe-tv-${GITHUB_REF_NAME}.rfupdate" \
             --trust-key "$public_key"
+      - name: Attest release provenance
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: |
+            dist/roomframe-install.sh
+            dist/roomframe-tv-${{ github.ref_name }}.tar.gz
+            dist/roomframe-tv-${{ github.ref_name }}.rfupdate
+            dist/roomframe-tv-${{ github.ref_name }}.spdx.json
+      - name: Attest signed update SBOM
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: dist/roomframe-tv-${{ github.ref_name }}.rfupdate
+          sbom-path: dist/roomframe-tv-${{ github.ref_name }}.spdx.json
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             dist/roomframe-install.sh
             dist/roomframe-tv-*.tar.gz
             dist/roomframe-tv-*.rfupdate
+            dist/roomframe-tv-*.spdx.json
             dist/roomframe-release-*.pem
             dist/roomframe-release-*.pem.sha256
             bundles/roomframe-default-experience-1.0.0.rfbundle

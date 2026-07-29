@@ -320,10 +320,12 @@ POST /api/v1/tv/updates/:deploymentId/status
 
 L’import multipart attend un champ `file` portant l’extension `.rfupdate`. Le
 serveur vérifie la signature Ed25519, la structure ZIP, la compatibilité, les
-tailles et les hashes avant de ranger l’archive dans la quarantaine des
-releases. Les clés JSON dupliquées sont refusées avant la validation du
-contrat, y compris lorsque le manifeste est correctement signé. Aucun
-artefact n’est exécuté par la requête web.
+tailles, les hashes, la source signée et le SBOM SPDX avant de ranger l’archive
+dans la quarantaine des releases. Les clés JSON dupliquées sont refusées avant
+la validation du contrat, y compris lorsque le manifeste est correctement
+signé. Un import GitHub doit faire correspondre le dépôt et le tag observés à
+la source signée ; l’import multipart manuel ne prétend pas à cette provenance.
+Aucun artefact n’est exécuté par la requête web.
 
 Une release vérifiée qui contient exactement un `server-archive` peut recevoir
 une demande d’application serveur. Le corps doit répéter sa version dans
@@ -345,11 +347,12 @@ automatique exige exactement
 session et CSRF. La réponse expose uniquement la politique normalisée.
 
 En mode automatique, le courtier considère seulement une release dont la
-provenance vérifiée est `github`, avec exactement une archive serveur, assez
-ancienne et située dans la fenêtre locale. Toute release ayant déjà une
-demande dans l’historique est exclue : après un échec ou un rollback, une
-décision humaine est obligatoire. Un import multipart manuel n’est jamais
-éligible.
+provenance vérifiée est `github`, dont la source signée correspond exactement
+au manifeste enregistré, avec exactement une archive serveur, assez ancienne,
+dotée d’un SBOM cohérent et située dans la fenêtre locale. Une ancienne entrée
+GitHub sans cette chaîne reste manuelle. Toute release ayant déjà une demande
+dans l’historique est exclue : après un échec ou un rollback, une décision
+humaine est obligatoire. Un import multipart manuel n’est jamais éligible.
 
 `GET /releases` et `GET /studio` exposent également l’état non sensible de la
 source automatique : dépôt public, canal, fréquence, dernier contrôle,

@@ -12,10 +12,20 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import uuid
 import zipfile
+
+sys.dont_write_bytecode = True
+
+from supply_chain import (
+    MAX_SBOM_BYTES,
+    SupplyChainError,
+    parse_spdx_bytes,
+    validate_spdx_document,
+)
 
 
 SEMVER_RE = re.compile(
@@ -28,6 +38,11 @@ SHA256_RE = re.compile(r"^[a-fA-F0-9]{64}$")
 ANDROID_PACKAGE_RE = re.compile(
     r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$"
 )
+SOURCE_REPOSITORY_RE = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})/"
+    r"[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$"
+)
+SOURCE_REVISION_RE = re.compile(r"^[a-f0-9]{40}(?:[a-f0-9]{24})?$")
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,6 +60,10 @@ def parse_args() -> argparse.Namespace:
         help="SHA-256 du certificat de signature de l'APK",
     )
     parser.add_argument("--version", required=True)
+    parser.add_argument("--sbom", type=Path, help="SBOM SPDX 2.3 de l'archive serveur")
+    parser.add_argument("--source-repository", help="dépôt GitHub owner/repo")
+    parser.add_argument("--source-revision", help="SHA Git source")
+    parser.add_argument("--source-ref", help="ref Git source")
     parser.add_argument("--private-key", required=True, type=Path)
     parser.add_argument("--key-id", required=True)
     parser.add_argument("--output", required=True, type=Path)
@@ -134,11 +153,46 @@ def main() -> int:
         )
     ):
         raise SystemExit("Les métadonnées --home-* nécessitent --home-apk.")
+    supply_chain_values = (
+        args.sbom,
+        args.source_repository,
+        args.source_revision,
+        args.source_ref,
+    )
+    if any(value is not None for value in supply_chain_values) and not all(
+        value is not None for value in supply_chain_values
+    ):
+        raise SystemExit(
+            "--sbom, --source-repository, --source-revision et --source-ref "
+            "doivent être fournis ensemble."
+        )
+    if args.sbom is not None and args.artifact is None:
+        raise SystemExit("--sbom nécessite une archive serveur.")
     regular_file(args.private_key, "La clé privée")
     if not SEMVER_RE.fullmatch(args.version):
         raise SystemExit(f"Version SemVer invalide: {args.version}")
     if not KEY_ID_RE.fullmatch(args.key_id):
         raise SystemExit(f"Identifiant de clé invalide: {args.key_id}")
+    source = None
+    if args.sbom is not None:
+        regular_file(args.sbom, "Le SBOM SPDX")
+        if args.sbom.stat().st_size > MAX_SBOM_BYTES:
+            raise SystemExit("Le SBOM SPDX dépasse 16 Mio.")
+        repository = str(args.source_repository).lower()
+        revision = str(args.source_revision).lower()
+        source_ref = str(args.source_ref)
+        if not SOURCE_REPOSITORY_RE.fullmatch(repository):
+            raise SystemExit("--source-repository doit être de la forme owner/repo.")
+        if not SOURCE_REVISION_RE.fullmatch(revision):
+            raise SystemExit("--source-revision doit être un SHA Git de 40 ou 64 hex.")
+        if source_ref != f"refs/tags/v{args.version}":
+            raise SystemExit("--source-ref doit correspondre exactement au tag de la version.")
+        source = {
+            "provider": "github",
+            "repository": repository,
+            "revision": revision,
+            "ref": source_ref,
+        }
     private_mode = stat.S_IMODE(args.private_key.stat().st_mode)
     if private_mode & 0o077:
         raise SystemExit("La clé privée doit être accessible uniquement à son propriétaire (0600).")
@@ -156,6 +210,15 @@ def main() -> int:
         )
     if args.artifact is not None:
         validate_server_archive(args.artifact, set(migrations))
+        if args.sbom is not None:
+            try:
+                validate_spdx_document(
+                    parse_spdx_bytes(args.sbom.read_bytes()),
+                    release_version=args.version,
+                    server_archive_sha256=sha256_file(args.artifact),
+                )
+            except (OSError, SupplyChainError) as error:
+                raise SystemExit(f"SBOM SPDX invalide: {error}") from error
 
     artifact_specs: list[tuple[Path, str, dict[str, object]]] = []
     if args.artifact is not None:
@@ -169,6 +232,20 @@ def main() -> int:
                     "sha256": sha256_file(args.artifact),
                     "size": args.artifact.stat().st_size,
                     "kind": "server-archive",
+                },
+            )
+        )
+    if args.sbom is not None:
+        sbom_name = f"metadata/roomframe-{args.version}.spdx.json"
+        artifact_specs.append(
+            (
+                args.sbom,
+                sbom_name,
+                {
+                    "path": sbom_name,
+                    "sha256": sha256_file(args.sbom),
+                    "size": args.sbom.stat().st_size,
+                    "kind": "sbom-spdx",
                 },
             )
         )
@@ -203,6 +280,8 @@ def main() -> int:
         "migrations": migrations,
         "preservesInstanceData": True,
     }
+    if source is not None:
+        manifest["source"] = source
     manifest_bytes = (
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")

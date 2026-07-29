@@ -27,6 +27,7 @@ Depuis la racine :
 ```bash
 ./scripts/check.sh
 ./scripts/test.sh
+./scripts/test-supply-chain.sh
 ```
 
 `check.sh` contrôle :
@@ -37,6 +38,8 @@ Depuis la racine :
 - la syntaxe des modules API et des JavaScript statiques ;
 - l’absence de script, style ou attribut de style inline interdits par la CSP ;
 - la configuration Compose, si Docker Compose est disponible.
+- la présence des contrôles de source signée, SBOM et attestation dans la
+  chaîne de release.
 
 `test.sh` exécute d’abord ces checks, puis installe avec `npm ci` les
 dépendances API verrouillées si elles sont absentes. Si aucune base de test
@@ -95,12 +98,14 @@ qu’elle est réservée aux tests. `ROOMFRAME_TEST_SERVER_CA_FILE` pointe vers 
 certificat de CA public de test valide ; `scripts/test.sh` en génère un
 automatiquement et ne conserve pas sa clé privée.
 
-La suite API couvre actuellement 24 scénarios Node, auxquels s’ajoutent les
-27 tests UI, soit 51 tests sur un clone frais. Les workflows GitHub de
+La suite API couvre actuellement 25 scénarios Node, auxquels s’ajoutent les
+27 tests UI, soit 52 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent `./scripts/test.sh`, puis trois tests root :
 deux dédiés au format `age`, à la rétention, au trousseau historique et à la
 restauration PostgreSQL isolée, ainsi qu’un troisième pour la découverte
-ECDSA P-256 et Avahi. Les scénarios comprennent notamment :
+ECDSA P-256 et Avahi. `test-supply-chain.sh` contrôle en plus, sans privilège,
+le SBOM SPDX, la source Git signée et leur cohérence avec l’archive. Les
+scénarios comprennent notamment :
 
 - bootstrap concurrent : une réussite, un conflit ;
 - Argon2id, chiffrement TOTP et vecteurs RFC 6238 ;
@@ -129,7 +134,7 @@ ECDSA P-256 et Avahi. Les scénarios comprennent notamment :
 - contrats de scène et fuseaux ;
 - import multipart `.rfupdate`, quarantaine, matérialisation APK, cycle canari
   jusqu’à l’état installé et refus HTTP d’un manifeste signé contenant des
-  clés JSON dupliquées ;
+  clés JSON dupliquées, une source Git incohérente ou un faux SBOM ;
 - mise à jour Ed25519 valide et refus des altérations, artefacts non listés et
   downgrades, ainsi que remplacement sûr d’une quarantaine corrompue ;
 - sélection GitHub `stable`/`preview`, ETag, refus d’assets ambigus,

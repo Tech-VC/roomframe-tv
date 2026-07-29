@@ -23,6 +23,9 @@ candidate AS MATERIALIZED (
     AND release.deployed_at IS NULL
     AND release.imported_at <= now() - make_interval(mins => policy.minimum_import_age_minutes)
     AND release.verification #>> '{source,provider}' = 'github'
+    AND release.verification #> '{supplyChain,signedSource}' = release.manifest -> 'source'
+    AND release.verification #>> '{supplyChain,signedSource,provider}' = 'github'
+    AND release.verification #>> '{supplyChain,sbom,kind}' = 'sbom-spdx'
     AND (
       SELECT count(*)
       FROM jsonb_array_elements(release.manifest -> 'artifacts') AS artifact

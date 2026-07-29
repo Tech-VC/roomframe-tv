@@ -300,7 +300,9 @@ Les `.rfupdate` exigent une signature Ed25519 et une clé publique approuvée.
 La clé privée reste hors du dépôt et du serveur. La requête d’import ne fait
 qu’une vérification et une mise en quarantaine ; elle n’exécute ni shell, ni
 migration, ni image. Le vérificateur CLI et le vérificateur Node de l’API
-refusent tous deux les clés JSON dupliquées avant validation du contrat.
+refusent tous deux les clés JSON dupliquées avant validation du contrat. Un
+SBOM SPDX est lui-même listé et hashé dans le manifeste signé ; son package
+racine doit porter la version et le SHA-256 de l’unique archive serveur.
 
 Le poller GitHub ne change pas cette frontière : il interroge uniquement le
 dépôt `owner/repo` validé, utilise l’API GitHub versionnée et un ETag, refuse
@@ -310,6 +312,12 @@ son éventuel digest SHA-256. Le téléchargement part de l’URL d’asset de
 de contenu. Le poller n’a ni port entrant, ni secret de session/TOTP, ni accès
 à Docker. Après téléchargement, le même vérificateur Ed25519 que l’import
 manuel décide de l’acceptation. Aucun artefact serveur n’est exécuté.
+Un import provenant de GitHub est refusé si le dépôt ou le tag observé ne
+correspond pas au dépôt et à la ref inscrits dans les octets signés, ou si le
+SBOM SPDX est absent. Le SHA source est lui aussi signé et publié dans le SBOM ;
+sa correspondance avec l’exécution GitHub est vérifiable par l’attestation
+publique du workflow, pas en résolvant le tag depuis le poller local. Les imports
+hors ligne restent possibles avec la seule chaîne de confiance Ed25519 locale.
 
 Les réseaux Docker séparent aussi les chemins : l’API ne rejoint que
 `frontend` et `backend`, tous deux internes ; Caddy porte seul le réseau
@@ -327,7 +335,10 @@ sudo roomframe-trust-update-key \
 Le workflow de signature utilise l’environnement GitHub
 `release-signing`. Cet environnement doit conserver ses règles de protection
 et approbateurs ; le job de vérification non privilégié n’a pas accès à la clé
-et le job de packaging reçoit `contents: write` seulement après validation.
+et le job de packaging reçoit ses permissions de publication seulement après
+validation. GitHub/Sigstore atteste en plus la provenance SLSA et le SBOM avec
+une identité OIDC éphémère. Cette attestation publique ne remplace jamais la
+clé Ed25519 RoomFrame approuvée explicitement par l’instance.
 
 Pour un artefact APK, le manifeste signé lie aussi le package, le
 `versionCode` et l’empreinte du certificat Android. La TV télécharge dans son
@@ -403,7 +414,10 @@ rollback restent dans l’audit.
 La politique automatique est désactivée par défaut et son activation initiale
 exige une seconde confirmation textuelle. Même activée, la sélection root
 refuse les imports manuels, les releases trop récentes, celles hors fenêtre et
-toute version déjà tentée. La provenance GitHub est enregistrée par
-l’importeur après la vérification complète du bundle ; elle n’est jamais
-acceptée depuis un corps HTTP d’administration. Modifier la politique ne donne
-à l’API ni Docker, ni sudo, ni accès en écriture au magasin de clés.
+toute version déjà tentée. Elle exige aussi que la source signée enregistrée
+soit identique à celle du manifeste et qu’un SBOM SPDX ait été validé ; les
+anciens imports GitHub sans cette preuve ne sont pas promus automatiquement.
+La provenance GitHub est enregistrée par l’importeur après la vérification
+complète du bundle ; elle n’est jamais acceptée depuis un corps HTTP
+d’administration. Modifier la politique ne donne à l’API ni Docker, ni sudo,
+ni accès en écriture au magasin de clés.

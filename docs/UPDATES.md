@@ -46,19 +46,25 @@ migrations ne sont pas supprimées automatiquement.
 
 ## Format `.rfupdate`
 
-Un bundle est un ZIP contenant au minimum :
+Un bundle serveur destiné au canal GitHub est un ZIP contenant :
 
 ```text
 release.rfupdate
 ├── manifest.json
 ├── manifest.sig
+├── metadata/roomframe-<version>.spdx.json
 └── server/roomframe-server-<version>.tar.gz
 ```
 
 Le contrat peut aussi décrire des APK, images OCI, migrations ou verrous
 Compose. Un `home-apk` ou `agent-apk` porte obligatoirement son package Android,
-son `versionCode` et le SHA-256 de son certificat de signature. Chaque artefact
-présent doit être listé par le manifeste.
+son `versionCode` et le SHA-256 de son certificat de signature. Le SBOM SPDX
+2.3 décrit le lockfile npm, les coordonnées Gradle, le wrapper et les images
+OCI épinglées ; son package racine porte le SHA-256 de l’archive serveur.
+Chaque artefact présent doit être listé par le manifeste.
+Un ancien bundle ou un import strictement manuel peut ne pas porter de champ
+`source` ni de SBOM ; il reste vérifiable par Ed25519, mais n’est jamais accepté
+comme provenance GitHub ni éligible à l’application automatique.
 
 Avant la quarantaine, le serveur vérifie :
 
@@ -67,7 +73,9 @@ Avant la quarantaine, le serveur vérifie :
 3. contrat, version plus récente et compatibilité serveur/architecture ;
 4. taille et SHA-256 de chaque artefact ;
 5. absence d’artefact non listé ;
-6. signature Ed25519 des octets exacts de `manifest.json`.
+6. cohérence du SBOM avec la version et l’archive serveur ;
+7. signature Ed25519 des octets exacts de `manifest.json`, dont le dépôt, le
+   commit et la ref source lorsqu’ils sont présents.
 
 Les clés publiques approuvées sont placées par l’administrateur dans :
 
@@ -156,8 +164,15 @@ Avant l’écriture, RoomFrame contrôle l’identifiant et l’URL d’asset AP
 taille annoncée, l’espace disque, les redirections HTTPS autorisées, le nombre
 d’octets et le digest SHA-256 GitHub lorsqu’il est fourni. Le `.rfupdate`
 téléchargé passe ensuite dans le même vérificateur Ed25519, de contrat et de
-compatibilité que l’import hors ligne. Une release identique est reconnue de
+compatibilité que l’import hors ligne. Pour une source GitHub, RoomFrame exige
+en plus un tag `v<version>`, le même dépôt dans la source signée, la ref exacte
+du tag et un unique SBOM SPDX valide. Une release identique est reconnue de
 manière idempotente.
+
+Le workflow de publication crée également des attestations GitHub/Sigstore de
+provenance SLSA et de SBOM. Elles permettent une vérification publique du
+runner, du workflow et du commit. Elles complètent la signature Ed25519
+RoomFrame, mais ne sont pas requises par une instance hors ligne.
 
 Le poller ne possède ni accès Docker, ni secret de session/TOTP, ni port
 entrant. Il importe et historise uniquement. Il ne lance pas de déploiement TV
@@ -180,7 +195,10 @@ politique `automatic` après avoir retapé
 À chaque réveil, le courtier root évalue cette politique avant de prendre la
 file. Il ne sélectionne qu’une release `verified`, non déployée, contenant
 exactement un `server-archive`, importée par le poller GitHub et assez ancienne.
-Les imports manuels `.rfupdate` restent soumis à une demande humaine.
+La source signée doit correspondre au manifeste enregistré et son SBOM SPDX
+doit avoir été validé ; une ancienne entrée GitHub antérieure à ces contrôles
+reste donc manuelle. Les imports manuels `.rfupdate` restent eux aussi soumis
+à une demande humaine.
 
 Une release ayant déjà produit une demande, quel qu’en soit le résultat,
 n’est jamais remise en file automatiquement. Un échec, une interruption ou un

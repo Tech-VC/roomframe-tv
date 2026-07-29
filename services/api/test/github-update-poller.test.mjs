@@ -19,6 +19,7 @@ const assetUrl = 'https://api.github.com/repos/example/roomframe/releases/assets
 const release = ({
   id = 101,
   prerelease = false,
+  tagName = null,
   assets = [{
     id: 202,
     name: 'roomframe-tv-v0.4.0.rfupdate',
@@ -30,7 +31,7 @@ const release = ({
   }],
 } = {}) => ({
   id,
-  tag_name: prerelease ? 'v0.4.0-rc.1' : 'v0.4.0',
+  tag_name: tagName ?? (prerelease ? 'v0.4.0-rc.1' : 'v0.4.0'),
   draft: false,
   prerelease,
   published_at: '2026-07-28T11:00:00Z',
@@ -107,6 +108,19 @@ test('les dépôts, canaux et assets GitHub ambigus sont refusés', async () => 
       ]), { status: 200 }),
     }),
     /ambiguous_rfupdate_assets/,
+  );
+  await assert.rejects(
+    discoverGithubUpdate({
+      repository,
+      channel: 'stable',
+      maximumBytes: 1024,
+      version: '0.3.0',
+      timeoutMs: 5_000,
+      fetchImpl: async () => new Response(JSON.stringify([
+        release({ tagName: 'latest' }),
+      ]), { status: 200 }),
+    }),
+    /invalid_github_release_tag/,
   );
 });
 

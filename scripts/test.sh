@@ -86,7 +86,9 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
   healthy_samples=0
   for _ in $(seq 1 40); do
     state="$(docker inspect --format '{{.State.Health.Status}}' "$test_container")"
-    if [[ "$state" == "healthy" ]]; then
+    if [[ "$state" == "healthy" ]] \
+      && docker exec "$test_container" \
+        sh -c '[ "$(cat /proc/1/comm)" = postgres ]' >/dev/null 2>&1; then
       healthy_samples=$((healthy_samples + 1))
       [[ "$healthy_samples" -ge 2 ]] && break
     else
@@ -173,12 +175,20 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
     --health-timeout=2s \
     --health-retries=30 \
     postgres:17-alpine >/dev/null
+  verify_healthy_samples=0
   for _ in $(seq 1 40); do
     verify_state="$(docker inspect --format '{{.State.Health.Status}}' "$verify_container")"
-    [[ "$verify_state" == "healthy" ]] && break
+    if [[ "$verify_state" == "healthy" ]] \
+      && docker exec "$verify_container" \
+        sh -c '[ "$(cat /proc/1/comm)" = postgres ]' >/dev/null 2>&1; then
+      verify_healthy_samples=$((verify_healthy_samples + 1))
+      [[ "$verify_healthy_samples" -ge 2 ]] && break
+    else
+      verify_healthy_samples=0
+    fi
     sleep 1
   done
-  [[ "${verify_state:-}" == "healthy" ]] || {
+  [[ "${verify_state:-}" == "healthy" && "$verify_healthy_samples" -ge 2 ]] || {
     echo "PostgreSQL isolé de restauration n'est pas devenu sain." >&2
     exit 1
   }

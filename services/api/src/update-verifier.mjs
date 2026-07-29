@@ -9,6 +9,7 @@ import yauzl from 'yauzl';
 
 const MANIFEST_LIMIT = 1024 * 1024;
 const SIGNATURE_LIMIT = 4096;
+const SBOM_LIMIT = 16 * 1024 * 1024;
 const BUNDLE_UNCOMPRESSED_LIMIT = 8 * 1024 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 250;
 
@@ -226,6 +227,139 @@ export const parseJsonWithUniqueKeys = (value) => {
   }
 };
 
+const validateSpdxSbom = ({
+  value,
+  releaseVersion,
+  serverArchiveSha256,
+}) => {
+  const document = parseJsonWithUniqueKeys(value);
+  if (
+    !document
+    || typeof document !== 'object'
+    || Array.isArray(document)
+    || document.spdxVersion !== 'SPDX-2.3'
+    || document.dataLicense !== 'CC0-1.0'
+    || document.SPDXID !== 'SPDXRef-DOCUMENT'
+    || typeof document.name !== 'string'
+    || document.name.length < 1
+    || document.name.length > 256
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  let namespace;
+  try {
+    namespace = new URL(document.documentNamespace);
+  } catch {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    typeof document.documentNamespace !== 'string'
+    || document.documentNamespace.length < 1
+    || document.documentNamespace.length > 1024
+    || namespace.protocol !== 'https:'
+    || namespace.hostname === ''
+    || namespace.username !== ''
+    || namespace.password !== ''
+    || namespace.hash !== ''
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !document.creationInfo
+    || typeof document.creationInfo !== 'object'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(
+      document.creationInfo.created ?? '',
+    )
+    || Number.isNaN(Date.parse(document.creationInfo.created))
+    || !Array.isArray(document.creationInfo.creators)
+    || document.creationInfo.creators.length < 1
+    || document.creationInfo.creators.length > 20
+    || document.creationInfo.creators.some(
+      (creator) => typeof creator !== 'string'
+        || creator.length < 1
+        || creator.length > 256,
+    )
+    || !document.creationInfo.creators.some(
+      (creator) => typeof creator === 'string'
+        && creator.startsWith('Tool: RoomFrame SBOM Generator/'),
+    )
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !Array.isArray(document.packages)
+    || document.packages.length < 1
+    || document.packages.length > 10_000
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  const packageIds = new Set();
+  let rootPackage = null;
+  for (const component of document.packages) {
+    if (
+      !component
+      || typeof component !== 'object'
+      || Array.isArray(component)
+      || typeof component.SPDXID !== 'string'
+      || !/^SPDXRef-[A-Za-z0-9.-]{1,200}$/.test(component.SPDXID)
+      || packageIds.has(component.SPDXID)
+      || typeof component.name !== 'string'
+      || component.name.length < 1
+      || component.name.length > 512
+      || typeof component.downloadLocation !== 'string'
+      || typeof component.filesAnalyzed !== 'boolean'
+    ) {
+      throw invalidUpdate('invalid_update_sbom');
+    }
+    packageIds.add(component.SPDXID);
+    if (component.SPDXID === 'SPDXRef-Package-RoomFrame') rootPackage = component;
+  }
+  if (
+    !rootPackage
+    || rootPackage.name !== 'roomframe-tv'
+    || rootPackage.versionInfo !== releaseVersion
+    || rootPackage.filesAnalyzed !== false
+    || !Array.isArray(rootPackage.checksums)
+    || !rootPackage.checksums.some(
+      (checksum) => checksum?.algorithm === 'SHA256'
+        && checksum?.checksumValue === serverArchiveSha256,
+    )
+    || !Array.isArray(document.documentDescribes)
+    || !document.documentDescribes.includes('SPDXRef-Package-RoomFrame')
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !Array.isArray(document.relationships)
+    || document.relationships.length < 1
+    || document.relationships.length > 20_000
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  const knownIds = new Set([...packageIds, 'SPDXRef-DOCUMENT']);
+  let describesRoomFrame = false;
+  for (const relationship of document.relationships) {
+    if (
+      !relationship
+      || typeof relationship !== 'object'
+      || !knownIds.has(relationship.spdxElementId)
+      || !knownIds.has(relationship.relatedSpdxElement)
+      || typeof relationship.relationshipType !== 'string'
+      || !/^[A-Z][A-Z0-9_]{1,80}$/.test(relationship.relationshipType)
+    ) {
+      throw invalidUpdate('invalid_update_sbom');
+    }
+    if (
+      relationship.spdxElementId === 'SPDXRef-DOCUMENT'
+      && relationship.relatedSpdxElement === 'SPDXRef-Package-RoomFrame'
+      && relationship.relationshipType === 'DESCRIBES'
+    ) {
+      describesRoomFrame = true;
+    }
+  }
+  if (!describesRoomFrame) throw invalidUpdate('invalid_update_sbom');
+};
+
 const currentArchitecture = () => ({ x64: 'amd64', arm64: 'arm64' })[process.arch] ?? process.arch;
 
 export const verifyUpdateBundle = async ({
@@ -245,6 +379,12 @@ export const verifyUpdateBundle = async ({
     const signatureBytes = decodeSignature(await readEntryBuffer(archive, signatureEntry, SIGNATURE_LIMIT));
     const manifest = parseJsonWithUniqueKeys(manifestBytes);
     validators.assertUpdateBundle(manifest);
+    if (
+      manifest.source
+      && manifest.source.ref !== `refs/tags/v${manifest.version}`
+    ) {
+      throw invalidUpdate('update_source_ref_mismatch');
+    }
 
     const keyId = manifest.signature.keyId;
     const trustRoot = path.resolve(trustDir);
@@ -283,6 +423,8 @@ export const verifyUpdateBundle = async ({
     }
 
     const artifactPaths = new Set();
+    const serverArtifacts = [];
+    const sbomArtifacts = [];
     for (const artifact of manifest.artifacts) {
       if (artifactPaths.has(artifact.path)) throw invalidUpdate('duplicate_update_artifact');
       artifactPaths.add(artifact.path);
@@ -293,12 +435,28 @@ export const verifyUpdateBundle = async ({
       if (actual.size !== artifact.size || actual.sha256 !== artifact.sha256) {
         throw invalidUpdate('update_artifact_hash_mismatch');
       }
+      if (artifact.kind === 'server-archive') serverArtifacts.push(artifact);
+      if (artifact.kind === 'sbom-spdx') sbomArtifacts.push({ artifact, entry });
     }
 
     for (const [name] of entries) {
       if (name.endsWith('/')) continue;
       if (name === 'manifest.json' || name === 'manifest.sig') continue;
       if (!artifactPaths.has(name)) throw invalidUpdate('unlisted_update_artifact');
+    }
+    if (sbomArtifacts.length > 1) throw invalidUpdate('multiple_update_sboms');
+    if (manifest.source && sbomArtifacts.length !== 1) {
+      throw invalidUpdate('update_supply_chain_incomplete');
+    }
+    if (sbomArtifacts.length === 1) {
+      if (serverArtifacts.length !== 1) {
+        throw invalidUpdate('update_sbom_server_archive_ambiguous');
+      }
+      validateSpdxSbom({
+        value: await readEntryBuffer(archive, sbomArtifacts[0].entry, SBOM_LIMIT),
+        releaseVersion: manifest.version,
+        serverArchiveSha256: serverArtifacts[0].sha256,
+      });
     }
 
     return {

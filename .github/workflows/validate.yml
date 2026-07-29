@@ -22,6 +22,7 @@ jobs:
           sudo ./scripts/test-backup-encryption.sh
           sudo ./scripts/test-backup-verify-e2e.sh
           sudo ./scripts/test-discovery.sh
+          ./scripts/test-supply-chain.sh
       - name: Smoke-test installer idempotence
         run: |
           test_root="$(mktemp -d)"

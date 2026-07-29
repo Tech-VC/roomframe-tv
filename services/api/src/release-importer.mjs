@@ -14,6 +14,31 @@ const conflict = () => Object.assign(
 
 const publicArtifact = ({ storagePath: _storagePath, ...artifact }) => artifact;
 
+const verifyGithubProvenance = (manifest, sourceDetails) => {
+  if (sourceDetails.provider !== 'github') return;
+  const source = manifest.source;
+  const repository = String(sourceDetails.repository ?? '').toLowerCase();
+  const tagName = String(sourceDetails.tagName ?? '');
+  if (
+    !source
+    || source.provider !== 'github'
+    || source.repository !== repository
+    || tagName !== `v${manifest.version}`
+    || source.ref !== `refs/tags/${tagName}`
+  ) {
+    throw Object.assign(
+      new Error('github_update_provenance_mismatch'),
+      { statusCode: 422 },
+    );
+  }
+  if (manifest.artifacts.filter((artifact) => artifact.kind === 'sbom-spdx').length !== 1) {
+    throw Object.assign(
+      new Error('github_update_sbom_required'),
+      { statusCode: 422 },
+    );
+  }
+};
+
 const releaseResult = (row, alreadyImported, fallbackArtifacts = []) => ({
   releaseId: row.id,
   version: row.version,
@@ -42,6 +67,12 @@ export const importReleaseBundle = async ({
       currentVersion: config.version,
       allowNonNewer: true,
     });
+  } catch (error) {
+    await unlink(source).catch(() => {});
+    throw error;
+  }
+  try {
+    verifyGithubProvenance(verified.manifest, sourceDetails);
   } catch (error) {
     await unlink(source).catch(() => {});
     throw error;
@@ -81,6 +112,12 @@ export const importReleaseBundle = async ({
     compatibility: 'valid',
     dataPreservation: true,
     apkArtifacts,
+    supplyChain: {
+      signedSource: verified.manifest.source ?? null,
+      sbom: verified.manifest.artifacts.find(
+        (artifact) => artifact.kind === 'sbom-spdx',
+      ) ?? null,
+    },
     source: sourceDetails,
   };
 

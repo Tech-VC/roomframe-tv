@@ -873,6 +873,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
 
   const updateFixture = await buildTestUpdate(path.join(temporary, 'api-update'), {
     includeHomeApk: true,
+    includeSupplyChain: true,
     serverArtifactKind: 'server-archive',
   });
   await mkdir(config.updateTrustDir, { recursive: true, mode: 0o700 });
@@ -993,6 +994,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     {
       version: '0.3.2',
       keyId: 'dev-auto-github',
+      includeSupplyChain: true,
       serverArtifactKind: 'server-archive',
     },
   );
@@ -1000,13 +1002,39 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     githubAutoFixture.publicKeyPath,
     path.join(config.updateTrustDir, 'dev-auto-github.pem'),
   );
+  const githubWrongProvenance = path.join(
+    temporary,
+    'github-wrong-provenance.rfupdate',
+  );
+  await copyFile(githubAutoFixture.bundlePath, githubWrongProvenance);
+  await assert.rejects(
+    importReleaseBundle({
+      pool,
+      config,
+      validators,
+      source: githubWrongProvenance,
+      actor: { actorType: 'system' },
+      sourceDetails: {
+        provider: 'github',
+        repository: 'other/roomframe',
+        tagName: 'v0.3.2',
+      },
+    }),
+    /github_update_provenance_mismatch/,
+  );
   const githubAutoRelease = await importReleaseBundle({
     pool,
     config,
     validators,
     source: githubAutoFixture.bundlePath,
     actor: { actorType: 'system' },
-    sourceDetails: { provider: 'github', externalReleaseId: 6001, externalAssetId: 6002 },
+    sourceDetails: {
+      provider: 'github',
+      repository: 'example/roomframe',
+      tagName: 'v0.3.2',
+      externalReleaseId: 6001,
+      externalAssetId: 6002,
+    },
   });
   const manualNewerFixture = await buildTestUpdate(
     path.join(temporary, 'api-update-manual-newer'),
@@ -1037,6 +1065,29 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   const automaticQueueSql = await readFile(
     path.join(root, 'database/queries/queue_automatic_server_update.sql'),
     'utf8',
+  );
+  const githubSupplyChain = await pool.query(
+    'SELECT verification FROM release_history WHERE id = $1',
+    [githubAutoRelease.releaseId],
+  );
+  await pool.query(
+    `UPDATE release_history
+     SET verification = verification - 'supplyChain'
+     WHERE id = $1`,
+    [githubAutoRelease.releaseId],
+  );
+  await pool.query(automaticQueueSql);
+  const legacyGithubAutomaticRequest = await pool.query(
+    'SELECT count(*) AS count FROM server_update_requests WHERE release_id = $1',
+    [githubAutoRelease.releaseId],
+  );
+  assert.equal(legacyGithubAutomaticRequest.rows[0].count, '0');
+  await pool.query(
+    'UPDATE release_history SET verification = $2::jsonb WHERE id = $1',
+    [
+      githubAutoRelease.releaseId,
+      JSON.stringify(githubSupplyChain.rows[0].verification),
+    ],
   );
   await pool.query(automaticQueueSql);
   const automaticRequest = await pool.query(

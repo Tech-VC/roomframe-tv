@@ -127,6 +127,13 @@ const parseCandidate = (release, repository, maximumBytes) => {
     ))
     : [];
   if (assets.length === 0) return null;
+  const tagName = String(release?.tag_name ?? '');
+  if (
+    tagName.length > 160
+    || !/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(tagName)
+  ) {
+    throw controlledError('invalid_github_release_tag', 422);
+  }
   if (assets.length !== 1) throw controlledError('ambiguous_rfupdate_assets', 422);
   const asset = assets[0];
   const assetId = safeInteger(asset.id, 'invalid_github_asset_id');
@@ -150,7 +157,7 @@ const parseCandidate = (release, repository, maximumBytes) => {
   return {
     release: {
       id: releaseId,
-      tagName: String(release.tag_name ?? '').slice(0, 160),
+      tagName,
       prerelease: Boolean(release.prerelease),
       publishedAt: release.published_at ?? null,
     },
@@ -432,6 +439,7 @@ export const pollGithubUpdates = async ({
         provider: 'github',
         repository,
         channel,
+        tagName: candidate.release.tagName,
         releaseId: candidate.release.id,
         assetId: candidate.asset.id,
         assetName: candidate.asset.name,

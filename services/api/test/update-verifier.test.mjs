@@ -62,6 +62,41 @@ test('un .rfupdate Ed25519 valide est accepté et les altérations sont refusée
   );
 });
 
+test('un SBOM SPDX signé décrit exactement la source et l’archive serveur', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roomframe-sbom-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const valid = await buildTestUpdate(path.join(directory, 'valid'), {
+    includeSupplyChain: true,
+    serverArtifactKind: 'server-archive',
+  });
+  const verified = await verifyUpdateBundle({
+    file: valid.bundlePath,
+    validators,
+    trustDir: path.dirname(valid.publicKeyPath),
+    currentVersion: '0.3.0',
+  });
+  assert.equal(verified.manifest.source.repository, 'example/roomframe');
+  assert.equal(
+    verified.manifest.artifacts.filter((artifact) => artifact.kind === 'sbom-spdx').length,
+    1,
+  );
+
+  const invalid = await buildTestUpdate(path.join(directory, 'invalid'), {
+    includeSupplyChain: true,
+    invalidSbom: true,
+    serverArtifactKind: 'server-archive',
+  });
+  await assert.rejects(
+    verifyUpdateBundle({
+      file: invalid.bundlePath,
+      validators,
+      trustDir: path.dirname(invalid.publicKeyPath),
+      currentVersion: '0.3.0',
+    }),
+    /invalid_update_sbom/,
+  );
+});
+
 test('la quarantaine remplace une copie corrompue ou un lien symbolique', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'roomframe-update-quarantine-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

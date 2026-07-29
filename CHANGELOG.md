@@ -1,5 +1,18 @@
 # Changelog
 
+## Évolutions du jalon 0.3.0
+
+- sauvegardes chiffrées en flux avec `age`, trousseau de reprise, rétention
+  quotidienne/hebdomadaire et restauration PostgreSQL isolée ;
+- découverte locale `_roomframe._tcp` contrôlée, manifeste ECDSA P-256 et
+  fallback FQDN/IP dans le client Android 12 ;
+- source Git signée et SBOM SPDX 2.3 embarqué dans les `.rfupdate`, avec refus
+  des imports GitHub dont le dépôt ou le tag divergent ;
+- attestations GitHub/Sigstore de provenance SLSA et de SBOM ajoutées aux
+  releases publiques, sans les rendre nécessaires aux imports hors ligne ;
+- restauration PostgreSQL de test stabilisée en attendant la fin du serveur
+  d’initialisation temporaire de l’image Docker.
+
 ## 0.3.0 — 2026-07-25
 
 Premier jalon serveur/admin exécutable :

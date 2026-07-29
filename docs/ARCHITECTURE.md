@@ -36,7 +36,7 @@ API + worker + poller ── runtime ─────── données applicatives
 
 Poller GitHub ── HTTPS sortant ── release `.rfupdate`
       │
-      ├── vérificateur Ed25519 commun
+      ├── Ed25519 + source Git + SBOM SPDX communs
       └── releases vérifiées + historique PostgreSQL
 
 Administration ── demande SQL sans privilège ── PostgreSQL

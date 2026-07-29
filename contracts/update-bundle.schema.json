@@ -17,6 +17,26 @@
       "uniqueItems": true,
       "items": {"enum": ["amd64", "arm64"]}
     },
+    "source": {
+      "type": "object",
+      "required": ["provider", "repository", "revision", "ref"],
+      "properties": {
+        "provider": {"const": "github"},
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9_.-]{0,99})/[a-z0-9](?:[a-z0-9_.-]{0,99})$"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}(?:[a-f0-9]{24})?$"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^refs/tags/v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+        }
+      },
+      "additionalProperties": false
+    },
     "signature": {
       "type": "object",
       "required": ["algorithm", "keyId"],
@@ -37,7 +57,7 @@
           "path": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$"},
           "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
           "size": {"type": "integer", "minimum": 0, "maximum": 4294967296},
-          "kind": {"enum": ["agent-apk", "home-apk", "server-archive", "oci-images", "migration", "compose-lock"]},
+          "kind": {"enum": ["agent-apk", "home-apk", "server-archive", "oci-images", "migration", "compose-lock", "sbom-spdx"]},
           "packageName": {
             "type": "string",
             "pattern": "^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$"

@@ -12,6 +12,8 @@ secrets/
 backups/
 media/
 node_modules/
+__pycache__/
+*.pyc
 .gradle/
 .kotlin/
 **/build/
