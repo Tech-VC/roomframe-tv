@@ -1,5 +1,7 @@
 package org.roomframe.tv.adapters
 
+import android.content.Context
+
 /**
  * Une capacité inconnue ou non supportée n'est jamais présentée comme un succès.
  * Les adaptateurs constructeur seront ajoutés dans des modules séparés après test matériel.
@@ -13,6 +15,7 @@ enum class CapabilityState {
 
 sealed interface AdapterResult {
     data object Success : AdapterResult
+    data class Pending(val reason: String) : AdapterResult
     data class Unavailable(val reason: String) : AdapterResult
     data class Failure(val reason: String) : AdapterResult
 }
@@ -83,6 +86,14 @@ data class DeviceAdapters(
             airPlay = UnsupportedAirPlayAdapter,
             power = UnsupportedPowerAdapter,
             appUpdate = UnsupportedAppUpdateAdapter,
+        )
+
+        fun forAndroid(context: Context): DeviceAdapters = DeviceAdapters(
+            hdmi = UnsupportedHdmiAdapter,
+            cast = UnsupportedCastAdapter,
+            airPlay = UnsupportedAirPlayAdapter,
+            power = UnsupportedPowerAdapter,
+            appUpdate = AndroidPackageInstallerAdapter(context.applicationContext),
         )
     }
 }

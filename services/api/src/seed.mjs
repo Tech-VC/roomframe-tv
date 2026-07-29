@@ -115,6 +115,10 @@ export const initializeEmptyInstance = async ({
     branding: {
       primary: payload.branding.primary,
       accent: payload.branding.accent,
+      surface: payload.branding.surface,
+      ink: payload.branding.ink,
+      muted: payload.branding.muted,
+      fontPreset: payload.branding.fontPreset,
       logoAssetId: null,
       defaultGreeting: payload.defaultGreeting,
       defaultLogoPlacement: 'bottom-right',

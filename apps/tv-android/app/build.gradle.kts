@@ -7,19 +7,27 @@ android {
     namespace = "org.roomframe.tv"
     compileSdk = 35
 
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
     defaultConfig {
         applicationId = "org.roomframe.tv"
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 8
+        versionName = "0.3.5"
     }
 
-    buildFeatures { viewBinding = true }
     buildTypes { release { isMinifyEnabled = true } }
 }
 
+kotlin {
+    jvmToolchain(17)
+}
+
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260522")
 }

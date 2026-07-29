@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import sharp from 'sharp';
 import { withTransaction } from './database.mjs';
+import { generateTransparentLogoVariant } from './logo-transparency.mjs';
 import { ensureStorageCapacity } from './media.mjs';
 
 const MAX_JOB_ATTEMPTS = 3;
@@ -139,14 +140,19 @@ const processImage = async (job, config) => {
   const metadata = await source.metadata();
   const thumbnail = path.join(destination, 'thumbnail.webp');
   const fullHd = path.join(destination, '1080p.webp');
+  const logo = path.join(destination, 'logo.webp');
   await source.clone().resize(480, 270, { fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 78 }).toFile(thumbnail);
   await source.clone().resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 86 }).toFile(fullHd);
+  const logoTransparency = await generateTransparentLogoVariant(job.input_path, logo);
   const variants = {
     thumbnail: await describeFile(config, thumbnail, 'image/webp'),
     '1080p': await describeFile(config, fullHd, 'image/webp'),
   };
+  if (logoTransparency.generated) {
+    variants.logo = await describeFile(config, logo, 'image/webp');
+  }
   if ((metadata.width ?? 0) > 1920 || (metadata.height ?? 0) > 1080) {
     const ultraHd = path.join(destination, '4k.webp');
     await source.clone().resize(3840, 2160, { fit: 'inside', withoutEnlargement: true })
@@ -158,7 +164,11 @@ const processImage = async (job, config) => {
     width: metadata.width ?? null,
     height: metadata.height ?? null,
     durationMs: null,
-    metadata: { format: metadata.format, hasAlpha: Boolean(metadata.hasAlpha) },
+    metadata: {
+      format: metadata.format,
+      hasAlpha: Boolean(metadata.hasAlpha),
+      logoTransparency,
+    },
   };
 };
 

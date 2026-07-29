@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/discovery.schema.json",
+  "title": "RoomFrame signed local discovery descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "formatVersion",
+    "serviceType",
+    "path",
+    "origin",
+    "fallbackOrigin",
+    "host",
+    "ipv4",
+    "port",
+    "serverCaFingerprintSha256",
+    "generatedAt",
+    "signing"
+  ],
+  "properties": {
+    "formatVersion": {
+      "const": 1
+    },
+    "serviceType": {
+      "const": "_roomframe._tcp"
+    },
+    "path": {
+      "const": "/api/v1/discovery"
+    },
+    "origin": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "fallbackOrigin": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://"
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253
+    },
+    "ipv4": {
+      "type": "string",
+      "format": "ipv4"
+    },
+    "port": {
+      "const": 443
+    },
+    "serverCaFingerprintSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "publicKeySpki",
+        "publicKeyFingerprintSha256",
+        "signature"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "ECDSA-P256-SHA256"
+        },
+        "publicKeySpki": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{80,200}$"
+        },
+        "publicKeyFingerprintSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{80,120}$"
+        }
+      }
+    }
+  }
+}

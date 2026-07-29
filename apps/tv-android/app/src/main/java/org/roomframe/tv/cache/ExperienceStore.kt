@@ -1,24 +1,69 @@
 package org.roomframe.tv.cache
 
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class RevisionAsset(
     val relativePath: String,
-    val bytes: ByteArray,
     val sha256: String,
-)
+    val size: Long,
+    val bytes: ByteArray? = null,
+    val sourceFile: File? = null,
+    val deleteSourceAfterUse: Boolean = false,
+) {
+    init {
+        require((bytes != null) xor (sourceFile != null)) { "Une seule source d'asset est requise" }
+        require(size >= 0) { "Taille d'asset invalide" }
+        if (bytes != null) require(bytes.size.toLong() == size) { "Taille d'asset incohérente" }
+    }
+
+    fun openStream(): InputStream = bytes?.inputStream() ?: FileInputStream(requireNotNull(sourceFile))
+
+    fun cleanup() {
+        if (deleteSourceAfterUse) sourceFile?.delete()
+    }
+
+    companion object {
+        fun fromBytes(relativePath: String, bytes: ByteArray, sha256: String): RevisionAsset =
+            RevisionAsset(
+                relativePath = relativePath,
+                sha256 = sha256,
+                size = bytes.size.toLong(),
+                bytes = bytes,
+            )
+
+        fun fromFile(
+            relativePath: String,
+            sourceFile: File,
+            sha256: String,
+            size: Long,
+            deleteSourceAfterUse: Boolean = true,
+        ): RevisionAsset = RevisionAsset(
+            relativePath = relativePath,
+            sha256 = sha256,
+            size = size,
+            sourceFile = sourceFile,
+            deleteSourceAfterUse = deleteSourceAfterUse,
+        )
+    }
+}
 
 data class RevisionPackage(
     val revisionId: String,
     val manifestBytes: ByteArray,
     val manifestSha256: String,
     val assets: List<RevisionAsset>,
-)
+) {
+    fun cleanupTemporaryAssets() = assets.forEach(RevisionAsset::cleanup)
+}
 
 data class ActiveRevision(
     val revisionId: String,
@@ -44,43 +89,88 @@ class FileExperienceStore(
     private val activePointer = File(root, "active")
     private val previousPointer = File(root, "previous")
 
+    @Synchronized
     override fun loadActive(): ActiveRevision? {
-        val revisionId = activePointer.takeIf(File::isFile)?.readText(StandardCharsets.UTF_8)?.trim()
-            ?.takeIf(::isSafeRevisionId) ?: return null
-        val directory = File(revisions, revisionId)
-        return directory.takeIf(File::isDirectory)?.let { ActiveRevision(revisionId, it) }
+        loadPointer(activePointer)?.let { revisionId ->
+            val directory = File(revisions, revisionId)
+            if (verifyRevisionDirectory(directory)) return ActiveRevision(revisionId, directory)
+        }
+        loadPointer(previousPointer)?.let { revisionId ->
+            val directory = File(revisions, revisionId)
+            if (verifyRevisionDirectory(directory)) {
+                writePointer(activePointer, revisionId)
+                return ActiveRevision(revisionId, directory)
+            }
+        }
+        return null
     }
 
     @Synchronized
-    override fun stageAndActivate(revision: RevisionPackage): ActiveRevision {
+    override fun stageAndActivate(revision: RevisionPackage): ActiveRevision =
+        try {
+            stageVerifiedRevision(revision)
+        } finally {
+            revision.cleanupTemporaryAssets()
+        }
+
+    private fun stageVerifiedRevision(revision: RevisionPackage): ActiveRevision {
         require(isSafeRevisionId(revision.revisionId)) { "Identifiant de révision invalide" }
         verifyHash(revision.manifestBytes, revision.manifestSha256, "manifest")
         revisions.mkdirs()
 
         val staging = File(revisions, "${revision.revisionId}.staging")
-        check(!staging.exists()) { "Un staging existe déjà pour cette révision" }
-        check(!File(revisions, revision.revisionId).exists()) { "Cette révision existe déjà" }
+        if (staging.exists()) {
+            require(staging.canonicalFile.parentFile == revisions.canonicalFile) { "Staging invalide" }
+            check(staging.deleteRecursively()) { "Impossible de nettoyer le staging incomplet" }
+        }
+        val finalDirectory = File(revisions, revision.revisionId)
+        if (finalDirectory.exists()) {
+            check(verifyRevisionDirectory(finalDirectory)) { "Révision existante invalide" }
+            activate(finalDirectory.name)
+            pruneRevisions()
+            return ActiveRevision(revision.revisionId, finalDirectory)
+        }
         check(staging.mkdirs()) { "Impossible de créer le staging" }
 
         try {
             writeDurable(File(staging, "manifest.json"), revision.manifestBytes)
+            writeDurable(
+                File(staging, "manifest.sha256"),
+                "${revision.manifestSha256}\n".toByteArray(StandardCharsets.UTF_8),
+            )
             revision.assets.forEach { asset ->
                 val target = safeAssetTarget(staging, asset.relativePath)
-                verifyHash(asset.bytes, asset.sha256, asset.relativePath)
                 target.parentFile?.mkdirs()
-                writeDurable(target, asset.bytes)
+                writeAssetDurable(target, asset)
             }
+            check(verifyRevisionDirectory(staging)) { "Révision staging invalide" }
 
-            val finalDirectory = File(revisions, revision.revisionId)
             Files.move(staging.toPath(), finalDirectory.toPath(), StandardCopyOption.ATOMIC_MOVE)
-
-            val previousId = loadActive()?.revisionId
-            if (previousId != null) writePointer(previousPointer, previousId)
-            writePointer(activePointer, revision.revisionId)
+            activate(revision.revisionId)
+            pruneRevisions()
             return ActiveRevision(revision.revisionId, finalDirectory)
         } catch (error: Throwable) {
             staging.deleteRecursively()
             throw error
+        }
+    }
+
+    private fun activate(revisionId: String) {
+        val previousId = loadPointer(activePointer)
+        if (previousId != null && previousId != revisionId) writePointer(previousPointer, previousId)
+        writePointer(activePointer, revisionId)
+    }
+
+    private fun pruneRevisions() {
+        val keep = setOfNotNull(loadPointer(activePointer), loadPointer(previousPointer))
+        val canonicalRoot = revisions.canonicalFile
+        revisions.listFiles().orEmpty().forEach { candidate ->
+            if (candidate.name in keep) return@forEach
+            if (Files.isSymbolicLink(candidate.toPath())) {
+                candidate.delete()
+            } else if (candidate.canonicalFile.parentFile == canonicalRoot) {
+                candidate.deleteRecursively()
+            }
         }
     }
 
@@ -112,13 +202,84 @@ class FileExperienceStore(
         }
     }
 
+    private fun writeAssetDurable(target: File, asset: RevisionAsset) {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var written = 0L
+        asset.openStream().use { input ->
+            FileOutputStream(target).use { output ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    written += read
+                    require(written <= asset.size) { "Asset plus grand que prévu : ${asset.relativePath}" }
+                    digest.update(buffer, 0, read)
+                    output.write(buffer, 0, read)
+                }
+                output.fd.sync()
+            }
+        }
+        require(written == asset.size) { "Taille incorrecte pour ${asset.relativePath}" }
+        require(digest.digest().hex() == asset.sha256) { "SHA-256 incorrect pour ${asset.relativePath}" }
+    }
+
     private fun verifyHash(bytes: ByteArray, expected: String, label: String) {
         require(expected.matches(Regex("^[a-f0-9]{64}$"))) { "SHA-256 invalide pour $label" }
-        val actual = MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { "%02x".format(it) }
+        val actual = MessageDigest.getInstance("SHA-256").digest(bytes).hex()
         require(actual == expected) { "SHA-256 incorrect pour $label" }
     }
 
+    private fun verifyRevisionDirectory(directory: File): Boolean = runCatching {
+        require(directory.isDirectory)
+        val manifestFile = File(directory, "manifest.json")
+        val hashFile = File(directory, "manifest.sha256")
+        require(manifestFile.isFile && manifestFile.length() in 1..MAX_MANIFEST_BYTES)
+        require(hashFile.isFile && hashFile.length() in 64..66)
+        val expectedManifestHash = hashFile.readText(StandardCharsets.UTF_8).trim()
+        require(expectedManifestHash.matches(Regex("^[a-f0-9]{64}$")))
+        val manifestBytes = manifestFile.readBytes()
+        verifyHash(manifestBytes, expectedManifestHash, "manifest")
+        val manifest = JSONObject(manifestBytes.toString(StandardCharsets.UTF_8))
+        verifyEntries(directory, manifest.optJSONArray("documents") ?: JSONArray())
+        verifyEntries(directory, manifest.optJSONArray("assets") ?: JSONArray())
+        true
+    }.getOrDefault(false)
+
+    private fun verifyEntries(directory: File, entries: JSONArray) {
+        require(entries.length() <= MAX_MANIFEST_ENTRIES) { "Trop d'entrées de manifeste" }
+        repeat(entries.length()) { index ->
+            val entry = entries.getJSONObject(index)
+            val relativePath = entry.getString("path")
+            val expectedHash = entry.getString("sha256")
+            val expectedSize = entry.getLong("size")
+            require(expectedSize >= 0)
+            val file = safeAssetTarget(directory, relativePath)
+            require(file.isFile && file.length() == expectedSize) { "Asset de révision absent" }
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            require(digest.digest().hex() == expectedHash) { "Asset de révision corrompu" }
+        }
+    }
+
+    private fun loadPointer(pointer: File): String? =
+        pointer.takeIf(File::isFile)
+            ?.readText(StandardCharsets.UTF_8)
+            ?.trim()
+            ?.takeIf(::isSafeRevisionId)
+
+    private fun ByteArray.hex(): String = joinToString("") { "%02x".format(it) }
+
     private fun isSafeRevisionId(value: String): Boolean = value.matches(Regex("^[A-Za-z0-9._-]{1,120}$"))
+
+    private companion object {
+        const val MAX_MANIFEST_BYTES = 2L * 1024 * 1024
+        const val MAX_MANIFEST_ENTRIES = 1_020
+    }
 }

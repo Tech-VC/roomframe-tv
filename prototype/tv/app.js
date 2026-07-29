@@ -1,5 +1,5 @@
-import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js";
-import { bytesToHex, normalizeSyncPayload, stableStringify, variantRank } from "./sync-format.js";
+import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js?v=0.3.0-ui9";
+import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js?v=0.3.0-ui9";
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
@@ -25,10 +25,10 @@ const bundledRevision = {
       width: 1920,
       height: 1080,
       renderTarget: "1080p",
-      background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5 },
+      background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5, blur: 0 },
     },
     nodes: [
-      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue dans cette salle", role: "greeting", fontScale: 1, maxLines: 3 } },
+      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue en salle de réunion 1", role: "greeting", fontScale: 1, maxLines: 1 } },
       { id: "clock", kind: "clock", x: 1320, y: 58, width: 500, height: 90, zIndex: 20, focusOrder: 0, props: { showDate: false, showWeather: true, format: "24h" } },
       { id: "airplay", kind: "source", x: 90, y: 485, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
       { id: "cast", kind: "source", x: 90, y: 625, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
@@ -61,28 +61,9 @@ const revokeObjectUrls = () => {
 };
 
 const assetResolver = (revision) => {
-  const map = new Map();
-  const aliasRanks = new Map();
-  for (const asset of revision.assets ?? []) {
-    if (asset.blob instanceof Blob) {
-      const url = URL.createObjectURL(asset.blob);
-      objectUrls.push(url);
-      map.set(asset.key, url);
-      const aliases = asset.aliases ?? [asset.assetId, asset.sha256].filter(Boolean);
-      for (const alias of aliases) {
-        const rank = variantRank(asset.variant);
-        if (!map.has(alias) || rank > (aliasRanks.get(alias) ?? -1)) {
-          map.set(alias, url);
-          aliasRanks.set(alias, rank);
-        }
-      }
-    }
-  }
-  return (key) => {
-    if (!key) return null;
-    if (/^(blob:|https?:|\/)/.test(key)) return key;
-    return map.get(key) ?? map.get(String(key).replace(/^assets\//, "")) ?? key;
-  };
+  const indexed = createAssetResolver(revision.assets);
+  objectUrls.push(...indexed.createdObjectUrls);
+  return indexed.resolve;
 };
 
 const nodeText = (node) => {
@@ -92,6 +73,13 @@ const nodeText = (node) => {
   if (node.kind === "clock") return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", hour12: node.props?.format === "12h" }).format(new Date());
   if (node.kind === "weather") return node.props?.label ?? "Météo";
   return node.props?.label ?? node.kind;
+};
+
+const sourceGlyph = (source) => {
+  const normalized = ["airplay", "cast", "hdmi"].includes(source) ? source : "app";
+  const glyph = make("span", `source-glyph ${normalized}`);
+  glyph.setAttribute("aria-hidden", "true");
+  return glyph;
 };
 
 const renderRevision = (revision) => {
@@ -104,14 +92,22 @@ const renderRevision = (revision) => {
   const background = scene.canvas?.background ?? {};
   const backgroundUrl = resolveAsset(background.assetId ?? background.asset);
   const backgroundElement = $("#background");
+  const branding = revision.documents?.branding ?? {};
+  if (/^#[0-9a-f]{6}$/i.test(branding.accent ?? "")) {
+    document.documentElement.style.setProperty("--signal", branding.accent);
+  }
   backgroundElement.style.backgroundColor = background.color ?? "#132323";
   backgroundElement.style.backgroundImage = backgroundUrl ? `url("${String(backgroundUrl).replaceAll('"', "%22")}")` : "none";
   backgroundElement.style.backgroundSize = background.mode === "contain" ? "contain" : "cover";
   backgroundElement.style.backgroundPosition = `${(background.focusX ?? .5) * 100}% ${(background.focusY ?? .5) * 100}%`;
+  const blur = Math.max(0, Math.min(40, Number(background.blur ?? 0)));
+  backgroundElement.style.filter = `blur(${blur / 19.2}cqw)`;
+  backgroundElement.style.transform = `scale(${1 + blur / 240})`;
 
   const nodes = [...(scene.nodes ?? [])].sort((a, b) => a.zIndex - b.zIndex).map((node) => {
     const interactive = ["source", "app"].includes(node.kind);
-    const element = make(interactive ? "button" : "div", `node kind-${node.kind}`);
+    const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
+    const element = make(interactive ? "button" : "div", `node kind-${node.kind}${roleClass}`);
     if (interactive) {
       element.type = "button";
       element.dataset.adapter = node.props?.source ?? node.props?.applicationId ?? "unsupported";
@@ -125,7 +121,16 @@ const renderRevision = (revision) => {
     if (interactive && Number(node.focusOrder) > 0) element.tabIndex = Number(node.focusOrder);
 
     if (["logo", "image"].includes(node.kind)) {
-      const url = resolveAsset(node.props?.assetId ?? node.props?.asset);
+      const nodeAsset = node.kind === "logo"
+        && branding.logoAssetId
+        && !node.props?.assetId
+        && (!node.props?.asset || node.props?.asset === "assets/logo-placeholder.png")
+        ? branding.logoAssetId
+        : node.props?.assetId ?? node.props?.asset;
+      const url = resolveAsset(
+        nodeAsset,
+        node.kind === "logo" ? "logo" : null,
+      );
       if (url) {
         const image = make("img");
         image.src = url;
@@ -146,7 +151,15 @@ const renderRevision = (revision) => {
       }
     } else if (node.kind === "message") {
       element.append(make("strong", "", node.props?.title ?? "MESSAGES"));
-    } else element.textContent = nodeText(node);
+    } else if (node.kind === "source") {
+      element.append(
+        sourceGlyph(node.props?.source),
+        make("span", "node-text", nodeText(node)),
+        make("span", "source-action", "↗"),
+      );
+    } else {
+      element.append(make("span", "node-text", nodeText(node)));
+    }
     return element;
   });
   $("#nodeLayer").replaceChildren(...nodes);

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   appendAudit,
+  attachSessionCookie,
   clearSessionCookie,
   issueSession,
   requireCsrf,
@@ -27,7 +28,7 @@ const cleanText = (value, {
   minimum = 1,
   maximum,
 }) => {
-  const result = String(value ?? '').trim();
+  const result = String(value ?? '').replace(/\s+/gu, ' ').trim();
   if (result.length < minimum || result.length > maximum) {
     throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
   }
@@ -65,6 +66,12 @@ const normalizeBootstrapPayload = (body) => {
     branding: {
       primary: color(body.branding?.primary, '#151511'),
       accent: color(body.branding?.accent, '#ff4f1f'),
+      surface: color(body.branding?.surface, '#e7e4da'),
+      ink: color(body.branding?.ink, '#11130f'),
+      muted: color(body.branding?.muted, '#62645d'),
+      fontPreset: ['studio', 'compact', 'humanist'].includes(body.branding?.fontPreset)
+        ? body.branding.fontPreset
+        : 'studio',
     },
     policies: {
       returnHomeWhenInactiveMinutes: boundedInteger(
@@ -169,17 +176,37 @@ export const registerBootstrapAuthRoutes = ({
     `${crypto.randomBytes(32).toString('base64url')}Aa1!`,
   );
 
-  app.get('/api/v1/bootstrap/status', async () => ({
-    serverReady: true,
-    configured: await configured(pool),
-    networkManagedExternally: true,
-    server: await readServerState(config),
-    defaultExperience: {
-      bundleId: experience.manifest.bundleId,
-      version: experience.manifest.version,
-      verified: true,
-    },
-  }));
+  app.get('/api/v1/bootstrap/status', async () => {
+    const result = await pool.query(
+      'SELECT display_name, config FROM roomframe_instance WHERE singleton = true',
+    );
+    const instance = result.rows[0];
+    const branding = instance?.config?.branding ?? {};
+    return {
+      serverReady: true,
+      configured: Boolean(instance),
+      networkManagedExternally: true,
+      server: await readServerState(config),
+      identity: instance ? {
+        displayName: instance.display_name,
+        branding: {
+          primary: color(branding.primary, '#151511'),
+          accent: color(branding.accent, '#ff4f1f'),
+          surface: color(branding.surface, '#e7e4da'),
+          ink: color(branding.ink, '#11130f'),
+          muted: color(branding.muted, '#62645d'),
+          fontPreset: ['studio', 'compact', 'humanist'].includes(branding.fontPreset)
+            ? branding.fontPreset
+            : 'studio',
+        },
+      } : null,
+      defaultExperience: {
+        bundleId: experience.manifest.bundleId,
+        version: experience.manifest.version,
+        verified: true,
+      },
+    };
+  });
 
   app.post('/api/v1/bootstrap/totp', {
     config: { rateLimit: { max: 5, timeWindow: '15 minutes' } },
@@ -239,11 +266,12 @@ export const registerBootstrapAuthRoutes = ({
       };
       await client.query(
         `INSERT INTO users (
-           id, username, email, password_hash, role_id, totp_secret_encrypted, last_totp_counter
+           id, username, email, password_hash, role_id, totp_secret_encrypted,
+           last_totp_counter, webauthn_user_id
          ) VALUES (
            $1, $2, $3, $4,
            (SELECT id FROM roles WHERE slug = 'owner'),
-           $5, $6
+           $5, $6, $7
          )`,
         [
           user.id,
@@ -252,6 +280,7 @@ export const registerBootstrapAuthRoutes = ({
           passwordHash,
           JSON.stringify(encryptSecret(totpSecret, config.totpEncryptionKey)),
           totpCounter,
+          Buffer.from(user.id.replaceAll('-', ''), 'hex'),
         ],
       );
       const initialized = await initializeEmptyInstance({
@@ -270,9 +299,10 @@ export const registerBootstrapAuthRoutes = ({
         targetId: initialized.instance.instanceId,
         remoteAddress: request.ip,
       });
-      const session = await issueSession({ client, reply, config, user, request });
+      const session = await issueSession({ client, config, user, request });
       return { user, initialized, session };
     });
+    attachSessionCookie(reply, result.session);
     return reply.code(201).send({
       configured: true,
       instanceId: result.initialized.instance.instanceId,
@@ -325,7 +355,6 @@ export const registerBootstrapAuthRoutes = ({
       }
       const session = await issueSession({
         client,
-        reply,
         config,
         user: updated.rows[0],
         request,
@@ -339,6 +368,7 @@ export const registerBootstrapAuthRoutes = ({
       });
       return session;
     });
+    attachSessionCookie(reply, response);
     return {
       user: { id: user.id, username: user.username, email: user.email, role: user.role },
       csrfToken: response.csrfToken,
@@ -470,6 +500,14 @@ export const registerBootstrapAuthRoutes = ({
       await client.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1', [
         updated.rows[0].id,
       ]);
+      const revokedPasskeys = await client.query(
+        'DELETE FROM user_webauthn_credentials WHERE user_id = $1',
+        [updated.rows[0].id],
+      );
+      await client.query(
+        'DELETE FROM webauthn_challenges WHERE user_id = $1',
+        [updated.rows[0].id],
+      );
       await client.query(
         `UPDATE bootstrap_challenges
          SET used_at = now()
@@ -486,6 +524,7 @@ export const registerBootstrapAuthRoutes = ({
         targetType: 'user',
         targetId: updated.rows[0].id,
         remoteAddress: request.ip,
+        details: { revokedPasskeys: revokedPasskeys.rowCount },
       });
     });
     return { recovered: true };

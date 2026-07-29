@@ -45,7 +45,8 @@ Une mise à jour logicielle :
 
 - scène 1920 × 1080 ;
 - fond neutre optimisé ;
-- salutation ;
+- flou de fond réglable de 0 à 40 px, nul par défaut et stocké dans la scène ;
+- salutation mono-ligne, réduite automatiquement si nécessaire ;
 - heure et météo ;
 - AirPlay, Cast et HDMI ;
 - zone de messages ;
@@ -54,3 +55,7 @@ Une mise à jour logicielle :
 - retour à l’accueil après 15 minutes sans source ;
 - veille après 30 minutes sur l’accueil ;
 - exemple d’horaires présent mais désactivé jusqu’au test de capacité de la TV.
+
+Les boutons de sources utilisent les glyphes Material officiels
+`airplay`, `cast` et `settings_input_hdmi`. Leur présence décrit une action de
+la scène ; elle ne signifie pas que l’adaptateur matériel a été validé.

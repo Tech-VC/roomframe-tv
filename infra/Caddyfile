@@ -3,10 +3,29 @@
 {
   auto_https disable_redirects
   admin off
+  # Les clients TLS n'envoient pas tous un SNI pour une URL contenant une IP.
+  # Présenter alors explicitement le certificat de l'IPv4 de secours.
+  default_sni __ROOMFRAME_DEFAULT_SNI__
+  servers :443 {
+    # Une adresse IP littérale est interdite dans SNI. Caddy active sinon le
+    # contrôle SNI/Host strict dès que client_auth est présent et répond 421
+    # aux clients IP sans SNI. Les deux alias servent exactement la même
+    # application avec la même politique verify_if_given ; l'API lie ensuite
+    # chaque certificat TV vérifié à son identité, sans autorisation par Host.
+    strict_sni_host insecure_off
+  }
 }
 
 __ROOMFRAME_SITE_ADDRESSES__ {
-  tls internal
+  tls internal {
+    # L'administration partage cette origine avec les TV. Le certificat client
+    # est donc vérifié lorsqu'il est présenté, puis exigé par l'API uniquement
+    # pour les identités TV qui ont terminé leur activation.
+    client_auth {
+      mode verify_if_given
+      trust_pool file /etc/roomframe/tv-client-ca.crt
+    }
+  }
   encode zstd gzip
 
   header {
@@ -14,7 +33,7 @@ __ROOMFRAME_SITE_ADDRESSES__ {
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"
     Referrer-Policy "no-referrer"
-    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=(), publickey-credentials-create=(self), publickey-credentials-get=(self)"
     Cross-Origin-Opener-Policy "same-origin"
     Cross-Origin-Resource-Policy "same-origin"
     Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'"
@@ -22,22 +41,42 @@ __ROOMFRAME_SITE_ADDRESSES__ {
   }
 
   handle /health {
-    reverse_proxy api:8080
+    reverse_proxy api:8080 {
+      header_up -X-RoomFrame-TLS-Client-Fingerprint
+      header_up -X-RoomFrame-TLS-Client-Verified
+    }
+  }
+
+  handle /api/v1/discovery {
+    header Cache-Control "no-store"
+    header Content-Type "application/json"
+    root * /srv/discovery
+    rewrite * /manifest.json
+    file_server
   }
 
   redir /api /api/ 308
   handle /api/* {
-    reverse_proxy api:8080
+    reverse_proxy api:8080 {
+      # Les valeurs reçues du LAN sont toujours supprimées. Seul Caddy peut
+      # attester qu'un certificat a passé la validation de la CA locale.
+      header_up -X-RoomFrame-TLS-Client-Fingerprint
+      header_up -X-RoomFrame-TLS-Client-Verified
+      header_up X-RoomFrame-TLS-Client-Fingerprint {tls_client_fingerprint}
+      header_up X-RoomFrame-TLS-Client-Verified 1
+    }
   }
 
   redir /simulator /simulator/ 308
   handle_path /simulator/* {
+    header Cache-Control "no-cache"
     root * /srv/simulator
     try_files {path} /index.html
     file_server
   }
 
   handle {
+    header Cache-Control "no-cache"
     root * /srv/admin
     try_files {path} /index.html
     file_server

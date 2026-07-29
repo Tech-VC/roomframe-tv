@@ -4,11 +4,24 @@ set -Eeuo pipefail
 ROOMFRAME_VERSION="0.3.0"
 DEFAULT_ARCHIVE_URL="__ROOMFRAME_ARCHIVE_URL__"
 DEFAULT_ARCHIVE_SHA256="__ROOMFRAME_ARCHIVE_SHA256__"
+DEFAULT_UPDATE_GITHUB_REPOSITORY="__ROOMFRAME_UPDATE_GITHUB_REPOSITORY__"
 
 INSTALL_DIR="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}"
 CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
 HOST_OVERRIDE="${ROOMFRAME_HOST:-}"
+UPDATE_REPOSITORY_OVERRIDE="${ROOMFRAME_UPDATE_GITHUB_REPOSITORY:-}"
+UPDATE_REPOSITORY_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_GITHUB_REPOSITORY+x}" ]] || UPDATE_REPOSITORY_EXPLICIT=1
+UPDATE_CHANNEL_OVERRIDE="${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-}"
+UPDATE_CHANNEL_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_GITHUB_CHANNEL+x}" ]] || UPDATE_CHANNEL_EXPLICIT=1
+UPDATE_POLL_OVERRIDE="${ROOMFRAME_UPDATE_POLL_MINUTES:-}"
+UPDATE_POLL_EXPLICIT=0
+[[ -z "${ROOMFRAME_UPDATE_POLL_MINUTES+x}" ]] || UPDATE_POLL_EXPLICIT=1
+DISCOVERY_AVAHI_OVERRIDE="${ROOMFRAME_DISCOVERY_AVAHI_ENABLED:-}"
+DISCOVERY_AVAHI_EXPLICIT=0
+[[ -z "${ROOMFRAME_DISCOVERY_AVAHI_ENABLED+x}" ]] || DISCOVERY_AVAHI_EXPLICIT=1
 SOURCE_DIR=""
 NO_START=0
 
@@ -17,7 +30,10 @@ usage() {
 Installation locale de RoomFrame TV
 
 Usage:
-  sudo ./install.sh [--host roomframe.exemple.local] [--source /chemin/du/depot] [--no-start]
+  sudo ./install.sh [--host roomframe.exemple.local] [--source /chemin/du/depot]
+                    [--updates-repository owner/repo] [--updates-channel stable|preview]
+                    [--update-poll-minutes 360] [--disable-github-updates]
+                    [--enable-local-discovery|--disable-local-discovery] [--no-start]
 
 Le réseau du serveur Debian/CT doit déjà être configuré. RoomFrame détecte son
 IPv4 et son suffixe DNS, mais ne modifie ni IP, ni masque, ni passerelle, ni DNS.
@@ -35,6 +51,39 @@ while (($#)); do
       [[ $# -ge 2 ]] || { echo "Valeur manquante après --source" >&2; exit 2; }
       SOURCE_DIR="$2"
       shift 2
+      ;;
+    --updates-repository)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --updates-repository" >&2; exit 2; }
+      UPDATE_REPOSITORY_OVERRIDE="$2"
+      UPDATE_REPOSITORY_EXPLICIT=1
+      shift 2
+      ;;
+    --updates-channel)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --updates-channel" >&2; exit 2; }
+      UPDATE_CHANNEL_OVERRIDE="$2"
+      UPDATE_CHANNEL_EXPLICIT=1
+      shift 2
+      ;;
+    --update-poll-minutes)
+      [[ $# -ge 2 ]] || { echo "Valeur manquante après --update-poll-minutes" >&2; exit 2; }
+      UPDATE_POLL_OVERRIDE="$2"
+      UPDATE_POLL_EXPLICIT=1
+      shift 2
+      ;;
+    --disable-github-updates)
+      UPDATE_REPOSITORY_OVERRIDE=""
+      UPDATE_REPOSITORY_EXPLICIT=1
+      shift
+      ;;
+    --enable-local-discovery)
+      DISCOVERY_AVAHI_OVERRIDE=1
+      DISCOVERY_AVAHI_EXPLICIT=1
+      shift
+      ;;
+    --disable-local-discovery)
+      DISCOVERY_AVAHI_OVERRIDE=0
+      DISCOVERY_AVAHI_EXPLICIT=1
+      shift
       ;;
     --no-start)
       NO_START=1
@@ -127,6 +176,49 @@ normalize_host() {
     return 0
   fi
   return 1
+}
+
+is_github_repository() {
+  local value="$1"
+  [[
+    "$value" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100}$
+    && "$value" != *".."*
+    && "$value" != *.git
+  ]]
+}
+
+runtime_value() {
+  local file="$1" key="$2"
+  awk -F= -v expected="$key" '
+    $1 == expected {
+      sub(/^[^=]*=/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+github_repository_from_git() {
+  local source="$1" remote=""
+  command -v git >/dev/null 2>&1 || return 1
+  remote="$(git -C "$source" remote get-url origin 2>/dev/null || true)"
+  case "$remote" in
+    https://github.com/*)
+      remote="${remote#https://github.com/}"
+      ;;
+    git@github.com:*)
+      remote="${remote#git@github.com:}"
+      ;;
+    ssh://git@github.com/*)
+      remote="${remote#ssh://git@github.com/}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  remote="${remote%.git}"
+  is_github_repository "$remote" || return 1
+  printf '%s\n' "$remote"
 }
 
 if [[ -z "$SOURCE_DIR" && -f "$SCRIPT_DIR/compose.yaml" ]]; then
@@ -230,21 +322,65 @@ fi
 SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
 [[ -f "$SOURCE_DIR/compose.yaml" ]] || fail "compose.yaml introuvable dans $SOURCE_DIR"
 [[ -f "$SOURCE_DIR/infra/Caddyfile" ]] || fail "infra/Caddyfile introuvable dans $SOURCE_DIR"
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-update-broker.service" ]] \
+  || fail "Unité systemd du courtier d'updates absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-update-broker.timer" ]] \
+  || fail "Timer systemd du courtier d'updates absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-tv-certificate-broker.service" ]] \
+  || fail "Unité systemd du courtier de certificats TV absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" ]] \
+  || fail "Timer systemd du courtier de certificats TV absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-daily.service" ]] \
+  || fail "Unité systemd de sauvegarde quotidienne absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-daily.timer" ]] \
+  || fail "Timer systemd de sauvegarde quotidienne absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-weekly.service" ]] \
+  || fail "Unité systemd de sauvegarde hebdomadaire absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-weekly.timer" ]] \
+  || fail "Timer systemd de sauvegarde hebdomadaire absent."
+[[ -f "$SOURCE_DIR/infra/avahi/roomframe.service" ]] \
+  || fail "Modèle de découverte locale Avahi absent."
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
+[[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
+  || fail "Liste d’exclusion des sources introuvable."
+
+previous_runtime="$CONFIG_DIR/runtime.conf"
+if [[ "$DISCOVERY_AVAHI_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_DISCOVERY_AVAHI_ENABLED=' "$previous_runtime"; then
+  DISCOVERY_AVAHI_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_DISCOVERY_AVAHI_ENABLED
+  )"
+fi
+DISCOVERY_AVAHI_OVERRIDE="${DISCOVERY_AVAHI_OVERRIDE:-1}"
+[[ "$DISCOVERY_AVAHI_OVERRIDE" == "0" || "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] \
+  || fail "La découverte locale doit être activée (1) ou désactivée (0)."
+if [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" == "1" || ! -d /run/systemd/system ]]; then
+  DISCOVERY_AVAHI_OVERRIDE=0
+fi
 
 install_dependencies() {
   local need_apt=0 command_name
-  for command_name in curl openssl python3 tar ip sha256sum; do
+  for command_name in curl openssl python3 tar ip sha256sum flock age age-keygen; do
     command -v "$command_name" >/dev/null 2>&1 || need_apt=1
   done
   command -v docker >/dev/null 2>&1 || need_apt=1
+  if [[ "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] \
+    && ! command -v avahi-daemon >/dev/null 2>&1; then
+    need_apt=1
+  fi
 
   if [[ "$need_apt" -eq 1 ]]; then
     command -v apt-get >/dev/null 2>&1 || fail "Des dépendances manquent et apt-get est indisponible."
     log "Installation des dépendances système manquantes…"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils docker.io
+    local -a apt_packages
+    apt_packages=(
+      ca-certificates curl openssl python3 tar iproute2 coreutils util-linux age docker.io
+    )
+    [[ "$DISCOVERY_AVAHI_OVERRIDE" == "0" ]] \
+      || apt_packages+=(avahi-daemon)
+    apt-get install -y "${apt_packages[@]}"
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
@@ -276,6 +412,14 @@ install_dependencies() {
 
 install_dependencies
 
+INSTALL_LOCK_FILE="/run/lock/roomframe-install.lock"
+mkdir -p "$(dirname "$INSTALL_LOCK_FILE")"
+if [[ "${ROOMFRAME_MAINTENANCE_LOCK_HELD:-0}" != "1" ]]; then
+  exec 9>"$INSTALL_LOCK_FILE"
+  flock -n 9 \
+    || fail "Une installation ou mise à jour RoomFrame est déjà en cours."
+fi
+
 RUNTIME_USER="roomframe"
 if ! getent passwd "$RUNTIME_USER" >/dev/null 2>&1; then
   NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || printf '%s' /usr/sbin/nologin)"
@@ -297,12 +441,12 @@ RUNTIME_SHELL="$(getent passwd "$RUNTIME_USER" | awk -F: '{print $7}')"
   || fail "Le compte existant $RUNTIME_USER possède un shell interactif; installation refusée."
 
 SERVER_IP="$(
-  ip -4 route get 1.1.1.1 2>/dev/null \
+  { ip -4 route get 1.1.1.1 2>/dev/null || true; } \
     | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}'
 )"
 if [[ -z "$SERVER_IP" ]]; then
   SERVER_IP="$(
-    ip -o -4 addr show scope global 2>/dev/null \
+    { ip -o -4 addr show scope global 2>/dev/null || true; } \
       | awk '{sub(/\/.*/, "", $4); print $4; exit}'
   )"
 fi
@@ -366,17 +510,112 @@ elif command -v timedatectl >/dev/null 2>&1; then
 fi
 [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+/-]+$ ]] || TIMEZONE="UTC"
 
+if [[ "$UPDATE_REPOSITORY_EXPLICIT" -eq 0 ]]; then
+  if [[ -r "$previous_runtime" ]] \
+    && grep -q '^ROOMFRAME_UPDATE_GITHUB_REPOSITORY=' "$previous_runtime"; then
+    UPDATE_REPOSITORY_OVERRIDE="$(
+      runtime_value "$previous_runtime" ROOMFRAME_UPDATE_GITHUB_REPOSITORY
+    )"
+  elif [[
+    "$DEFAULT_UPDATE_GITHUB_REPOSITORY" != "__ROOMFRAME_UPDATE_GITHUB_REPOSITORY__"
+  ]]; then
+    UPDATE_REPOSITORY_OVERRIDE="$DEFAULT_UPDATE_GITHUB_REPOSITORY"
+  else
+    UPDATE_REPOSITORY_OVERRIDE="$(github_repository_from_git "$SOURCE_DIR" || true)"
+  fi
+fi
+if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
+  is_github_repository "$UPDATE_REPOSITORY_OVERRIDE" \
+    || fail "Le dépôt d'updates GitHub doit respecter owner/repo."
+fi
+
+if [[ "$UPDATE_CHANNEL_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_UPDATE_GITHUB_CHANNEL=' "$previous_runtime"; then
+  UPDATE_CHANNEL_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_UPDATE_GITHUB_CHANNEL
+  )"
+fi
+UPDATE_CHANNEL_OVERRIDE="${UPDATE_CHANNEL_OVERRIDE:-stable}"
+[[ "$UPDATE_CHANNEL_OVERRIDE" == "stable" || "$UPDATE_CHANNEL_OVERRIDE" == "preview" ]] \
+  || fail "Le canal d'updates doit être stable ou preview."
+
+if [[ "$UPDATE_POLL_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_UPDATE_POLL_MINUTES=' "$previous_runtime"; then
+  UPDATE_POLL_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_UPDATE_POLL_MINUTES
+  )"
+fi
+UPDATE_POLL_OVERRIDE="${UPDATE_POLL_OVERRIDE:-360}"
+if [[ ! "$UPDATE_POLL_OVERRIDE" =~ ^[0-9]+$ ]] \
+  || ((10#$UPDATE_POLL_OVERRIDE < 15 || 10#$UPDATE_POLL_OVERRIDE > 10080)); then
+  fail "La fréquence d'updates doit être comprise entre 15 et 10080 minutes."
+fi
+
+BACKUP_DAILY_KEEP="${ROOMFRAME_BACKUP_DAILY_KEEP:-}"
+if [[ -z "$BACKUP_DAILY_KEEP" && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_BACKUP_DAILY_KEEP=' "$previous_runtime"; then
+  BACKUP_DAILY_KEEP="$(runtime_value "$previous_runtime" ROOMFRAME_BACKUP_DAILY_KEEP)"
+fi
+BACKUP_DAILY_KEEP="${BACKUP_DAILY_KEEP:-14}"
+if [[ ! "$BACKUP_DAILY_KEEP" =~ ^[0-9]+$ ]] \
+  || ((10#$BACKUP_DAILY_KEEP < 2 || 10#$BACKUP_DAILY_KEEP > 90)); then
+  fail "La rétention quotidienne doit être comprise entre 2 et 90 sauvegardes."
+fi
+
+BACKUP_WEEKLY_KEEP="${ROOMFRAME_BACKUP_WEEKLY_KEEP:-}"
+if [[ -z "$BACKUP_WEEKLY_KEEP" && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_BACKUP_WEEKLY_KEEP=' "$previous_runtime"; then
+  BACKUP_WEEKLY_KEEP="$(runtime_value "$previous_runtime" ROOMFRAME_BACKUP_WEEKLY_KEEP)"
+fi
+BACKUP_WEEKLY_KEEP="${BACKUP_WEEKLY_KEEP:-4}"
+if [[ ! "$BACKUP_WEEKLY_KEEP" =~ ^[0-9]+$ ]] \
+  || ((10#$BACKUP_WEEKLY_KEEP < 2 || 10#$BACKUP_WEEKLY_KEEP > 26)); then
+  fail "La rétention hebdomadaire doit être comprise entre 2 et 26 sauvegardes."
+fi
+
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
-  previous_runtime="$CONFIG_DIR/runtime.conf"
   previous_backup="$INSTALL_DIR/scripts/roomframe-backup.sh"
-  if [[ ! -r "$previous_runtime" || ! -x "$previous_backup" ]]; then
+  previous_verify="$INSTALL_DIR/scripts/roomframe-verify-backup.sh"
+  if [[ ! -r "$previous_runtime" || ! -x "$previous_backup" || ! -x "$previous_verify" ]]; then
     fail "Des données PostgreSQL existent mais l'outil de sauvegarde RoomFrame est absent; mise à jour refusée."
   fi
-  log "Sauvegarde pré-migration de l'instance existante…"
-  ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
-  ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
-    "$previous_backup"
+  if [[ -n "${ROOMFRAME_PREVERIFIED_BACKUP:-}" ]]; then
+    [[ "${ROOMFRAME_MAINTENANCE_LOCK_HELD:-0}" == "1" ]] \
+      || fail "Une sauvegarde pré-vérifiée n'est acceptée que par le moteur de maintenance verrouillé."
+    backup_root_real="$(realpath -e "$DATA_DIR/backups")"
+    preverified_real="$(realpath -e "$ROOMFRAME_PREVERIFIED_BACKUP")"
+    [[
+      "$(dirname "$preverified_real")" == "$backup_root_real"
+      && "$(basename "$preverified_real")" =~ ^[0-9]{8}T[0-9]{6}Z$
+    ]] || fail "Le point de retour pré-vérifié doit être un enfant direct du répertoire de sauvegardes."
+    log "Nouvelle vérification du point de retour pré-migration…"
+    ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+    ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+      "$previous_verify" "$preverified_real"
+  else
+    log "Sauvegarde pré-migration de l'instance existante…"
+    backup_output="$(
+      ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+      ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+      ROOMFRAME_MAINTENANCE_LOCK_HELD=1 \
+        "$previous_backup"
+    )"
+    printf '%s\n' "$backup_output"
+    pre_migration_backup="$(
+      sed -n \
+        -e 's/^ROOMFRAME_BACKUP_PATH=//p' \
+        -e 's/^Sauvegarde chiffrée terminée: //p' \
+        -e 's/^Sauvegarde terminée: //p' \
+        <<<"$backup_output" | tail -n 1
+    )"
+    [[ -n "$pre_migration_backup" && -d "$pre_migration_backup" ]] \
+      || fail "La sauvegarde pré-migration n'a pas produit de chemin exploitable."
+    log "Vérification isolée du point de retour pré-migration…"
+    ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+    ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+      "$previous_verify" "$pre_migration_backup"
+  fi
 fi
 
 log "Copie non destructive du code…"
@@ -384,16 +623,7 @@ mkdir -p "$INSTALL_DIR"
 INSTALL_DIR="$(cd -- "$INSTALL_DIR" && pwd)"
 if [[ "$SOURCE_DIR" != "$INSTALL_DIR" ]]; then
   tar \
-    --exclude='.git' \
-    --exclude='.env*' \
-    --exclude='*/.env*' \
-    --exclude='node_modules' \
-    --exclude='*/node_modules' \
-    --exclude='.gradle' \
-    --exclude='*/.gradle' \
-    --exclude='build' \
-    --exclude='*/build' \
-    --exclude='dist' \
+    --exclude-from="$SOURCE_DIR/scripts/source-excludes.txt" \
     -C "$SOURCE_DIR" -cf - . \
     | tar --no-same-owner --no-same-permissions -C "$INSTALL_DIR" -xf -
 else
@@ -432,12 +662,19 @@ ROOMFRAME_API_URL=${API_URL}
 ROOMFRAME_TIMEZONE=${TIMEZONE}
 ROOMFRAME_RUNTIME_UID=${RUNTIME_UID}
 ROOMFRAME_RUNTIME_GID=${RUNTIME_GID}
+ROOMFRAME_UPDATE_GITHUB_REPOSITORY=${UPDATE_REPOSITORY_OVERRIDE}
+ROOMFRAME_UPDATE_GITHUB_CHANNEL=${UPDATE_CHANNEL_OVERRIDE}
+ROOMFRAME_UPDATE_POLL_MINUTES=${UPDATE_POLL_OVERRIDE}
+ROOMFRAME_BACKUP_DAILY_KEEP=${BACKUP_DAILY_KEEP}
+ROOMFRAME_BACKUP_WEEKLY_KEEP=${BACKUP_WEEKLY_KEEP}
+ROOMFRAME_DISCOVERY_AVAHI_ENABLED=${DISCOVERY_AVAHI_OVERRIDE}
 RUNTIME
 chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
 mv -f "$RUNTIME_TMP" "$CONFIG_DIR/runtime.conf"
 
-python3 - "$INSTALL_DIR/infra/Caddyfile" "$CONFIG_DIR/Caddyfile" "$SITE_ADDRESSES" <<'PY'
+python3 - "$INSTALL_DIR/infra/Caddyfile" "$CONFIG_DIR/Caddyfile" \
+  "$SITE_ADDRESSES" "$SERVER_IP" <<'PY'
 import os
 import pathlib
 import sys
@@ -445,12 +682,18 @@ import tempfile
 
 source = pathlib.Path(sys.argv[1])
 destination = pathlib.Path(sys.argv[2])
-addresses = sys.argv[3]
+addresses, default_sni = sys.argv[3:]
 template = source.read_text(encoding="utf-8")
-marker = "__ROOMFRAME_SITE_ADDRESSES__"
-if template.count(marker) != 1:
-    raise SystemExit("Le modèle Caddy doit contenir exactement un marqueur d'adresse.")
-rendered = template.replace(marker, addresses)
+markers = {
+    "__ROOMFRAME_SITE_ADDRESSES__": addresses,
+    "__ROOMFRAME_DEFAULT_SNI__": default_sni,
+}
+for marker in markers:
+    if template.count(marker) != 1:
+        raise SystemExit(f"Le modèle Caddy doit contenir exactement un marqueur {marker}.")
+rendered = template
+for marker, value in markers.items():
+    rendered = rendered.replace(marker, value)
 destination.parent.mkdir(parents=True, exist_ok=True)
 fd, temporary = tempfile.mkstemp(prefix=".Caddyfile.", dir=destination.parent, text=True)
 with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -501,7 +744,10 @@ chmod 0640 "$CONFIG_DIR/server-state.json"
 
 if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
-    roomframe-bootstrap-token roomframe-recover-admin roomframe-trust-update-key; do
+    roomframe-backup-key roomframe-verify-backup roomframe-restore roomframe-apply-update \
+    roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
+    roomframe-trust-update-key roomframe-tv-certificate-broker \
+    roomframe-sync-server-ca roomframe-refresh-discovery; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -512,9 +758,66 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   done
 fi
 
+if [[ -f "$DATA_DIR/pki/server-ca/ca.crt" ]]; then
+  "$INSTALL_DIR/scripts/roomframe-refresh-discovery.sh" >/dev/null \
+    || fail "L'actualisation de la découverte locale signée a échoué."
+fi
+
+if command -v systemctl >/dev/null 2>&1 \
+  && [[ -d /run/systemd/system ]] \
+  && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-update-broker.service" \
+    /etc/systemd/system/roomframe-update-broker.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-update-broker.timer" \
+    /etc/systemd/system/roomframe-update-broker.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-tv-certificate-broker.service" \
+    /etc/systemd/system/roomframe-tv-certificate-broker.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" \
+    /etc/systemd/system/roomframe-tv-certificate-broker.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-daily.service" \
+    /etc/systemd/system/roomframe-backup-daily.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-daily.timer" \
+    /etc/systemd/system/roomframe-backup-daily.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-weekly.service" \
+    /etc/systemd/system/roomframe-backup-weekly.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-weekly.timer" \
+    /etc/systemd/system/roomframe-backup-weekly.timer
+  systemctl daemon-reload
+  systemctl enable roomframe-update-broker.timer >/dev/null
+  systemctl enable roomframe-tv-certificate-broker.timer >/dev/null
+  systemctl enable roomframe-backup-daily.timer >/dev/null
+  systemctl enable roomframe-backup-weekly.timer >/dev/null
+fi
+
 if [[ "$NO_START" -eq 0 ]]; then
   log "Démarrage des services…"
-  "$INSTALL_DIR/scripts/roomframe-compose.sh" up -d --build --remove-orphans
+  # Build before interruption, then recreate containers and networks. Compose
+  # does not change the `internal` flag of an existing network during `up`;
+  # keeping an older frontend network would silently preserve API egress.
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" build api worker update-poller migrate
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" down --remove-orphans
+  # Recreate even when the image tag is unchanged: Compose otherwise keeps
+  # stale bind-mounted secret metadata after bootstrap hardening.
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" up -d --no-build --force-recreate --remove-orphans
+
+  for setup_service in database-roles migrate; do
+    setup_id="$(
+      "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -a -q "$setup_service" 2>/dev/null || true
+    )"
+    [[ -n "$setup_id" ]] \
+      || fail "L'étape d'initialisation $setup_service n'a pas été créée."
+    setup_status="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$setup_id")"
+    [[ "$setup_status" == "exited:0" ]] \
+      || fail "L'étape d'initialisation $setup_service a échoué ($setup_status). Exécutez: sudo roomframe-compose logs $setup_service"
+  done
 
   log "Vérification de l'interface HTTPS…"
   healthy=0
@@ -530,24 +833,46 @@ if [[ "$NO_START" -eq 0 ]]; then
   [[ "$healthy" -eq 1 ]] \
     || fail "Les services ont démarré mais /health ne répond pas. Exécutez: sudo roomframe-diagnose"
 
-  worker_id="$("$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q worker 2>/dev/null || true)"
-  [[ -n "$worker_id" ]] || fail "Le conteneur worker n'a pas été créé."
-  worker_healthy=0
-  for _ in $(seq 1 60); do
-    worker_status="$(
-      docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
-        "$worker_id" 2>/dev/null || true
+  "$INSTALL_DIR/scripts/roomframe-sync-server-ca.sh" >/dev/null \
+    || fail "La publication de la CA HTTPS pour l’enrôlement TV a échoué."
+
+  if ! curl -fsS --connect-timeout 3 \
+    --cacert "$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt" \
+    "${FALLBACK_URL}/health" >/dev/null; then
+    fail "L'URL HTTPS de secours par IP ne répond pas avec la CA locale."
+  fi
+
+  for background_service in worker update-poller; do
+    background_id="$(
+      "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q "$background_service" 2>/dev/null || true
     )"
-    if [[ "$worker_status" == "healthy" ]]; then
-      worker_healthy=1
-      break
-    fi
-    [[ "$worker_status" != "unhealthy" && "$worker_status" != "exited" ]] \
-      || break
-    sleep 1
+    [[ -n "$background_id" ]] \
+      || fail "Le conteneur $background_service n'a pas été créé."
+    background_healthy=0
+    for _ in $(seq 1 60); do
+      background_status="$(
+        docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+          "$background_id" 2>/dev/null || true
+      )"
+      if [[ "$background_status" == "healthy" ]]; then
+        background_healthy=1
+        break
+      fi
+      [[ "$background_status" != "unhealthy" && "$background_status" != "exited" ]] \
+        || break
+      sleep 1
+    done
+    [[ "$background_healthy" -eq 1 ]] \
+      || fail "Le service $background_service n'est pas sain (${background_status:-état inconnu}). Exécutez: sudo roomframe-compose logs $background_service"
   done
-  [[ "$worker_healthy" -eq 1 ]] \
-    || fail "Le worker n'est pas sain (${worker_status:-état inconnu}). Exécutez: sudo roomframe-compose logs worker"
+
+  if [[ -d /run/systemd/system ]] \
+    && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
+    systemctl start roomframe-update-broker.timer
+    systemctl start roomframe-tv-certificate-broker.timer
+    systemctl start roomframe-backup-daily.timer
+    systemctl start roomframe-backup-weekly.timer
+  fi
 fi
 
 CA_PATH="$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt"
@@ -556,13 +881,31 @@ if [[ "$NO_START" -eq 0 ]]; then
 else
   printf '\n\033[1;33mPréparation terminée (--no-start); services non démarrés.\033[0m\n'
 fi
-printf 'Interface d’administration : %s\n' "$PREFERRED_URL"
+printf "Interface d'administration : %s\n" "$PREFERRED_URL"
 printf 'API locale TV             : %s\n' "$API_URL"
 printf 'URL de secours par IP     : %s\n' "$FALLBACK_URL"
 printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
+printf 'Copie publique CA serveur : %s\n' "$DATA_DIR/pki/server-ca/ca.crt"
+printf 'Autorité cliente TV       : %s\n' "$DATA_DIR/pki/tv-client-ca/ca.crt"
+printf 'Découverte locale signée  : %s\n' \
+  "$([[ "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] && printf 'Avahi _roomframe._tcp' || printf 'désactivée')"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
-printf 'Sauvegarde                 : sudo roomframe-backup\n'
+printf 'Sauvegarde chiffrée        : sudo roomframe-backup\n'
+printf 'Export clé de reprise      : sudo roomframe-backup-key --help\n'
+printf 'Restauration               : sudo roomframe-restore --help\n'
+printf 'Appliquer une release      : sudo roomframe-apply-update --help\n'
+if [[ -d /run/systemd/system ]]; then
+  printf "File d'updates serveur     : roomframe-update-broker.timer\n"
+  printf "Sauvegardes planifiées     : quotidienne sans médias · hebdomadaire complète\n"
+fi
+if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
+  printf 'Updates GitHub signées     : %s · canal %s · toutes les %s min\n' \
+    "$UPDATE_REPOSITORY_OVERRIDE" "$UPDATE_CHANNEL_OVERRIDE" "$UPDATE_POLL_OVERRIDE"
+else
+  printf 'Updates GitHub signées     : désactivées (import .rfupdate disponible)\n'
+fi
+printf 'Vérifier une sauvegarde    : sudo roomframe-verify-backup --latest\n'
 printf 'Jeton initial              : sudo roomframe-bootstrap-token --show\n'
 if [[ "$DNS_WARNING" -eq 1 ]]; then
   printf '\nDNS à créer dans la zone interne : %s  A  %s\n' "$PRIMARY_HOST" "$SERVER_IP"

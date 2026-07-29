@@ -45,7 +45,7 @@
         "properties": {
           "id": {"type": "string", "minLength": 1, "maxLength": 600},
           "assetId": {"type": "string", "format": "uuid"},
-          "variant": {"enum": ["1080p", "4k"]},
+          "variant": {"enum": ["1080p", "4k", "logo"]},
           "path": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$"},
           "url": {"type": "string", "pattern": "^/api/v1/"},
           "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},

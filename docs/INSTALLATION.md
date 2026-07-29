@@ -35,6 +35,22 @@ sudo ./install.sh --host roomframe.example.local
 `--host` accepte un FQDN validé ou l’IPv4 principale détectée. Un schéma, un
 port, un chemin, un nom DNS invalide ou une autre IPv4 sont refusés.
 
+Quand la source possède un remote GitHub, l’installateur en déduit le dépôt de
+releases. L’installateur autonome publié embarque le dépôt qui l’a construit.
+Une source différente peut être fixée explicitement :
+
+```bash
+sudo ./install.sh \
+  --updates-repository owner/roomframe-tv \
+  --updates-channel stable \
+  --update-poll-minutes 360
+```
+
+Le canal `stable` ignore les préreleases ; `preview` les accepte. La fréquence
+doit rester entre 15 minutes et 7 jours. Une réinstallation conserve ces
+valeurs. `--disable-github-updates` désactive le poller sans retirer l’import
+hors ligne `.rfupdate`.
+
 Sans `--host`, l’ordre de sélection est :
 
 1. `roomframe.<suffixe-DNS-détecté>` ;
@@ -83,6 +99,7 @@ Interface d’administration : https://roomframe.example.local
 API locale TV             : https://roomframe.example.local/api
 URL de secours par IP     : https://192.0.2.20
 Simulateur TV             : https://roomframe.example.local/simulator/
+Updates GitHub signées     : owner/roomframe-tv · canal stable · toutes les 360 min
 ```
 
 Si le FQDN ne pointe pas encore vers l’IPv4 détectée, l’installation continue.
@@ -92,6 +109,20 @@ affichée :
 ```text
 DNS à créer dans la zone interne : roomframe.example.local  A  192.0.2.20
 ```
+
+Le certificat HTTPS de secours contient l’IPv4 détectée. Caddy utilise aussi
+cette IPv4 comme SNI par défaut afin que les clients qui n’envoient aucun nom
+de serveur lors d’un accès direct par IP reçoivent tout de même le bon
+certificat local. L’installateur contrôle aussi réellement cette URL avec la
+CA locale avant d’annoncer que l’instance est prête.
+
+Les fichiers statiques de l’administration et du simulateur sont servis avec
+`Cache-Control: no-cache` : le navigateur peut les conserver, mais doit les
+revalider après une mise à jour. Cela évite de mélanger un nouvel HTML avec
+une ancienne feuille de style ou un ancien JavaScript.
+Le numéro de version des références CSS et JavaScript est également modifié
+quand une release change ces fichiers, afin de sortir proprement d’un cache
+créé avant l’ajout de cette politique.
 
 ## Configuration et données
 
@@ -104,17 +135,66 @@ DNS à créer dans la zone interne : roomframe.example.local  A  192.0.2.20
 /var/lib/roomframe/postgres/        PostgreSQL
 /var/lib/roomframe/media/           originaux privés et variantes
 /var/lib/roomframe/processing/      uploads temporaires et file locale
+/var/lib/roomframe/pki/tv-client-ca/ CA cliente TV persistante root-only
+/var/lib/roomframe/pki/server-ca/    copie publique CA HTTPS pour appairage TV
 /var/lib/roomframe/releases/        mises à jour vérifiées
-/var/lib/roomframe/backups/         sauvegardes
+/var/lib/roomframe/backups/         sauvegardes age chiffrées
+/var/lib/roomframe/backup-keyring/  anciennes identités de reprise root-only
 /var/lib/roomframe/pki/             confiance et clés publiques
 /var/lib/roomframe/caddy/           données et autorité HTTPS locale
 /var/lib/roomframe/caddy-config/    état Caddy
 /var/lib/roomframe/seed/            expérience initiale figée
 ```
 
-Les secrets PostgreSQL, bootstrap, session et chiffrement TOTP sont créés
-uniquement lorsqu’ils sont absents. Une seconde exécution conserve les fichiers
-existants ; aucun secret n’est régénéré silencieusement.
+Les secrets PostgreSQL administrateur, migrateur et runtime, ainsi que les
+secrets bootstrap, session, chiffrement TOTP et l’identité de sauvegarde, sont
+créés uniquement
+lorsqu’ils sont absents. Une seconde exécution conserve les fichiers existants ;
+aucun secret n’est régénéré silencieusement. Une installation antérieure reçoit
+les deux nouveaux secrets PostgreSQL sans modifier son secret administrateur.
+
+Un verrou local `/run/lock/roomframe-install.lock` refuse une seconde
+installation, sauvegarde, restauration ou application de release tant qu’une
+opération de maintenance est active. Il protège la sauvegarde, la copie du
+code, les migrations, la restauration et la recréation des conteneurs contre
+deux exécutions concurrentes.
+
+Après construction réussie des images applicatives, l’installateur arrête
+brièvement la pile sans supprimer aucun volume, puis recrée les réseaux
+Compose. Cette étape est nécessaire pour appliquer réellement un durcissement
+de réseau `internal` à une instance déjà installée ; un simple
+`--force-recreate` des conteneurs ne modifie pas les propriétés d’un réseau
+Docker existant.
+
+Le répertoire `/etc/roomframe/secrets` reste `root:root` en mode `0700`. Ses
+fichiers sont `root:root` en mode `0444` : ils restent inaccessibles directement
+aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-root
+une fois montés individuellement et en lecture seule par Docker. Chaque service
+ne reçoit que les secrets déclarés dans `compose.yaml`.
+
+`database-roles` transfère idempotemment la propriété des objets historiques à
+`roomframe_owner`, puis `migrate` applique les migrations avant tout service
+permanent. Le propriétaire n’a pas de login ; le migrateur est one-shot et le
+runtime ne possède aucun droit DDL. L’API, le worker et le poller ne lancent
+jamais de migration à leur démarrage.
+
+Le service `update-poller` est séparé de l’API et du worker média. Il ne reçoit
+que le secret PostgreSQL runtime, le magasin de clés publiques en lecture seule
+et les volumes `processing`/`releases`. Il ne publie aucun port. Lui seul
+rejoint un réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau
+interne.
+
+Le poller importe seulement. L’application automatique du serveur reste
+`manual` par défaut et se configure ensuite dans le Studio. Lorsqu’elle est
+explicitement activée, le courtier systemd root vérifie le délai, la fenêtre,
+le fuseau, la provenance GitHub et l’absence de tentative antérieure avant de
+mettre au plus une release en file. L’API ne reçoit toujours ni Docker ni sudo.
+
+Le worker média traite également les transitions de scènes programmées toutes
+les quelques secondes. Une activation ou une fin effective incrémente la
+révision de synchronisation afin que les TV reçoivent le changement au prochain
+poll. Une fenêtre entièrement manquée pendant un arrêt du worker est clôturée
+et auditée sans être annoncée comme affichée.
 
 `runtime.conf` mémorise également l’UID/GID du compte `roomframe`. Les médias,
 traitements et releases lui appartiennent. La demande de récupération reste
@@ -123,41 +203,193 @@ le conteneur API.
 
 Le seed est copié seulement si son répertoire est vide. L’API l’applique dans
 la base seulement lorsqu’aucune instance n’existe. Si PostgreSQL contient déjà
-des données, `install.sh` exige la commande de sauvegarde de l’installation
-existante et réalise une sauvegarde complète avant la recopie du code. Une
-mise à jour sans sauvegarde exploitable est refusée.
+des données, `install.sh` exige les commandes de sauvegarde et de vérification
+de l’installation existante. Il réalise une sauvegarde complète puis restaure
+son dump dans un PostgreSQL isolé avant la recopie du code. Une mise à jour
+sans point de retour réellement vérifié est refusée.
 
 La copie de code est additive : elle remplace les fichiers livrés, sans
 supprimer un fichier présent uniquement dans `/opt/roomframe`. Cette stratégie
 protège les données, mais n’est pas encore un déploiement atomique par
 répertoire de version.
 
+Les instructions locales `AGENTS.md`, les dossiers privés de validation
+`local-branding/` et `local-hardware/`, ainsi que les métadonnées macOS
+`.DS_Store` et AppleDouble `._*`, sont explicitement exclus de cette copie et
+des archives de release.
+
+## Ajouter un compte d’administration
+
+Une fois le propriétaire connecté, la console **Sécurité** du Studio crée une
+invitation avec un rôle fermé. RoomFrame affiche alors un jeton une seule fois ;
+il faut le transmettre à la personne par un canal local approprié. Depuis la
+page de connexion, **Activer une invitation reçue** permet à cette personne de
+choisir sa phrase de passe, d’enrôler TOTP et d’ouvrir sa première session.
+
+Ce parcours n’utilise ni adresse SMTP ni service cloud. Aucun mot de passe
+temporaire n’est généré. Une invitation expire après 24 heures ; le
+propriétaire peut la réémettre, ce qui révoque les anciennes sessions,
+passkeys, défis et invitations de ce compte.
+
 ## Commandes d’exploitation
 
 ```bash
 sudo roomframe-compose ps
-sudo roomframe-compose logs --tail=200 api worker
+sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
+sudo roomframe-backup-key --show-recipient
+sudo roomframe-backup-key --export-identity \
+  /chemin/hors-ligne/roomframe-backup.agekey
+sudo roomframe-verify-backup --latest
+sudo roomframe-restore \
+  /var/lib/roomframe/backups/20260101T120000Z \
+  --confirm 20260101T120000Z
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
+sudo systemctl status roomframe-update-broker.timer
+sudo systemctl status roomframe-tv-certificate-broker.timer
+sudo systemctl status roomframe-backup-daily.timer
+sudo systemctl status roomframe-backup-weekly.timer
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
+sudo roomframe-trust-update-key --revoke --key-id release-main \
+  --sha256 EMPREINTE_SHA256
+sudo roomframe-sync-server-ca
 ```
 
 Les mêmes outils sont présents sous `/opt/roomframe/scripts/`. La commande
 Compose charge uniquement `/etc/roomframe/runtime.conf` et monte les secrets
 comme fichiers Docker sous `/run/secrets`.
 
-Une sauvegarde met brièvement l’API et le worker en pause, produit un dump
-PostgreSQL au format custom, archive la configuration et les données
-persistantes, puis écrit les SHA-256. Pour exclure les médias volumineux :
+Une sauvegarde met brièvement Caddy, l’API, le worker et le poller d’updates en
+pause. Le dump PostgreSQL au format custom, la configuration/PKI et les données
+persistantes sont envoyés directement dans `age` : aucune copie finale de ces
+payloads n’est déposée en clair. Le répertoire contient les trois fichiers
+`.age`, des métadonnées publiques bornées et leurs SHA-256. Pour exclure les
+médias volumineux :
 
 ```bash
 sudo roomframe-backup --without-media
 ```
 
-Une sauvegarde contient de la configuration sensible et de la PKI. Elle reste
-root-only et doit être déplacée vers un stockage protégé.
+L’identité X25519 est générée une fois dans
+`/etc/roomframe/secrets/backup_age_identity`, en mode `0400`, et n’est jamais
+régénérée silencieusement. Sa clé publique peut être affichée sans risque.
+Pour permettre une reprise après perte totale du CT, exporter une fois
+l’identité privée vers un support hors ligne :
+
+```bash
+sudo roomframe-backup-key --export-identity \
+  /media/support-hors-ligne/roomframe-backup.agekey
+```
+
+La commande refuse d’écraser un fichier existant. Cette copie privée doit
+rester en mode `0600`, hors dépôt et hors stockage public. Un trousseau local
+root-only conserve aussi les anciennes identités quand une restauration
+remplace la configuration ; il est exclu des données restaurées afin que le
+point de retour créé juste avant la bascule reste déchiffrable.
+
+Deux timers sont activés par l’installation :
+
+- chaque nuit, une sauvegarde chiffrée sans médias, vérifiée puis conservée
+  parmi les 14 plus récentes ;
+- chaque dimanche, une sauvegarde chiffrée complète, vérifiée puis conservée
+  parmi les 4 plus récentes.
+
+Les limites `ROOMFRAME_BACKUP_DAILY_KEEP` (2 à 90) et
+`ROOMFRAME_BACKUP_WEEKLY_KEEP` (2 à 26) vivent dans `runtime.conf`. La
+rétention ne considère que sa propre classe planifiée et ne supprime jamais
+une sauvegarde manuelle, pré-migration ou de sécurité.
+
+`roomframe-verify-backup --latest` vérifie ensuite la liste et les permissions
+des fichiers, les SHA-256, l’identité `age`, le déchiffrement authentifié, les
+métadonnées et la sûreté des archives, puis restaure le dump dans un PostgreSQL
+17 temporaire sans réseau ni port publié. Les fichiers déchiffrés vivent dans
+un staging root-only supprimé à la fin. Cette validation ne modifie jamais la
+base installée. Un chemin explicite vers un enfant direct de
+`/var/lib/roomframe/backups` peut remplacer `--latest`.
+
+## Restauration complète
+
+Une restauration est une action root explicite. Elle n’accepte pas `--latest` :
+le nom du répertoire doit être répété après `--confirm`.
+
+```bash
+backup_id=20260101T120000Z
+sudo roomframe-restore \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id"
+```
+
+Après perte du serveur, une identité exportée peut être fournie explicitement :
+
+```bash
+sudo roomframe-restore \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id" \
+  --identity /media/support-hors-ligne/roomframe-backup.agekey
+```
+
+Avant d’arrêter la pile, la commande vérifie la sauvegarde dans un PostgreSQL
+isolé, prépare les archives dans des répertoires privés, crée une sauvegarde de
+sécurité de l’état courant et la vérifie elle aussi. La configuration, les
+secrets, la PKI et les données sont ensuite basculés par répertoires ; le dump
+est chargé dans une base temporaire puis renommé. La pile complète et son URL
+HTTPS doivent redevenir saines avant la suppression de l’ancienne base.
+
+Tout échec après la première bascule déclenche le retour à la configuration,
+aux données et à la base précédentes. Le chemin de la sauvegarde de sécurité
+reste affiché et conservé. Une trace `backup.restored` est ajoutée au journal
+d’audit après succès.
+
+Pour éviter une base qui référencerait des fichiers absents, une sauvegarde
+créée avec `--without-media` ne peut pas servir à cette restauration complète.
+La version du code installée doit également correspondre à
+`softwareVersion` dans la sauvegarde. Un changement de version passe par
+`roomframe-apply-update`, qui associe le code signé, la sauvegarde et les
+migrations.
+
+## Application d’une release serveur importée
+
+Une release `.rfupdate` valide et déjà importée peut être appliquée par sa
+référence et sa version :
+
+```bash
+sudo roomframe-apply-update \
+  --release-id 00000000-0000-4000-8000-000000000000 \
+  --confirm 0.3.1
+```
+
+La commande root relit uniquement une release `verified` de PostgreSQL et
+refuse un chemin de bundle fourni par l’opérateur. Elle exige que le fichier
+soit exactement celui de la quarantaine adressée par hash, recalcule son
+SHA-256, revalide Ed25519 avec la clé publique approuvée, puis contrôle
+l’identité, la version, l’archive serveur et la liste des migrations.
+
+Les images sont préconstruites avant l’interruption. Une sauvegarde complète
+est ensuite créée et restaurée dans le PostgreSQL isolé de vérification. Le
+code courant et le staging sont basculés sous `/opt` sur le même système de
+fichiers, puis l’installateur idempotent exécute les migrations et les
+healthchecks. Un échec après la bascule réinstalle automatiquement le code
+précédent avec le point de retour déjà vérifié. Après succès, l’ancien code est
+archivé avec son SHA-256 sous
+`/var/lib/roomframe/app/server-rollbacks/`.
+
+Les migrations restent additives et ne sont pas supprimées lors d’un retour
+au code précédent. La sauvegarde complète permet une restauration explicite
+si une intervention sur la base est nécessaire. L’API web ne lance jamais
+cette commande et ne reçoit ni socket Docker ni privilège root.
+
+L’installateur déploie aussi `roomframe-update-broker.service` et son timer
+systemd. Depuis le Studio, une demande serveur écrit uniquement une ligne en
+base après permission, CSRF et confirmation de version. Le service oneshot root
+la prend au passage suivant, au plus une par exécution, puis appelle la même
+commande de revalidation. Si le verrou de maintenance est occupé, la demande
+retourne en file. `roomframe-diagnose` contrôle le timer et affiche le nombre de
+demandes `pending|running`.
 
 ## Approuver une clé de mise à jour
 
@@ -176,6 +408,11 @@ empreinte différente. Elle installe la clé en `0640`, root et groupe
 `roomframe`. Une clé existante identique rend la commande idempotente ; une
 rotation différente exige `--replace`.
 
+Pour une compromission ou un retrait, `--revoke` exige la même empreinte,
+retire atomiquement la clé du magasin actif et la conserve sous
+`/var/lib/roomframe/pki/update-revoked/`. Le moteur refusera ensuite toute
+nouvelle application signée seulement par cette clé.
+
 ## Bootstrap initial
 
 L’installateur ne révèle pas automatiquement le jeton. L’affichage doit être
@@ -187,6 +424,11 @@ sudo roomframe-bootstrap-token --show
 
 L’assistant utilise ce jeton pour créer un défi TOTP et le premier
 administrateur. Le bootstrap est ensuite verrouillé dans PostgreSQL.
+
+Après cette configuration, le propriétaire peut ajouter une passkey depuis la
+section Sécurité. Cette opération doit être faite sur le FQDN HTTPS principal,
+après installation de la CA locale dans le navigateur. L’URL IP de secours
+reste utilisable avec TOTP, mais ne sert pas d’identité WebAuthn.
 
 Une rotation explicite du fichier reste possible avant la configuration :
 
@@ -214,7 +456,8 @@ sudo roomframe-recover-admin --create --ttl-minutes 30
 Une demande active n’est remplacée qu’avec `--replace`. Le jeton clair est
 affiché une fois ; seul son SHA-256 et son expiration sont enregistrés. L’API
 lie ensuite le défi au nom d’utilisateur, exige un nouveau TOTP et un nouveau
-mot de passe, révoque les sessions existantes et interdit le rejeu.
+mot de passe, révoque les sessions et passkeys existantes et interdit le
+rejeu.
 
 ## HTTPS local
 
@@ -226,6 +469,46 @@ premier démarrage dans :
 ```
 
 Cette racine doit être distribuée par un canal administré aux navigateurs et
-épinglée ou installée lors de l’enrôlement des TV. Ne contournez pas les
+épinglée ou installée lors de l’enrôlement des TV. L’APK release récupère une
+copie chiffrée avec sa clé d’enrôlement, valide la chaîne TLS observée puis
+épingle la CA avant de transmettre cette clé. Ne contournez pas les
 avertissements TLS pour l’usage normal. L’API n’est pas publiée directement :
 Caddy expose uniquement `443/tcp`.
+
+L’installateur publie uniquement le certificat public vers :
+
+```text
+/var/lib/roomframe/pki/server-ca/ca.crt
+```
+
+La commande idempotente `sudo roomframe-sync-server-ca` refait cette
+synchronisation après un démarrage différé avec `--no-start`, puis régénère
+le manifeste public signé `/api/v1/discovery`. Elle n’expose ni la clé racine
+ni la clé intermédiaire Caddy. `roomframe-diagnose` refuse une copie absente,
+mal protégée ou différente de la CA active.
+
+Par défaut, une installation avec systemd active Avahi et publie uniquement
+`_roomframe._tcp` sur UDP 5353. La clé de signature ECDSA P-256 est créée une
+fois dans `/etc/roomframe/secrets/discovery_signing_key` en `0400` et n’est
+montée dans aucun conteneur. Le manifeste et la clé publique vivent dans
+`/var/lib/roomframe/pki/discovery/`. Pour un réseau où mDNS est interdit :
+
+```bash
+sudo ./install.sh --disable-local-discovery
+```
+
+Le DNS unicast, l’URL IP et la saisie manuelle dans l’APK restent disponibles.
+
+Une autorité distincte destinée aux certificats clients TV est créée une seule
+fois pendant le bootstrap :
+
+```text
+/var/lib/roomframe/pki/tv-client-ca/ca.crt
+/var/lib/roomframe/pki/tv-client-ca/private/ca.key
+```
+
+Le certificat public est `0644`; la clé privée est `0600 root:root` et n’est
+montée dans aucun conteneur. `roomframe-tv-certificate-broker.timer` traite les
+demandes d’émission toutes les dix secondes. Une réinstallation conserve la
+CA ; si la paire est incomplète, l’installateur refuse de la régénérer
+silencieusement.

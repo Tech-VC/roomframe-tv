@@ -77,7 +77,7 @@ export const requireCsrf = (config) => async (request) => {
   }
 };
 
-export const issueSession = async ({ client, reply, config, user, request }) => {
+export const issueSession = async ({ client, config, user, request }) => {
   const material = createSessionMaterial(config.sessionSecret);
   const expires = new Date(Date.now() + config.sessionHours * 60 * 60 * 1000);
   const sessionId = crypto.randomUUID();
@@ -97,8 +97,20 @@ export const issueSession = async ({ client, reply, config, user, request }) => 
       String(request.headers['user-agent'] ?? '').slice(0, 500),
     ],
   );
-  reply.setCookie(SESSION_COOKIE, material.token, cookieOptions(expires));
-  return { csrfToken, expiresAt: expires.toISOString(), sessionId };
+  return {
+    csrfToken,
+    expiresAt: expires.toISOString(),
+    sessionId,
+    cookieToken: material.token,
+  };
+};
+
+export const attachSessionCookie = (reply, session) => {
+  reply.setCookie(
+    SESSION_COOKIE,
+    session.cookieToken,
+    cookieOptions(new Date(session.expiresAt)),
+  );
 };
 
 export const clearSessionCookie = (reply) => {

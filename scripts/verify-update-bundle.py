@@ -19,9 +19,19 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import uuid
 import zipfile
+
+sys.dont_write_bytecode = True
+
+from supply_chain import (
+    MAX_SBOM_BYTES,
+    SupplyChainError,
+    parse_spdx_bytes,
+    validate_spdx_document,
+)
 
 
 SEMVER_RE = re.compile(
@@ -31,6 +41,9 @@ SEMVER_RE = re.compile(
 PLAIN_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 SHA256_RE = re.compile(r"^[a-f0-9]{64}$")
 ARTIFACT_PATH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,511}$")
+ANDROID_PACKAGE_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$"
+)
 ALLOWED_ARTIFACT_KINDS = {
     "agent-apk",
     "home-apk",
@@ -38,6 +51,7 @@ ALLOWED_ARTIFACT_KINDS = {
     "oci-images",
     "migration",
     "compose-lock",
+    "sbom-spdx",
 }
 RESERVED_FILES = {"manifest.json", "manifest.sig"}
 TOP_LEVEL_FIELDS = {
@@ -48,6 +62,7 @@ TOP_LEVEL_FIELDS = {
     "minimumServerVersion",
     "maximumServerVersion",
     "architectures",
+    "source",
     "signature",
     "artifacts",
     "migrations",
@@ -306,6 +321,34 @@ def validate_manifest(
                 f"architecture {architecture} non prise en charge par la release"
             )
 
+    source = manifest.get("source")
+    if source is not None:
+        if not isinstance(source, dict) or set(source) != {
+            "provider",
+            "repository",
+            "revision",
+            "ref",
+        }:
+            raise VerificationError("source signée invalide")
+        if source.get("provider") != "github":
+            raise VerificationError("source.provider incompatible")
+        repository = source.get("repository")
+        revision = source.get("revision")
+        source_ref = source.get("ref")
+        if not isinstance(repository, str) or not re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9_.-]{0,99})/"
+            r"[a-z0-9](?:[a-z0-9_.-]{0,99})",
+            repository,
+        ):
+            raise VerificationError("source.repository invalide")
+        if not isinstance(revision, str) or not re.fullmatch(
+            r"[a-f0-9]{40}(?:[a-f0-9]{24})?",
+            revision,
+        ):
+            raise VerificationError("source.revision invalide")
+        if source_ref != f"refs/tags/v{manifest['version']}":
+            raise VerificationError("source.ref ne correspond pas à la version")
+
     migrations = manifest.get("migrations")
     if migrations is not None:
         if (
@@ -385,8 +428,11 @@ def verify_artifacts(
     archive: zipfile.ZipFile,
     members: dict[str, zipfile.ZipInfo],
     artifacts: list[dict],
+    manifest: dict,
 ) -> None:
     listed: set[str] = set()
+    server_artifacts: list[dict] = []
+    sbom_artifacts: list[tuple[dict, zipfile.ZipInfo]] = []
     for index, artifact in enumerate(artifacts):
         if not isinstance(artifact, dict):
             raise VerificationError(f"artifacts[{index}] doit être un objet")
@@ -395,7 +441,15 @@ def verify_artifacts(
             raise VerificationError(
                 f"artifacts[{index}] incomplet: {', '.join(sorted(missing))}"
             )
-        unexpected = set(artifact) - {"path", "sha256", "size", "kind"}
+        unexpected = set(artifact) - {
+            "path",
+            "sha256",
+            "size",
+            "kind",
+            "packageName",
+            "versionCode",
+            "signingCertificateSha256",
+        }
         if unexpected:
             raise VerificationError(
                 f"artifacts[{index}] contient des champs inconnus: "
@@ -424,6 +478,41 @@ def verify_artifacts(
         kind = artifact["kind"]
         if kind not in ALLOWED_ARTIFACT_KINDS:
             raise VerificationError(f"type d'artefact invalide pour {path}: {kind!r}")
+        if kind == "server-archive":
+            server_artifacts.append(artifact)
+        if kind in {"agent-apk", "home-apk"}:
+            apk_missing = {
+                "packageName",
+                "versionCode",
+                "signingCertificateSha256",
+            } - artifact.keys()
+            if apk_missing:
+                raise VerificationError(
+                    f"métadonnées APK absentes pour {path}: "
+                    f"{', '.join(sorted(apk_missing))}"
+                )
+            package_name = artifact["packageName"]
+            version_code = artifact["versionCode"]
+            signing_hash = artifact["signingCertificateSha256"]
+            if (
+                not isinstance(package_name, str)
+                or not ANDROID_PACKAGE_RE.fullmatch(package_name)
+            ):
+                raise VerificationError(f"package Android invalide pour {path}")
+            if (
+                not isinstance(version_code, int)
+                or isinstance(version_code, bool)
+                or version_code < 1
+                or version_code > 2_147_483_647
+            ):
+                raise VerificationError(f"versionCode invalide pour {path}")
+            if (
+                not isinstance(signing_hash, str)
+                or not SHA256_RE.fullmatch(signing_hash)
+            ):
+                raise VerificationError(
+                    f"empreinte de signature Android invalide pour {path}"
+                )
         info = members.get(path)
         if info is None or info.is_dir():
             raise VerificationError(f"artefact absent du ZIP: {path}")
@@ -431,6 +520,8 @@ def verify_artifacts(
             raise VerificationError(f"taille incorrecte pour {path}")
         if hash_member(archive, info) != digest:
             raise VerificationError(f"SHA-256 incorrect pour {path}")
+        if kind == "sbom-spdx":
+            sbom_artifacts.append((artifact, info))
 
     regular_files = {
         name for name, info in members.items() if not info.is_dir()
@@ -440,6 +531,24 @@ def verify_artifacts(
         raise VerificationError(
             f"fichiers ZIP non listés par le manifeste: {', '.join(unlisted)}"
         )
+    if len(sbom_artifacts) > 1:
+        raise VerificationError("un seul SBOM SPDX est accepté")
+    if manifest.get("source") is not None and len(sbom_artifacts) != 1:
+        raise VerificationError("une source signée exige exactement un SBOM SPDX")
+    if sbom_artifacts:
+        if len(server_artifacts) != 1:
+            raise VerificationError("le SBOM SPDX exige une archive serveur unique")
+        _, sbom_info = sbom_artifacts[0]
+        if sbom_info.file_size > MAX_SBOM_BYTES:
+            raise VerificationError("le SBOM SPDX dépasse 16 Mio")
+        try:
+            validate_spdx_document(
+                parse_spdx_bytes(archive.read(sbom_info)),
+                release_version=manifest["version"],
+                server_archive_sha256=server_artifacts[0]["sha256"],
+            )
+        except SupplyChainError as error:
+            raise VerificationError(f"SBOM SPDX invalide: {error}") from error
 
 
 def main() -> int:
@@ -475,7 +584,7 @@ def main() -> int:
             )
             signature = decode_signature(archive.read(members["manifest.sig"]))
             verify_signature(manifest_bytes, signature, args.trust_key)
-            verify_artifacts(archive, members, artifacts)
+            verify_artifacts(archive, members, artifacts, manifest)
     except zipfile.BadZipFile as error:
         raise VerificationError("archive ZIP invalide") from error
 

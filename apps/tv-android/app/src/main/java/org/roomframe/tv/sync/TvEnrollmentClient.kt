@@ -1,0 +1,126 @@
+package org.roomframe.tv.sync
+
+import java.io.ByteArrayOutputStream
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.time.Instant
+import javax.net.ssl.HttpsURLConnection
+import org.json.JSONObject
+
+class TvEnrollmentClient {
+    fun enroll(serverUrl: String, deviceId: String, enrollmentKey: String): DeviceCredentials {
+        return enroll(listOf(serverUrl), deviceId, enrollmentKey, null)
+    }
+
+    fun enroll(
+        serverUrls: List<String>,
+        deviceId: String,
+        enrollmentKey: String,
+        expectedServerCaFingerprintSha256: String? = null,
+    ): DeviceCredentials {
+        val normalizedUrls = serverUrls
+            .map(DeviceCredentialStore::validateServerUrl)
+            .distinct()
+        require(normalizedUrls.isNotEmpty() && normalizedUrls.size <= 2) {
+            "Une ou deux origines RoomFrame sont attendues"
+        }
+        val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
+        DeviceCredentialStore.validateDeviceKey(enrollmentKey)
+        if (expectedServerCaFingerprintSha256 != null) {
+            require(expectedServerCaFingerprintSha256.matches(Regex("^[0-9a-f]{64}$"))) {
+                "Empreinte de CA HTTPS attendue invalide"
+            }
+        }
+        var bootstrapFailure: Throwable? = null
+        val normalizedUrl = normalizedUrls.firstOrNull { candidate ->
+            runCatching {
+                val fingerprint = ServerTrustBootstrapClient().bootstrap(
+                    candidate,
+                    normalizedId,
+                    enrollmentKey,
+                )
+                require(
+                    expectedServerCaFingerprintSha256 == null ||
+                        fingerprint == expectedServerCaFingerprintSha256,
+                ) { "La CA HTTPS ne correspond pas au manifeste de découverte" }
+            }.onFailure { bootstrapFailure = it }.isSuccess
+        } ?: throw IllegalStateException(
+            "Aucune origine RoomFrame n'a validé l'autorité HTTPS",
+            bootstrapFailure,
+        )
+        val certificateProof = TvClientCertificateStore().enrollmentProof(
+            normalizedId,
+            enrollmentKey,
+        )
+        val connection = RoomFrameHttps.open(URL("$normalizedUrl/api/v1/tv/enroll")).apply {
+            connectTimeout = 8_000
+            readTimeout = 15_000
+            instanceFollowRedirects = false
+            useCaches = false
+            doOutput = true
+            requestMethod = "POST"
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", "application/json")
+        }
+        try {
+            val requestBody = JSONObject()
+                .put("deviceId", normalizedId)
+                .put("enrollmentKey", enrollmentKey)
+                .put(
+                    "certificateRequest",
+                    JSONObject()
+                        .put("algorithm", "RS256")
+                        .put("publicKeySpki", certificateProof.publicKeySpki)
+                        .put("proofSignature", certificateProof.proofSignature),
+                )
+                .toString()
+                .toByteArray(StandardCharsets.UTF_8)
+            connection.setFixedLengthStreamingMode(requestBody.size)
+            connection.outputStream.use { it.write(requestBody) }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                connection.errorStream?.close()
+                throw IllegalStateException("Enrôlement refusé (HTTP $status)")
+            }
+            val contentType = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
+            require(contentType == "application/json") { "Réponse d'enrôlement invalide" }
+            val response = JSONObject(
+                connection.inputStream.use { readBounded(it, MAX_RESPONSE_BYTES) }
+                    .toString(StandardCharsets.UTF_8),
+            )
+            require(response.optString("credentialDelivery") == "one-time") {
+                "Mode de remise de credential inattendu"
+            }
+            return DeviceCredentials(
+                serverUrl = normalizedUrl,
+                deviceId = normalizedId,
+                deviceKey = response.getString("deviceKey").also(DeviceCredentialStore::validateDeviceKey),
+                credentialGeneration = response.optLong("credentialGeneration", 1)
+                    .also(DeviceCredentialStore::validateCredentialGeneration),
+                credentialRotatedAtEpochMs = runCatching {
+                    Instant.parse(response.getString("credentialRotatedAt")).toEpochMilli()
+                }.getOrDefault(System.currentTimeMillis()),
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun readBounded(input: java.io.InputStream, maximum: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maximum) { "Réponse d'enrôlement trop grande" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray()
+    }
+
+    private companion object {
+        const val MAX_RESPONSE_BYTES = 128 * 1024
+    }
+}

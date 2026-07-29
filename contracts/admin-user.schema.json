@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.invalid/contracts/admin-user.schema.json",
+  "title": "RoomFrame administrator user operation",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "username", "role", "password", "totpCode"],
+      "properties": {
+        "operation": { "const": "invite" },
+        "username": { "$ref": "#/$defs/username" },
+        "email": { "$ref": "#/$defs/email" },
+        "role": { "$ref": "#/$defs/role" },
+        "password": { "$ref": "#/$defs/password" },
+        "totpCode": { "$ref": "#/$defs/totpCode" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "activationToken"],
+      "properties": {
+        "operation": { "const": "activation-start" },
+        "activationToken": { "$ref": "#/$defs/activationToken" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "activationToken",
+        "challengeId",
+        "password",
+        "totpCode"
+      ],
+      "properties": {
+        "operation": { "const": "activation-complete" },
+        "activationToken": { "$ref": "#/$defs/activationToken" },
+        "challengeId": { "$ref": "#/$defs/uuid" },
+        "password": { "$ref": "#/$defs/password" },
+        "totpCode": { "$ref": "#/$defs/totpCode" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "role", "password", "totpCode"],
+      "properties": {
+        "operation": { "const": "role" },
+        "role": { "$ref": "#/$defs/role" },
+        "password": { "$ref": "#/$defs/password" },
+        "totpCode": { "$ref": "#/$defs/totpCode" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "confirmation", "password", "totpCode"],
+      "properties": {
+        "operation": { "enum": ["disable", "reissue"] },
+        "confirmation": { "$ref": "#/$defs/username" },
+        "password": { "$ref": "#/$defs/password" },
+        "totpCode": { "$ref": "#/$defs/totpCode" }
+      }
+    }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "username": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 80,
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"
+    },
+    "email": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "format": "email", "maxLength": 254 }
+      ]
+    },
+    "role": {
+      "enum": ["owner", "content", "fleet", "security", "release"]
+    },
+    "password": {
+      "type": "string",
+      "minLength": 12,
+      "maxLength": 256
+    },
+    "totpCode": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$"
+    },
+    "activationToken": {
+      "type": "string",
+      "minLength": 40,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  }
+}

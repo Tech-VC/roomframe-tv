@@ -1,5 +1,22 @@
 # Changelog
 
+## Évolutions du jalon 0.3.0
+
+- sauvegardes chiffrées en flux avec `age`, trousseau de reprise, rétention
+  quotidienne/hebdomadaire et restauration PostgreSQL isolée ;
+- découverte locale `_roomframe._tcp` contrôlée, manifeste ECDSA P-256 et
+  fallback FQDN/IP dans le client Android 12 ;
+- source Git signée et SBOM SPDX 2.3 embarqué dans les `.rfupdate`, avec refus
+  des imports GitHub dont le dépôt ou le tag divergent ;
+- attestations GitHub/Sigstore de provenance SLSA et de SBOM ajoutées aux
+  releases publiques, sans les rendre nécessaires aux imports hors ligne ;
+- restauration PostgreSQL de test stabilisée en attendant la fin du serveur
+  d’initialisation temporaire de l’image Docker ;
+- reprise des anciens schémas PostgreSQL rendue atomique et compatible avec
+  les séquences `serial` liées à leurs tables ;
+- fallback HTTPS par IP contrôlé avec la CA locale malgré l’absence de SNI
+  autorisée pour une adresse IP littérale.
+
 ## 0.3.0 — 2026-07-25
 
 Premier jalon serveur/admin exécutable :
@@ -9,7 +26,7 @@ Premier jalon serveur/admin exécutable :
 - détection de l’IPv4 et du suffixe DNS sans modification du réseau, avec
   option `--host` et URL IP de secours ;
 - secrets root-only créés une seule fois, commandes de diagnostic, sauvegarde,
-  bootstrap et récupération ;
+  vérification de restauration isolée, bootstrap et récupération ;
 - PostgreSQL 17, migrations additives vérifiées par checksum et bundle initial
   appliqué une seule fois sur instance vide ;
 - bootstrap concurrent sûr, premier propriétaire Argon2id, MFA TOTP, sessions,
@@ -27,14 +44,18 @@ Premier jalon serveur/admin exécutable :
 - pipeline image/vidéo adressé par hash, file PostgreSQL durable, variantes
   1080p/4K pertinentes et métadonnées supprimées ;
 - import `.rfupdate` vérifié par Ed25519, structure, compatibilité, tailles et
-  hashes, puis quarantaine et plan canari/progressif ;
+  hashes et unicité des clés JSON, puis quarantaine et plan
+  canari/progressif ;
 - génération CI d’un installateur autonome et d’un `.rfupdate` signé avec une
   clé conservée dans l’environnement GitHub protégé `release-signing` ;
 - compte système `roomframe` sans login pour l’API/worker, récupération montée
   en lecture seule et images externes verrouillées par digest ;
+- copie d’installation filtrant les instructions locales, médias et relevés
+  matériels privés, ainsi que les métadonnées macOS AppleDouble ;
 - tests unitaires et intégration PostgreSQL, checks de contrats, scripts, CSP
-  et configuration Compose : 9 tests Studio/synchronisation TV et 13 tests
-  API exécutés par les workflows de validation et de release sur clone frais.
+  et configuration Compose : 14 tests Studio/synchronisation TV et 19 tests
+  API, dont médias et import `.rfupdate` multipart réels, exécutés par les
+  workflows de validation et de release sur clone frais.
 
 Limites connues de ce jalon :
 

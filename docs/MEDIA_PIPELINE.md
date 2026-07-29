@@ -60,8 +60,18 @@ recopier les métadonnées :
 - `thumbnail.webp`, au plus 480 × 270 ;
 - `1080p.webp`, au plus 1920 × 1080 ;
 - `4k.webp`, au plus 3840 × 2160, seulement si la source dépasse le 1080p.
+- `logo.webp`, au plus 1920 × 1080, si la source possède déjà une transparence
+  utile ou si un fond clair uniforme peut être retiré avec confiance.
 
 Chaque variante possède son propre MIME, sa taille et son SHA-256.
+
+Le détourage automatique des logos échantillonne les coins et le bord, puis
+retire uniquement la zone de couleur claire reliée au bord de l’image. Les
+zones claires internes au logo ne sont donc pas supprimées globalement. Si le
+fond est ambigu ou si la zone détectée est trop petite, aucune variante
+`logo` n’est publiée et la variante 1080p reste disponible. L’API expose le
+résultat de cette décision dans `logoTransparency`, sans conserver la couleur
+échantillonnée.
 
 ## Vidéos
 
@@ -85,12 +95,25 @@ résolution des variantes d’accueil ne force pas celle des autres applications
 ## Mise en page et exposition
 
 Les scènes acceptent `cover`, `contain` ou `focus`. Le point focal est un
-couple normalisé entre `0` et `1`. Seules les variantes `thumbnail`, `1080p` et
-`4k` prêtes peuvent être servies.
+couple normalisé entre `0` et `1`. Seules les variantes `thumbnail`, `1080p`,
+`4k` et `logo` prêtes peuvent être servies.
+
+Lors de la synchronisation, un asset utilisé uniquement par un composant
+`logo` est livré avec sa variante `logo` si elle existe. S’il est aussi utilisé
+comme fond ou image dans la même scène, RoomFrame livre aussi les variantes
+standard ; chaque renderer choisit `logo` uniquement pour le composant logo.
 
 Une TV authentifiée ne peut télécharger que les assets référencés par sa scène
 publiée. Les réponses utilisent `nosniff`, un cache privé immuable et le type
 enregistré par le worker.
+
+## Vérification automatisée
+
+Le scénario d’intégration PostgreSQL envoie une vraie requête multipart PNG,
+fait réclamer le job par le worker, vérifie les fichiers WebP et leur SHA-256,
+confirme l’absence de métadonnées EXIF/XMP, retélécharge la variante par l’API,
+réimporte le même contenu pour contrôler la déduplication, puis vérifie qu’un
+faux JPEG est refusé et ne laisse aucun fichier temporaire.
 
 ## Limites actuelles
 

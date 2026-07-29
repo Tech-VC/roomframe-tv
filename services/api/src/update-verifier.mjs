@@ -1,18 +1,26 @@
 import crypto from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { copyFile, lstat, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { Transform } from 'node:stream';
 import semver from 'semver';
 import yauzl from 'yauzl';
 
 const MANIFEST_LIMIT = 1024 * 1024;
 const SIGNATURE_LIMIT = 4096;
+const SBOM_LIMIT = 16 * 1024 * 1024;
 const BUNDLE_UNCOMPRESSED_LIMIT = 8 * 1024 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 250;
 
+const invalidUpdate = (code, statusCode = 422, cause = undefined) => Object.assign(
+  new Error(code),
+  { statusCode, ...(cause ? { cause } : {}) },
+);
+
 const openZip = (file) => new Promise((resolve, reject) => {
   yauzl.open(file, { lazyEntries: true, autoClose: false, decodeStrings: true }, (error, archive) => {
-    if (error) reject(Object.assign(new Error('invalid_update_zip'), { cause: error }));
+    if (error) reject(invalidUpdate('invalid_update_zip', 422, error));
     else resolve(archive);
   });
 });
@@ -27,7 +35,7 @@ const safeEntryName = (name) => {
     || path.posix.normalize(name) !== name
     || name.split('/').includes('..')
   ) {
-    throw new Error('unsafe_update_path');
+    throw invalidUpdate('unsafe_update_path');
   }
   return name;
 };
@@ -44,16 +52,16 @@ const collectEntries = (archive) => new Promise((resolve, reject) => {
   archive.on('entry', (entry) => {
     try {
       const name = safeEntryName(entry.fileName);
-      if (entries.has(name)) throw new Error('duplicate_update_entry');
-      if ((entry.generalPurposeBitFlag & 0x1) !== 0) throw new Error('encrypted_update_entry');
-      if (isSymlink(entry)) throw new Error('symlink_update_entry');
+      if (entries.has(name)) throw invalidUpdate('duplicate_update_entry');
+      if ((entry.generalPurposeBitFlag & 0x1) !== 0) throw invalidUpdate('encrypted_update_entry');
+      if (isSymlink(entry)) throw invalidUpdate('symlink_update_entry');
       total += entry.uncompressedSize;
-      if (total > BUNDLE_UNCOMPRESSED_LIMIT) throw new Error('update_bundle_too_large');
+      if (total > BUNDLE_UNCOMPRESSED_LIMIT) throw invalidUpdate('update_bundle_too_large');
       if (
         entry.uncompressedSize > 1024 * 1024
         && (entry.compressedSize === 0 || entry.uncompressedSize / entry.compressedSize > MAX_COMPRESSION_RATIO)
       ) {
-        throw new Error('update_compression_ratio_exceeded');
+        throw invalidUpdate('update_compression_ratio_exceeded');
       }
       entries.set(name, entry);
       archive.readEntry();
@@ -70,13 +78,13 @@ const openEntryStream = (archive, entry) => new Promise((resolve, reject) => {
 });
 
 const readEntryBuffer = async (archive, entry, limit) => {
-  if (!entry || entry.uncompressedSize > limit) throw new Error('update_control_file_too_large');
+  if (!entry || entry.uncompressedSize > limit) throw invalidUpdate('update_control_file_too_large');
   const chunks = [];
   let size = 0;
   const stream = await openEntryStream(archive, entry);
   for await (const chunk of stream) {
     size += chunk.length;
-    if (size > limit) throw new Error('update_control_file_too_large');
+    if (size > limit) throw invalidUpdate('update_control_file_too_large');
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -102,10 +110,254 @@ const hashFile = async (file) => {
 const decodeSignature = (value) => {
   if (value.length === 64) return value;
   const text = value.toString('ascii').trim();
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(text)) throw new Error('invalid_update_signature_encoding');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(text)) throw invalidUpdate('invalid_update_signature_encoding');
   const decoded = Buffer.from(text, 'base64');
-  if (decoded.length !== 64) throw new Error('invalid_update_signature_length');
+  if (decoded.length !== 64) throw invalidUpdate('invalid_update_signature_length');
   return decoded;
+};
+
+export const parseJsonWithUniqueKeys = (value) => {
+  const source = Buffer.isBuffer(value) ? value.toString('utf8') : String(value);
+  let cursor = 0;
+
+  const invalid = () => {
+    throw invalidUpdate('invalid_update_manifest_json');
+  };
+  const skipWhitespace = () => {
+    while (cursor < source.length && /[\t\n\r ]/.test(source[cursor])) cursor += 1;
+  };
+  const parseString = () => {
+    if (source[cursor] !== '"') invalid();
+    const start = cursor;
+    cursor += 1;
+    while (cursor < source.length) {
+      if (source[cursor] === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (source[cursor] === '"') {
+        cursor += 1;
+        try {
+          return JSON.parse(source.slice(start, cursor));
+        } catch {
+          invalid();
+        }
+      }
+      cursor += 1;
+    }
+    invalid();
+  };
+  const parsePrimitive = () => {
+    const start = cursor;
+    while (
+      cursor < source.length
+      && !/[\t\n\r ,}\]]/.test(source[cursor])
+    ) cursor += 1;
+    if (cursor === start) invalid();
+    try {
+      JSON.parse(source.slice(start, cursor));
+    } catch {
+      invalid();
+    }
+  };
+  const parseValue = (depth) => {
+    if (depth > 64) invalid();
+    skipWhitespace();
+    if (source[cursor] === '{') {
+      cursor += 1;
+      skipWhitespace();
+      const keys = new Set();
+      if (source[cursor] === '}') {
+        cursor += 1;
+        return;
+      }
+      while (cursor < source.length) {
+        const key = parseString();
+        if (keys.has(key)) throw invalidUpdate('duplicate_update_manifest_key');
+        keys.add(key);
+        skipWhitespace();
+        if (source[cursor] !== ':') invalid();
+        cursor += 1;
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[cursor] === '}') {
+          cursor += 1;
+          return;
+        }
+        if (source[cursor] !== ',') invalid();
+        cursor += 1;
+        skipWhitespace();
+      }
+      invalid();
+    }
+    if (source[cursor] === '[') {
+      cursor += 1;
+      skipWhitespace();
+      if (source[cursor] === ']') {
+        cursor += 1;
+        return;
+      }
+      while (cursor < source.length) {
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[cursor] === ']') {
+          cursor += 1;
+          return;
+        }
+        if (source[cursor] !== ',') invalid();
+        cursor += 1;
+        skipWhitespace();
+      }
+      invalid();
+    }
+    if (source[cursor] === '"') {
+      parseString();
+      return;
+    }
+    parsePrimitive();
+  };
+
+  parseValue(0);
+  skipWhitespace();
+  if (cursor !== source.length) invalid();
+  try {
+    return JSON.parse(source);
+  } catch {
+    invalid();
+  }
+};
+
+const validateSpdxSbom = ({
+  value,
+  releaseVersion,
+  serverArchiveSha256,
+}) => {
+  const document = parseJsonWithUniqueKeys(value);
+  if (
+    !document
+    || typeof document !== 'object'
+    || Array.isArray(document)
+    || document.spdxVersion !== 'SPDX-2.3'
+    || document.dataLicense !== 'CC0-1.0'
+    || document.SPDXID !== 'SPDXRef-DOCUMENT'
+    || typeof document.name !== 'string'
+    || document.name.length < 1
+    || document.name.length > 256
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  let namespace;
+  try {
+    namespace = new URL(document.documentNamespace);
+  } catch {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    typeof document.documentNamespace !== 'string'
+    || document.documentNamespace.length < 1
+    || document.documentNamespace.length > 1024
+    || namespace.protocol !== 'https:'
+    || namespace.hostname === ''
+    || namespace.username !== ''
+    || namespace.password !== ''
+    || namespace.hash !== ''
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !document.creationInfo
+    || typeof document.creationInfo !== 'object'
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(
+      document.creationInfo.created ?? '',
+    )
+    || Number.isNaN(Date.parse(document.creationInfo.created))
+    || !Array.isArray(document.creationInfo.creators)
+    || document.creationInfo.creators.length < 1
+    || document.creationInfo.creators.length > 20
+    || document.creationInfo.creators.some(
+      (creator) => typeof creator !== 'string'
+        || creator.length < 1
+        || creator.length > 256,
+    )
+    || !document.creationInfo.creators.some(
+      (creator) => typeof creator === 'string'
+        && creator.startsWith('Tool: RoomFrame SBOM Generator/'),
+    )
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !Array.isArray(document.packages)
+    || document.packages.length < 1
+    || document.packages.length > 10_000
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  const packageIds = new Set();
+  let rootPackage = null;
+  for (const component of document.packages) {
+    if (
+      !component
+      || typeof component !== 'object'
+      || Array.isArray(component)
+      || typeof component.SPDXID !== 'string'
+      || !/^SPDXRef-[A-Za-z0-9.-]{1,200}$/.test(component.SPDXID)
+      || packageIds.has(component.SPDXID)
+      || typeof component.name !== 'string'
+      || component.name.length < 1
+      || component.name.length > 512
+      || typeof component.downloadLocation !== 'string'
+      || typeof component.filesAnalyzed !== 'boolean'
+    ) {
+      throw invalidUpdate('invalid_update_sbom');
+    }
+    packageIds.add(component.SPDXID);
+    if (component.SPDXID === 'SPDXRef-Package-RoomFrame') rootPackage = component;
+  }
+  if (
+    !rootPackage
+    || rootPackage.name !== 'roomframe-tv'
+    || rootPackage.versionInfo !== releaseVersion
+    || rootPackage.filesAnalyzed !== false
+    || !Array.isArray(rootPackage.checksums)
+    || !rootPackage.checksums.some(
+      (checksum) => checksum?.algorithm === 'SHA256'
+        && checksum?.checksumValue === serverArchiveSha256,
+    )
+    || !Array.isArray(document.documentDescribes)
+    || !document.documentDescribes.includes('SPDXRef-Package-RoomFrame')
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  if (
+    !Array.isArray(document.relationships)
+    || document.relationships.length < 1
+    || document.relationships.length > 20_000
+  ) {
+    throw invalidUpdate('invalid_update_sbom');
+  }
+  const knownIds = new Set([...packageIds, 'SPDXRef-DOCUMENT']);
+  let describesRoomFrame = false;
+  for (const relationship of document.relationships) {
+    if (
+      !relationship
+      || typeof relationship !== 'object'
+      || !knownIds.has(relationship.spdxElementId)
+      || !knownIds.has(relationship.relatedSpdxElement)
+      || typeof relationship.relationshipType !== 'string'
+      || !/^[A-Z][A-Z0-9_]{1,80}$/.test(relationship.relationshipType)
+    ) {
+      throw invalidUpdate('invalid_update_sbom');
+    }
+    if (
+      relationship.spdxElementId === 'SPDXRef-DOCUMENT'
+      && relationship.relatedSpdxElement === 'SPDXRef-Package-RoomFrame'
+      && relationship.relationshipType === 'DESCRIBES'
+    ) {
+      describesRoomFrame = true;
+    }
+  }
+  if (!describesRoomFrame) throw invalidUpdate('invalid_update_sbom');
 };
 
 const currentArchitecture = () => ({ x64: 'amd64', arm64: 'arm64' })[process.arch] ?? process.arch;
@@ -115,80 +367,103 @@ export const verifyUpdateBundle = async ({
   validators,
   trustDir,
   currentVersion,
+  allowNonNewer = false,
 }) => {
   const archive = await openZip(file);
   try {
     const entries = await collectEntries(archive);
     const manifestEntry = entries.get('manifest.json');
     const signatureEntry = entries.get('manifest.sig');
-    if (!manifestEntry || !signatureEntry) throw new Error('update_bundle_incomplete');
+    if (!manifestEntry || !signatureEntry) throw invalidUpdate('update_bundle_incomplete');
     const manifestBytes = await readEntryBuffer(archive, manifestEntry, MANIFEST_LIMIT);
     const signatureBytes = decodeSignature(await readEntryBuffer(archive, signatureEntry, SIGNATURE_LIMIT));
-    let manifest;
-    try {
-      manifest = JSON.parse(manifestBytes.toString('utf8'));
-    } catch {
-      throw new Error('invalid_update_manifest_json');
-    }
+    const manifest = parseJsonWithUniqueKeys(manifestBytes);
     validators.assertUpdateBundle(manifest);
+    if (
+      manifest.source
+      && manifest.source.ref !== `refs/tags/v${manifest.version}`
+    ) {
+      throw invalidUpdate('update_source_ref_mismatch');
+    }
 
     const keyId = manifest.signature.keyId;
     const trustRoot = path.resolve(trustDir);
     const keyPath = path.resolve(trustRoot, `${keyId}.pem`);
-    if (!keyPath.startsWith(`${trustRoot}${path.sep}`)) throw new Error('invalid_update_key_id');
+    if (!keyPath.startsWith(`${trustRoot}${path.sep}`)) throw invalidUpdate('invalid_update_key_id');
     let publicKey;
     try {
       publicKey = await readFile(keyPath);
     } catch (error) {
-      if (error?.code === 'ENOENT') throw Object.assign(new Error('untrusted_update_key'), { statusCode: 422 });
+      if (error?.code === 'ENOENT') throw invalidUpdate('untrusted_update_key');
       throw error;
     }
     if (!crypto.verify(null, manifestBytes, publicKey, signatureBytes)) {
-      throw Object.assign(new Error('invalid_update_signature'), { statusCode: 422 });
+      throw invalidUpdate('invalid_update_signature');
     }
 
-    if (!semver.valid(manifest.version) || !semver.gt(manifest.version, currentVersion)) {
-      throw Object.assign(new Error('update_version_not_newer'), { statusCode: 409 });
+    const versionIsNewer = semver.valid(manifest.version)
+      && semver.gt(manifest.version, currentVersion);
+    if (!semver.valid(manifest.version) || (!versionIsNewer && !allowNonNewer)) {
+      throw invalidUpdate('update_version_not_newer', 409);
     }
     if (
       manifest.minimumServerVersion
       && !semver.gte(currentVersion, manifest.minimumServerVersion)
     ) {
-      throw Object.assign(new Error('update_requires_newer_server'), { statusCode: 422 });
+      throw invalidUpdate('update_requires_newer_server');
     }
     if (
       manifest.maximumServerVersion
       && !semver.lte(currentVersion, manifest.maximumServerVersion)
     ) {
-      throw Object.assign(new Error('update_server_too_new'), { statusCode: 422 });
+      throw invalidUpdate('update_server_too_new');
     }
     if (manifest.architectures && !manifest.architectures.includes(currentArchitecture())) {
-      throw Object.assign(new Error('update_architecture_incompatible'), { statusCode: 422 });
+      throw invalidUpdate('update_architecture_incompatible');
     }
 
     const artifactPaths = new Set();
+    const serverArtifacts = [];
+    const sbomArtifacts = [];
     for (const artifact of manifest.artifacts) {
-      if (artifactPaths.has(artifact.path)) throw new Error('duplicate_update_artifact');
+      if (artifactPaths.has(artifact.path)) throw invalidUpdate('duplicate_update_artifact');
       artifactPaths.add(artifact.path);
       const entry = entries.get(artifact.path);
-      if (!entry || artifact.path.endsWith('/')) throw new Error('missing_update_artifact');
-      if (entry.uncompressedSize !== artifact.size) throw new Error('update_artifact_size_mismatch');
+      if (!entry || artifact.path.endsWith('/')) throw invalidUpdate('missing_update_artifact');
+      if (entry.uncompressedSize !== artifact.size) throw invalidUpdate('update_artifact_size_mismatch');
       const actual = await hashEntry(archive, entry);
       if (actual.size !== artifact.size || actual.sha256 !== artifact.sha256) {
-        throw Object.assign(new Error('update_artifact_hash_mismatch'), { statusCode: 422 });
+        throw invalidUpdate('update_artifact_hash_mismatch');
       }
+      if (artifact.kind === 'server-archive') serverArtifacts.push(artifact);
+      if (artifact.kind === 'sbom-spdx') sbomArtifacts.push({ artifact, entry });
     }
 
     for (const [name] of entries) {
       if (name.endsWith('/')) continue;
       if (name === 'manifest.json' || name === 'manifest.sig') continue;
-      if (!artifactPaths.has(name)) throw new Error('unlisted_update_artifact');
+      if (!artifactPaths.has(name)) throw invalidUpdate('unlisted_update_artifact');
+    }
+    if (sbomArtifacts.length > 1) throw invalidUpdate('multiple_update_sboms');
+    if (manifest.source && sbomArtifacts.length !== 1) {
+      throw invalidUpdate('update_supply_chain_incomplete');
+    }
+    if (sbomArtifacts.length === 1) {
+      if (serverArtifacts.length !== 1) {
+        throw invalidUpdate('update_sbom_server_archive_ambiguous');
+      }
+      validateSpdxSbom({
+        value: await readEntryBuffer(archive, sbomArtifacts[0].entry, SBOM_LIMIT),
+        releaseVersion: manifest.version,
+        serverArchiveSha256: serverArtifacts[0].sha256,
+      });
     }
 
     return {
       manifest,
       bundleSha256: await hashFile(file),
       signatureKeyId: keyId,
+      versionIsNewer,
     };
   } finally {
     archive.close();
@@ -206,11 +481,16 @@ export const quarantineVerifiedUpdate = async ({ source, releasesDir, bundleSha2
   );
   const destination = path.join(verified, `${bundleSha256}.rfupdate`);
   try {
-    await stat(destination);
-    if (await hashFile(destination) === bundleSha256) {
+    const destinationInfo = await lstat(destination);
+    if (
+      destinationInfo.isFile()
+      && !destinationInfo.isSymbolicLink()
+      && await hashFile(destination) === bundleSha256
+    ) {
       await unlink(source).catch(() => {});
       return destination;
     }
+    await unlink(destination);
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error;
   }
@@ -224,5 +504,78 @@ export const quarantineVerifiedUpdate = async ({ source, releasesDir, bundleSha2
     return destination;
   } finally {
     await unlink(staged).catch(() => {});
+  }
+};
+
+export const materializeVerifiedApkArtifacts = async ({
+  bundleFile,
+  manifest,
+  releasesDir,
+}) => {
+  const apkArtifacts = manifest.artifacts.filter(
+    (artifact) => artifact.kind === 'home-apk' || artifact.kind === 'agent-apk',
+  );
+  if (apkArtifacts.length === 0) return [];
+  const releaseRoot = path.join(releasesDir, 'artifacts', manifest.releaseId);
+  await mkdir(releaseRoot, { recursive: true, mode: 0o700 });
+  const archive = await openZip(bundleFile);
+  try {
+    const entries = await collectEntries(archive);
+    const materialized = [];
+    for (const artifact of apkArtifacts) {
+      const entry = entries.get(artifact.path);
+      if (!entry) throw invalidUpdate('missing_update_artifact');
+      const destination = path.join(releaseRoot, `${artifact.sha256}.apk`);
+      try {
+        const destinationInfo = await lstat(destination);
+        if (
+          destinationInfo.isFile()
+          && !destinationInfo.isSymbolicLink()
+          && destinationInfo.size === artifact.size
+          && await hashFile(destination) === artifact.sha256
+        ) {
+          materialized.push({ ...artifact, storagePath: destination });
+          continue;
+        }
+        await unlink(destination);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error;
+      }
+
+      const staged = path.join(
+        releaseRoot,
+        `.${artifact.sha256}.${crypto.randomUUID()}.part`,
+      );
+      const digest = crypto.createHash('sha256');
+      let size = 0;
+      const meter = new Transform({
+        transform(chunk, _encoding, callback) {
+          size += chunk.length;
+          if (size > artifact.size) {
+            callback(invalidUpdate('update_artifact_size_mismatch'));
+            return;
+          }
+          digest.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      try {
+        await pipeline(
+          await openEntryStream(archive, entry),
+          meter,
+          createWriteStream(staged, { flags: 'wx', mode: 0o600 }),
+        );
+        if (size !== artifact.size || digest.digest('hex') !== artifact.sha256) {
+          throw invalidUpdate('update_artifact_hash_mismatch');
+        }
+        await rename(staged, destination);
+        materialized.push({ ...artifact, storagePath: destination });
+      } finally {
+        await unlink(staged).catch(() => {});
+      }
+    }
+    return materialized;
+  } finally {
+    archive.close();
   }
 };

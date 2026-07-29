@@ -1,5 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  normalizeGithubRepository,
+  normalizeUpdateChannel,
+} from './update-source.mjs';
 
 const readTextFile = async (file, label) => {
   try {
@@ -18,11 +22,21 @@ const positiveInteger = (value, fallback) => {
   return parsed;
 };
 
+const boundedInteger = (value, fallback, minimum, maximum) => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    return fallback;
+  }
+  return parsed;
+};
+
 export const loadConfig = async (overrides = {}) => {
   const requireAuthSecrets = overrides.requireAuthSecrets !== false;
   const secretRoot = overrides.secretRoot ?? process.env.ROOMFRAME_SECRET_DIR ?? '/run/secrets';
   const dataRoot = overrides.dataRoot ?? process.env.ROOMFRAME_DATA_DIR ?? '/data';
-  const passwordFile = overrides.postgresPasswordFile
+  const passwordFile = overrides.dbPasswordFile
+    ?? overrides.postgresPasswordFile
+    ?? process.env.ROOMFRAME_DB_PASSWORD_FILE
     ?? process.env.ROOMFRAME_POSTGRES_PASSWORD_FILE
     ?? path.join(secretRoot, 'postgres_password');
   const bootstrapTokenFile = overrides.bootstrapTokenFile
@@ -35,8 +49,9 @@ export const loadConfig = async (overrides = {}) => {
     ?? process.env.ROOMFRAME_TOTP_KEY_FILE
     ?? path.join(secretRoot, 'totp_encryption_key');
 
-  const postgresPassword = overrides.postgresPassword
-    ?? await readTextFile(passwordFile, 'postgres_password');
+  const databasePassword = overrides.dbPassword
+    ?? overrides.postgresPassword
+    ?? await readTextFile(passwordFile, 'database_password');
   const [bootstrapToken, sessionSecret, totpEncryptionKey] = requireAuthSecrets
     ? await Promise.all([
       overrides.bootstrapToken ?? readTextFile(bootstrapTokenFile, 'bootstrap_token'),
@@ -80,6 +95,33 @@ export const loadConfig = async (overrides = {}) => {
     updateTrustDir: overrides.updateTrustDir
       ?? process.env.ROOMFRAME_UPDATE_TRUST_DIR
       ?? '/run/roomframe/update-trust',
+    tvClientCaFile: overrides.tvClientCaFile
+      ?? process.env.ROOMFRAME_TV_CLIENT_CA_FILE
+      ?? '/run/roomframe/tv-client-ca.crt',
+    serverCaFile: overrides.serverCaFile
+      ?? process.env.ROOMFRAME_SERVER_CA_FILE
+      ?? '/run/roomframe/server-ca/ca.crt',
+    updateGithubRepository: normalizeGithubRepository(
+      overrides.updateGithubRepository
+      ?? process.env.ROOMFRAME_UPDATE_GITHUB_REPOSITORY,
+    ),
+    updateGithubChannel: normalizeUpdateChannel(
+      overrides.updateGithubChannel
+      ?? process.env.ROOMFRAME_UPDATE_GITHUB_CHANNEL,
+    ),
+    updatePollMinutes: boundedInteger(
+      overrides.updatePollMinutes ?? process.env.ROOMFRAME_UPDATE_POLL_MINUTES,
+      360,
+      15,
+      10_080,
+    ),
+    updateRequestTimeoutMs: boundedInteger(
+      overrides.updateRequestTimeoutMs
+      ?? process.env.ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS,
+      60_000,
+      5_000,
+      300_000,
+    ),
     maxImageBytes: positiveInteger(
       overrides.maxImageBytes ?? process.env.ROOMFRAME_MAX_IMAGE_BYTES,
       25 * 1024 * 1024,
@@ -113,10 +155,16 @@ export const loadConfig = async (overrides = {}) => {
       port: positiveInteger(overrides.dbPort ?? process.env.ROOMFRAME_DB_PORT, 5432),
       database: overrides.dbName ?? process.env.ROOMFRAME_DB_NAME ?? 'roomframe',
       user: overrides.dbUser ?? process.env.ROOMFRAME_DB_USER ?? 'roomframe',
-      password: postgresPassword,
+      password: databasePassword,
       max: positiveInteger(overrides.dbPoolSize ?? process.env.ROOMFRAME_DB_POOL_SIZE, 10),
       application_name: overrides.applicationName ?? 'roomframe-api',
     },
+    databaseMigrationRole: overrides.databaseMigrationRole
+      ?? process.env.ROOMFRAME_DB_MIGRATION_ROLE
+      ?? null,
+    databaseRuntimeRole: overrides.databaseRuntimeRole
+      ?? process.env.ROOMFRAME_DB_RUNTIME_ROLE
+      ?? null,
     bootstrapToken,
     sessionSecret,
     totpEncryptionKey,

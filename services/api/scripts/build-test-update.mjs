@@ -27,6 +27,13 @@ export const buildTestUpdate = async (outputDirectory, {
   keyId = 'dev-local',
   tamperArtifact = false,
   extraEntries = [],
+  manifestTextTransform = (value) => value,
+  includeHomeApk = false,
+  serverArtifactKind = 'oci-images',
+  includeSupplyChain = false,
+  invalidSbom = false,
+  sourceRepository = 'example/roomframe',
+  sourceRevision = 'a'.repeat(40),
 } = {}) => {
   await mkdir(outputDirectory, { recursive: true, mode: 0o700 });
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -41,6 +48,70 @@ export const buildTestUpdate = async (outputDirectory, {
 
   const artifactPath = 'server/test-release.txt';
   const artifact = Buffer.from('RoomFrame signed local test update\n', 'utf8');
+  const artifacts = [{
+    path: artifactPath,
+    sha256: crypto.createHash('sha256').update(artifact).digest('hex'),
+    size: artifact.length,
+    kind: serverArtifactKind,
+  }];
+  let sbom = null;
+  const sbomPath = `metadata/roomframe-${version}.spdx.json`;
+  if (includeSupplyChain) {
+    if (serverArtifactKind !== 'server-archive') {
+      throw new Error('includeSupplyChain exige serverArtifactKind=server-archive');
+    }
+    const sbomDocument = {
+      spdxVersion: 'SPDX-2.3',
+      dataLicense: 'CC0-1.0',
+      SPDXID: 'SPDXRef-DOCUMENT',
+      name: `RoomFrame TV test ${version}`,
+      documentNamespace: `https://roomframe.example/spdx/test/${crypto.randomUUID()}`,
+      creationInfo: {
+        created: new Date().toISOString(),
+        creators: ['Tool: RoomFrame SBOM Generator/test'],
+      },
+      documentDescribes: ['SPDXRef-Package-RoomFrame'],
+      packages: [{
+        name: 'roomframe-tv',
+        SPDXID: 'SPDXRef-Package-RoomFrame',
+        versionInfo: invalidSbom ? '9.9.9' : version,
+        downloadLocation: `git+https://github.com/${sourceRepository}.git@${sourceRevision}`,
+        filesAnalyzed: false,
+        licenseConcluded: 'Apache-2.0',
+        licenseDeclared: 'Apache-2.0',
+        copyrightText: 'NOASSERTION',
+        checksums: [{
+          algorithm: 'SHA256',
+          checksumValue: crypto.createHash('sha256').update(artifact).digest('hex'),
+        }],
+      }],
+      relationships: [{
+        spdxElementId: 'SPDXRef-DOCUMENT',
+        relationshipType: 'DESCRIBES',
+        relatedSpdxElement: 'SPDXRef-Package-RoomFrame',
+      }],
+    };
+    sbom = Buffer.from(`${JSON.stringify(sbomDocument, null, 2)}\n`, 'utf8');
+    artifacts.push({
+      path: sbomPath,
+      sha256: crypto.createHash('sha256').update(sbom).digest('hex'),
+      size: sbom.length,
+      kind: 'sbom-spdx',
+    });
+  }
+  const homeApkPath = 'android/roomframe-home-test.apk';
+  const homeApk = Buffer.from('RoomFrame local test APK placeholder\n', 'utf8');
+  if (includeHomeApk) {
+    artifacts.push({
+      path: homeApkPath,
+      sha256: crypto.createHash('sha256').update(homeApk).digest('hex'),
+      size: homeApk.length,
+      kind: 'home-apk',
+      packageName: 'org.roomframe.tv',
+      versionCode: 4,
+      signingCertificateSha256: '1'.repeat(64),
+    });
+  }
   const manifest = {
     formatVersion: 1,
     releaseId: crypto.randomUUID(),
@@ -54,14 +125,18 @@ export const buildTestUpdate = async (outputDirectory, {
       keyId,
     },
     migrations: [],
-    artifacts: [{
-      path: artifactPath,
-      sha256: crypto.createHash('sha256').update(artifact).digest('hex'),
-      size: artifact.length,
-      kind: 'oci-images',
-    }],
+    artifacts,
   };
-  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  if (includeSupplyChain) {
+    manifest.source = {
+      provider: 'github',
+      repository: sourceRepository,
+      revision: sourceRevision,
+      ref: `refs/tags/v${version}`,
+    };
+  }
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestBytes = Buffer.from(manifestTextTransform(manifestText), 'utf8');
   const signature = crypto.sign(null, manifestBytes, privateKey);
   const archive = new yazl.ZipFile();
   archive.addBuffer(manifestBytes, 'manifest.json', { compress: false });
@@ -71,6 +146,12 @@ export const buildTestUpdate = async (outputDirectory, {
     artifactPath,
     { compress: true },
   );
+  if (includeHomeApk) {
+    archive.addBuffer(homeApk, homeApkPath, { compress: true });
+  }
+  if (sbom) {
+    archive.addBuffer(sbom, sbomPath, { compress: true });
+  }
   for (const entry of extraEntries) {
     archive.addBuffer(Buffer.from(entry.content ?? ''), entry.path, { compress: true });
   }

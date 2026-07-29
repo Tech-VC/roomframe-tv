@@ -12,6 +12,11 @@ const schemaNames = [
   'experience-bundle.schema.json',
   'update-bundle.schema.json',
   'tv-sync.schema.json',
+  'tv-credential.schema.json',
+  'tv-certificate.schema.json',
+  'tv-trust-bootstrap.schema.json',
+  'discovery.schema.json',
+  'admin-user.schema.json',
 ];
 
 const allowedProps = {
@@ -210,5 +215,10 @@ export const createValidators = async (contractsDir) => {
     assertExperienceBundle: (value) => assert('experience-bundle.schema.json', value),
     assertUpdateBundle: (value) => assert('update-bundle.schema.json', value),
     assertTvSync: (value) => assert('tv-sync.schema.json', value),
+    assertTvCredential: (value) => assert('tv-credential.schema.json', value),
+    assertTvCertificate: (value) => assert('tv-certificate.schema.json', value),
+    assertTvTrustBootstrap: (value) => assert('tv-trust-bootstrap.schema.json', value),
+    assertDiscovery: (value) => assert('discovery.schema.json', value),
+    assertAdminUser: (value) => assert('admin-user.schema.json', value),
   });
 };

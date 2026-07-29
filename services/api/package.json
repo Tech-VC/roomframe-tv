@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",
+    "migrate": "node src/migrate.mjs",
     "worker": "node src/worker.mjs",
+    "update-poller": "node src/update-poller.mjs",
     "check": "node scripts/check-syntax.mjs",
     "test": "node --test"
   },
@@ -16,6 +18,7 @@
     "@fastify/cookie": "11.1.2",
     "@fastify/multipart": "10.1.0",
     "@fastify/rate-limit": "11.1.0",
+    "@simplewebauthn/server": "13.3.2",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "argon2": "0.45.1",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bytesToHex, normalizeSyncPayload, stableStringify, variantRank } from "./sync-format.js";
+import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify, variantRank } from "./sync-format.js";
 
 test("normalise un manifeste de synchronisation", () => {
   const payload = normalizeSyncPayload({
@@ -48,4 +48,29 @@ test("canonicalise les clés et convertit les octets en hexadécimal", () => {
 test("préfère la variante 1080p pour le renderer fluide", () => {
   assert.ok(variantRank("1080p") > variantRank("4k"));
   assert.ok(variantRank("1080p") > variantRank("thumbnail"));
+  const assetId = "00000000-0000-4000-8000-000000000123";
+  const standardBlob = new Blob(["standard"]);
+  const logoBlob = new Blob(["logo"]);
+  const urls = new Map([
+    [standardBlob, "blob:standard"],
+    [logoBlob, "blob:logo"],
+  ]);
+  const resolver = createAssetResolver([
+    {
+      key: "media/example/1080p",
+      aliases: [assetId],
+      assetId,
+      variant: "1080p",
+      blob: standardBlob,
+    },
+    {
+      key: "media/example/logo",
+      aliases: [assetId],
+      assetId,
+      variant: "logo",
+      blob: logoBlob,
+    },
+  ], (blob) => urls.get(blob));
+  assert.equal(resolver.resolve(assetId), "blob:standard");
+  assert.equal(resolver.resolve(assetId, "logo"), "blob:logo");
 });

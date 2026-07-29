@@ -12,10 +12,17 @@ secrets/
 backups/
 media/
 node_modules/
+__pycache__/
+*.pyc
 .gradle/
+.kotlin/
 **/build/
+local.properties
 .DS_Store
+._*
 dist/
 *.local
 runtime.env
 .idea/
+local-branding/
+local-hardware/

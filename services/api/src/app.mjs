@@ -3,11 +3,20 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
+import { registerAccountSecurityRoutes } from './account-security-routes.mjs';
 import { registerBootstrapAuthRoutes } from './bootstrap-auth-routes.mjs';
-import { createPool, runMigrations } from './database.mjs';
+import { createPool } from './database.mjs';
 import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
+import { registerUserRoutes } from './user-routes.mjs';
 import { createValidators } from './validation.mjs';
+
+const safeServerErrorCodes = new Set([
+  'insufficient_storage',
+  'passkey_not_configured',
+  'server_ca_not_ready',
+  'server_ca_invalid',
+]);
 
 export const buildApp = async ({ config, logger = true }) => {
   const app = Fastify({
@@ -22,7 +31,9 @@ export const buildApp = async ({ config, logger = true }) => {
           'req.body.password',
           'req.body.bootstrapToken',
           'req.body.recoveryToken',
+          'req.body.activationToken',
           'req.body.enrollmentKey',
+          'req.body.nextKey',
           'req.body.totpCode',
         ],
         censor: '[REDACTED]',
@@ -63,14 +74,17 @@ export const buildApp = async ({ config, logger = true }) => {
   app.addHook('onSend', async (_request, reply, payload) => {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('referrer-policy', 'no-referrer');
-    reply.header('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    reply.header(
+      'permissions-policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), '
+        + 'publickey-credentials-create=(self), publickey-credentials-get=(self)',
+    );
     reply.header('cache-control', reply.getHeader('cache-control') ?? 'no-store');
     return payload;
   });
 
   const pool = createPool(config.database);
   try {
-    await runMigrations(pool, config.migrationsDir);
     const validators = await createValidators(config.contractsDir);
     const experience = await loadVerifiedDefaultExperience(config.defaultBundleDir, validators);
 
@@ -102,6 +116,17 @@ export const buildApp = async ({ config, logger = true }) => {
       validators,
       experience,
     });
+    registerAccountSecurityRoutes({
+      app,
+      pool,
+      config,
+    });
+    registerUserRoutes({
+      app,
+      pool,
+      config,
+      validators,
+    });
     registerStudioRoutes({
       app,
       pool,
@@ -128,8 +153,8 @@ export const buildApp = async ({ config, logger = true }) => {
       }
       if (status >= 500) {
         request.log.error({ err: error }, 'request_failed');
-        code = error.message === 'insufficient_storage'
-          ? 'insufficient_storage'
+        code = safeServerErrorCodes.has(error.message)
+          ? error.message
           : 'internal_error';
       }
       return reply.code(status).send({
@@ -137,6 +162,9 @@ export const buildApp = async ({ config, logger = true }) => {
         ...(status < 500 && error.validation ? { validation: error.validation } : {}),
         ...(status === 409 && error.currentRevision
           ? { currentRevision: error.currentRevision }
+          : {}),
+        ...(status === 409 && error.preferredUrl
+          ? { preferredUrl: error.preferredUrl }
           : {}),
       });
     });

@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule RoomFrame encrypted daily database backups
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=roomframe-backup-daily.service
+
+[Install]
+WantedBy=timers.target

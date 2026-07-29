@@ -19,6 +19,7 @@ mkdir -p "$DIST"
 sed \
   -e "s|__ROOMFRAME_ARCHIVE_URL__|${ARCHIVE_URL}|g" \
   -e "s|__ROOMFRAME_ARCHIVE_SHA256__|${ARCHIVE_SHA256}|g" \
+  -e "s|__ROOMFRAME_UPDATE_GITHUB_REPOSITORY__|${REPOSITORY}|g" \
   "$ROOT/install.sh" > "$DIST/roomframe-install.sh"
 chmod +x "$DIST/roomframe-install.sh"
 echo "$DIST/roomframe-install.sh"

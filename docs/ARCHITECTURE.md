@@ -12,7 +12,9 @@ configure jamais l’IP, le masque, la passerelle, les routes ou les DNS.
 ### Configuration de l’instance
 
 Le bootstrap applicatif crée l’identité, le premier propriétaire avec TOTP et
-la première scène. Les salles, contenus, sources et politiques appartiennent à
+la première scène. Une fois connecté, ce propriétaire peut enrôler une
+passkey, liée à l’origine HTTPS canonique et confirmée par phrase de passe +
+nouveau TOTP. Les salles, contenus, sources et politiques appartiennent à
 l’application ; aucun champ réseau serveur n’est demandé.
 
 ## Pile du jalon 0.3.0
@@ -27,26 +29,86 @@ Navigateur ── HTTPS ── Caddy ── API Node.js ── PostgreSQL
                   └── fichiers statiques admin/simulateur
 
 Worker Sharp/FFmpeg ── file PostgreSQL ── médias privés
+
+Bootstrap rôles ── admin PostgreSQL ── propriétaire sans login
+Migration one-shot ── migrateur ──────── schéma versionné
+API + worker + poller ── runtime ─────── données applicatives
+
+Poller GitHub ── HTTPS sortant ── release `.rfupdate`
+      │
+      ├── Ed25519 + source Git + SBOM SPDX communs
+      └── releases vérifiées + historique PostgreSQL
+
+Administration ── demande SQL sans privilège ── PostgreSQL
+                                                │
+Timer systemd root ── courtier local ───────────┘
+       │
+       └── revalidation Ed25519 + sauvegarde + bascule du code
+
+TV ── clé publique + preuve ── API ── demande SQL
+                                     │
+Courtier certificat root ────────────┘
+       │
+       └── CA root-only ── certificat public individuel ── TV/mTLS
+
+Caddy ── CA HTTPS publique ── copie root contrôlée ── API
+TV ── ticket chiffré sans secret sortant ────────────┘
+       └── déchiffrement + validation de la chaîne ── pin d’instance
 ```
 
-- Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
+- Caddy est le seul service applicatif TCP exposé sur le LAN, sur `443/tcp` ;
+  Avahi peut annoncer `_roomframe._tcp` sur le lien local en `5353/udp` ;
 - l’administration et l’API partagent une origine ;
-- PostgreSQL et le worker restent sur un réseau Docker interne ;
-- l’API et le worker tournent sans privilège, avec racine en lecture seule,
+- PostgreSQL et le worker média restent sur un réseau Docker interne ;
+- l’API rejoint seulement les réseaux internes `frontend` et `backend` ;
+  Caddy reçoit le LAN sur `ingress` et le poller possède sa sortie dédiée
+  `update-egress`, sans port publié ;
+- l’API, le worker et le poller tournent sans privilège, avec racine en lecture seule,
   capacités supprimées et volumes dédiés ;
-- l’API et le worker utilisent l’UID/GID du compte système Debian
+- l’API, le worker et le poller utilisent l’UID/GID du compte système Debian
   `roomframe`, sans home ni shell de connexion ;
 - la demande de récupération est montée en lecture seule dans l’API ; l’état
   de consommation autoritatif reste transactionnel en base ;
-- l’API et le worker appliquent les migrations sous verrou advisory ;
+- `database-roles` prépare idempotemment le propriétaire sans login,
+  le migrateur et le runtime ; seul `migrate`, conteneur one-shot, peut prendre
+  le rôle propriétaire et appliquer les migrations sous verrou advisory ;
+- l’API, le worker et le poller utilisent uniquement `roomframe_runtime`,
+  n’ont aucun droit DDL et ne peuvent ni lire ni modifier
+  `schema_migrations` ;
 - un seul worker média détient le verrou global de traitement ;
+- un seul poller GitHub détient son propre verrou global ;
+- l’administration peut écrire une demande d’application serveur, mais seul
+  le courtier systemd root peut la prendre ; l’API ne possède ni socket Docker,
+  ni sudo, ni chemin de bundle fourni par le navigateur ;
+- le courtier délègue au moteur root, qui revalide le bundle signé et partage
+  le verrou global des sauvegardes, restaurations et installations ;
 - code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
   séparés.
 
-Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions,
+Les nouveaux points de sauvegarde chiffrent en flux trois payloads `age` :
+PostgreSQL, configuration/PKI et données. L’identité X25519 active reste sous
+`/etc/roomframe/secrets` en mode `0400`. Son empreinte indexe aussi une copie
+dans `/var/lib/roomframe/backup-keyring`, trousseau root-only volontairement
+exclu des données restaurées. Un retour vers une ancienne configuration ne
+rend donc pas le point de sécurité récent illisible.
+
+Les modèles persistants couvrent l’instance, les
+rôles/utilisateurs/sessions/passkeys, défis WebAuthn et invitations
+administrateur à usage unique,
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
-déploiements et l’audit.
+déploiements TV, les demandes d’application serveur, leur politique
+automatique opt-in, les programmations de scènes, les générations de
+credential TV, les demandes/certificats clients individuels et l’audit.
+La migration d’appairage conserve aussi, uniquement pendant les 30 minutes du
+ticket, l’enveloppe chiffrée de la CA HTTPS ; elle est effacée à l’activation.
+
+La console de sécurité du Studio liste les comptes selon les permissions de la
+session. Le propriétaire peut y créer une invitation, changer un rôle,
+désactiver ou réinviter un compte. Le jeton en clair ne vit que dans la réponse
+active du navigateur et disparaît lorsque le ticket est masqué ou la session
+fermée. La page de connexion contient le parcours autonome d’activation ;
+aucun serveur SMTP ni service cloud n’est requis.
 
 ## Une seule origine HTTPS
 
@@ -89,10 +151,44 @@ manifeste, chaque document et chaque asset, puis active le staging dans une
 transaction qui conserve la révision précédente. Son interrupteur « Couper
 l’API » et le rechargement du cache démontrent le rendu sans serveur.
 
-Le client Android fournit maintenant `FileExperienceStore`, les interfaces de
-synchronisation/vérification et des adaptateurs `unsupported` ou explicitement
-simulés. L’intégration HTTPS/PKI, le branchement du magasin au rendu et les
-tests Gradle sur appareil restent à réaliser.
+Le client Android rend d’abord la révision active vérifiée, ou l’expérience
+embarquée en secours, puis synchronise l’origine HTTPS en arrière-plan. Il
+vérifie le manifeste canonique, chaque document et chaque média, active le
+staging par renommage atomique et revient au pointeur précédent si l’actif est
+corrompu. Les identifiants TV sont chiffrés via Android Keystore.
+
+Avant l’enrôlement, Avahi annonce `_roomframe._tcp` sur le lien local. Caddy
+sert `/api/v1/discovery` depuis un répertoire public en lecture seule. Un
+moteur root signe ce manifeste avec une identité ECDSA P-256 persistante qui
+n’est montée dans aucun conteneur. Android vérifie la signature et la
+cohérence avec l’IPv4 DNS-SD ; l’authentification définitive reste le
+déchiffrement de la CA liée au ticket et le contrôle de la chaîne TLS.
+
+La TV génère en plus une clé RSA non exportable et prouve sa possession pendant
+l’enrôlement. L’API ne signe rien elle-même : un courtier systemd root sans port
+entrant utilise la CA privée persistante, qui n’est montée dans aucun
+conteneur. Caddy vérifie le certificat lorsqu’il est présenté et transmet son
+empreinte via des en-têtes qu’il réécrit lui-même. L’API rend cette empreinte
+obligatoire après l’activation et la lie à la clé rotative et à l’UUID TV.
+
+Le client possède au plus une clé active et une clé de rotation en attente,
+chiffrées avec des données authentifiées distinctes. Il prépare localement la
+nouvelle clé avant l’appel réseau ; le serveur ne stocke que son hash et garde
+l’ancienne active jusqu’à une confirmation idempotente. La promotion côté
+Android intervient seulement après la promotion transactionnelle côté
+PostgreSQL. Ce protocole permet de reprendre une coupure à chacune des étapes.
+La régie peut révoquer une génération ou créer un nouvel enrôlement, sans
+effacer le cache d’expérience local-first.
+
+`NativeSceneRenderer` rend la scène logique 1920 × 1080 avec des vues Android,
+sans WebView : fonds image/vidéo, flou Android 12, textes, heure, messages,
+logo global, médias, boutons source et ordre de focus D-pad. La couche logique
+reste indépendante de la résolution 4K/HDR des applications natives ouvertes.
+
+Après la synchronisation d’expérience, le client peut récupérer une mise à
+jour APK affectée. Il vérifie l’artefact et utilise `PackageInstaller`
+uniquement derrière `AppUpdateAdapter`; l’installation silencieuse reste
+conditionnée à Device Owner et à une validation physique.
 
 ## Studio
 
@@ -102,9 +198,21 @@ modèle partagé côté interface est testé avec le validateur de layout de l�
 Les interactions couvrent déplacement, redimensionnement, clavier, calques,
 propriétés, palette et historique.
 
-Le sélecteur d’aperçu TV/groupe est volontairement désactivé : `0.3.0` édite la
-scène d’instance et ne simule pas une affectation que l’API ne sait pas encore
-retourner.
+La console sécurité reste dans cette même direction éditoriale. Elle permet
+d’enrôler ou révoquer les passkeys du compte courant et de fermer ses sessions.
+Les conversions WebAuthn restent dans un module navigateur dédié ; les défis,
+la vérification cryptographique et les audits restent côté API.
+
+Le sélecteur d’aperçu TV/groupe résout côté serveur les affectations publiées
+et reste distinct du brouillon modifiable. Le Studio expose également la
+politique d’application serveur dans la même direction éditoriale, sans donner
+de privilège système au navigateur.
+
+Une scène programmée est un remplacement temporaire prioritaire sur
+l’affectation statique. Le worker sérialise les transitions sous verrou,
+incrémente la révision TV à l’activation et au retour, puis écrit l’audit. Si le
+worker a été arrêté pendant toute une fenêtre, il la clôt sans prétendre
+qu’elle a été affichée ; aucune transition matérielle n’est simulée.
 
 ## Frontière matérielle
 

@@ -10,7 +10,8 @@
       "asset": "assets/background-default.webp",
       "mode": "cover",
       "focusX": 0.5,
-      "focusY": 0.5
+      "focusY": 0.5,
+      "blur": 0
     },
     "renderTarget": "1080p"
   },
@@ -25,9 +26,9 @@
       "zIndex": 20,
       "props": {
         "role": "greeting",
-        "text": "Bonjour, bienvenue dans cette salle",
+        "text": "Bonjour, bienvenue en salle de réunion 1",
         "fontScale": 1.0,
-        "maxLines": 3
+        "maxLines": 1
       }
     },
     {

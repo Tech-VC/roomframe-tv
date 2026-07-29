@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 TOKEN_FILE="$CONFIG_DIR/secrets/bootstrap_token"
+RUNTIME_CONFIG="${ROOMFRAME_RUNTIME_CONFIG:-$CONFIG_DIR/runtime.conf}"
 ROTATE=0
 SHOW=0
 
@@ -40,16 +41,15 @@ if [[ "$ROTATE" -eq 1 ]]; then
   mkdir -p "$(dirname "$TOKEN_FILE")"
   temporary="$(mktemp "$(dirname "$TOKEN_FILE")/.bootstrap-token.XXXXXX")"
   openssl rand -hex 32 >"$temporary"
-  chmod 0600 "$temporary"
+  chmod 0444 "$temporary"
   chown root:root "$temporary"
   mv -f "$temporary" "$TOKEN_FILE"
   printf '%s\n' "Jeton de bootstrap remplacé explicitement."
 
-  runtime_config="$CONFIG_DIR/runtime.conf"
-  if [[ -r "$runtime_config" ]]; then
+  if [[ -r "$RUNTIME_CONFIG" ]]; then
     set -a
     # shellcheck source=/dev/null
-    source "$runtime_config"
+    source "$RUNTIME_CONFIG"
     set +a
     compose_command="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}/scripts/roomframe-compose.sh"
     if [[ -x "$compose_command" ]] \

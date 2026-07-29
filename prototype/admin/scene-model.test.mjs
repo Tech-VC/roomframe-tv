@@ -16,8 +16,45 @@ test("migre la forme historique vers layout.schema v2", () => {
   assert.equal(scene.nodes[0].kind, "text");
   assert.equal(scene.nodes[0].width, 500);
   assert.equal(scene.nodes[0].props.text, "Bonjour");
+  assert.equal(scene.nodes[0].props.role, "greeting");
+  assert.equal(scene.nodes[0].props.maxLines, 1);
   assert.equal(scene.nodes[0].focusOrder, 0);
   assert.equal("label" in scene.nodes[0].props, false);
+});
+
+test("normalise une salutation sur une seule ligne", () => {
+  const scene = normalizeScene({
+    layoutId: "scene",
+    canvas: { background: { type: "color", mode: "cover" } },
+    nodes: [{
+      id: "greeting",
+      kind: "text",
+      x: 0,
+      y: 0,
+      width: 1000,
+      height: 200,
+      props: {
+        role: "greeting",
+        text: "Bonjour,\n  bienvenue en salle de réunion 1",
+        maxLines: 3,
+      },
+    }],
+  });
+  assert.equal(scene.nodes[0].props.text, "Bonjour, bienvenue en salle de réunion 1");
+  assert.equal(scene.nodes[0].props.maxLines, 1);
+});
+
+test("normalise le flou du fond et le borne à quarante pixels", () => {
+  const blurred = normalizeScene({
+    layoutId: "scene",
+    canvas: { background: { type: "image", mode: "cover", blur: 18 } },
+    nodes: [],
+  });
+  assert.equal(blurred.canvas.background.blur, 18);
+  blurred.canvas.background.blur = 99;
+  assert.equal(normalizeScene(blurred).canvas.background.blur, 40);
+  blurred.canvas.background.blur = -4;
+  assert.equal(normalizeScene(blurred).canvas.background.blur, 0);
 });
 
 test("contraint un nouvel objet dans la scène", () => {
@@ -46,6 +83,11 @@ test("la scène UI par défaut passe le validateur API réel", async () => {
   const contractsDirectory = fileURLToPath(new URL("../../contracts/", import.meta.url));
   const validators = await createValidators(contractsDirectory);
   assert.doesNotThrow(() => validators.assertLayout(cloneScene(DEFAULT_SCENE)));
+  const greeting = DEFAULT_SCENE.nodes.find(
+    (node) => node.kind === "text" && node.props.role === "greeting",
+  );
+  assert.equal(greeting?.props.text, "Bonjour, bienvenue en salle de réunion 1");
+  assert.equal(greeting?.props.maxLines, 1);
   const paletteScene = cloneScene(DEFAULT_SCENE);
   paletteScene.nodes = [
     createNode("text"),

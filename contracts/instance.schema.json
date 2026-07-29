@@ -95,10 +95,31 @@
       ],
       "properties": {
         "primary": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
         },
         "accent": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "surface": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "ink": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "muted": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "fontPreset": {
+          "enum": [
+            "studio",
+            "compact",
+            "humanist"
+          ]
         },
         "logoAssetId": {
           "type": [

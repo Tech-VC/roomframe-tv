@@ -191,7 +191,7 @@ export const storeMediaUpload = async ({
 };
 
 export const mediaVariantPath = async (config, asset, variant) => {
-  const allowed = ['thumbnail', '1080p', '4k'];
+  const allowed = ['thumbnail', '1080p', '4k', 'logo'];
   if (!allowed.includes(variant)) return null;
   const record = asset.variants?.[variant];
   if (!record?.path) return null;
@@ -200,6 +200,17 @@ export const mediaVariantPath = async (config, asset, variant) => {
   if (!resolved.startsWith(root)) return null;
   await stat(resolved);
   return resolved;
+};
+
+export const selectMediaDeliveryVariants = (asset, usages = new Set()) => {
+  const variants = Object.entries(asset?.variants ?? {})
+    .filter(([name]) => name !== 'thumbnail');
+  if (usages.has('logo') && asset?.variants?.logo) {
+    return usages.size === 1
+      ? variants.filter(([name]) => name === 'logo')
+      : variants;
+  }
+  return variants.filter(([name]) => name !== 'logo');
 };
 
 export const streamMediaVariant = (reply, file, mime) => {
