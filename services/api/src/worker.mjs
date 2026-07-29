@@ -41,6 +41,12 @@ const runMaintenance = async () => {
        WHERE expires_at < now() - interval '7 days'
           OR used_at < now() - interval '7 days'`,
     ),
+    pool.query(
+      `DELETE FROM user_invitations
+       WHERE expires_at < now() - interval '7 days'
+          OR used_at < now() - interval '7 days'
+          OR revoked_at < now() - interval '7 days'`,
+    ),
     pool.query("DELETE FROM bootstrap_challenges WHERE expires_at < now() - interval '7 days'"),
     pool.query("DELETE FROM recovery_authorities WHERE expires_at < now() - interval '7 days'"),
   ]);

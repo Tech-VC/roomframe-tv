@@ -2451,23 +2451,6 @@ export const registerStudioRoutes = ({
     return { policy };
   }));
 
-  app.get('/api/v1/users', {
-    preHandler: [authenticated, requirePermission('users:read')],
-  }, async () => {
-    const result = await pool.query(
-      `SELECT u.id, u.username, u.email, u.active, u.created_at, u.updated_at, r.slug AS role
-       FROM users u JOIN roles r ON r.id = u.role_id ORDER BY u.username`,
-    );
-    return { users: result.rows };
-  });
-
-  app.get('/api/v1/roles', {
-    preHandler: [authenticated, requirePermission('users:read')],
-  }, async () => {
-    const result = await pool.query('SELECT id, slug, display_name, permissions FROM roles ORDER BY slug');
-    return { roles: result.rows };
-  });
-
   app.get('/api/v1/audit', {
     preHandler: [authenticated, requirePermission('audit:read')],
   }, async () => {

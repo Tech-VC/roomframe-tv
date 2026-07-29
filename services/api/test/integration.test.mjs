@@ -442,6 +442,232 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(revokedSessionAccess.statusCode, 401);
 
+  await pool.query(
+    'UPDATE users SET last_totp_counter = NULL WHERE username = $1',
+    [ownerUsername],
+  );
+  const invitationWithoutCsrf = await app.inject({
+    method: 'POST',
+    url: '/api/v1/users',
+    headers: { cookie },
+    payload: {
+      username: 'editor-invited',
+      email: 'editor-invited@example.test',
+      role: 'content',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(invitationWithoutCsrf.statusCode, 403);
+  const invitedUserResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/users',
+    headers: {
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      username: 'editor-invited',
+      email: 'editor-invited@example.test',
+      role: 'content',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(invitedUserResponse.statusCode, 201, invitedUserResponse.body);
+  const invitedUser = invitedUserResponse.json().user;
+  const activationToken = invitedUserResponse.json().invitation.activationToken;
+  assert.equal(invitedUser.status, 'pending');
+  assert.match(activationToken, /^[A-Za-z0-9_-]{40,128}$/);
+  const storedInvitation = await pool.query(
+    `SELECT token_hash
+     FROM user_invitations
+     WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
+    [invitedUser.id],
+  );
+  assert.equal(storedInvitation.rowCount, 1);
+  assert.notEqual(storedInvitation.rows[0].token_hash, activationToken);
+  assert.equal(
+    storedInvitation.rows[0].token_hash,
+    crypto.createHash('sha256').update(activationToken).digest('hex'),
+  );
+
+  const listedPendingUsers = await app.inject({
+    method: 'GET',
+    url: '/api/v1/users',
+    headers: { cookie },
+  });
+  assert.equal(listedPendingUsers.statusCode, 200);
+  assert.equal(
+    listedPendingUsers.json().users.find((user) => user.id === invitedUser.id).status,
+    'pending',
+  );
+  assert.equal(listedPendingUsers.body.includes(activationToken), false);
+
+  const invalidActivation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/activation/totp',
+    payload: { activationToken: token() },
+  });
+  assert.equal(invalidActivation.statusCode, 403);
+  const activationTotp = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/activation/totp',
+    payload: { activationToken },
+  });
+  assert.equal(activationTotp.statusCode, 201, activationTotp.body);
+  assert.equal(activationTotp.json().username, 'editor-invited');
+  assert.equal(activationTotp.json().role, 'content');
+  assert.match(activationTotp.json().secret, /^[A-Z2-7]+$/);
+
+  const invitedPassword = 'Invited-Editor-Password-74!';
+  const activatedUserResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/activation/complete',
+    payload: {
+      activationToken,
+      challengeId: activationTotp.json().challengeId,
+      password: invitedPassword,
+      totpCode: totpNow(activationTotp.json().secret),
+    },
+  });
+  assert.equal(activatedUserResponse.statusCode, 200, activatedUserResponse.body);
+  assert.equal(activatedUserResponse.json().user.role, 'content');
+  const invitedCookie = cookieHeader(activatedUserResponse);
+  assert.match(invitedCookie, /^__Host-roomframe_session=/);
+  const replayedActivation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/activation/complete',
+    payload: {
+      activationToken,
+      challengeId: activationTotp.json().challengeId,
+      password: invitedPassword,
+      totpCode: totpNow(activationTotp.json().secret),
+    },
+  });
+  assert.equal(replayedActivation.statusCode, 403);
+  const invitedStudio = await app.inject({
+    method: 'GET',
+    url: '/api/v1/studio',
+    headers: { cookie: invitedCookie },
+  });
+  assert.equal(invitedStudio.statusCode, 200);
+  const invitedCannotProvision = await app.inject({
+    method: 'POST',
+    url: '/api/v1/users',
+    headers: {
+      cookie: invitedCookie,
+      'x-csrf-token': activatedUserResponse.json().csrfToken,
+    },
+    payload: {
+      username: 'privilege-escalation',
+      email: null,
+      role: 'owner',
+      password: invitedPassword,
+      totpCode: totpNow(activationTotp.json().secret, 1),
+    },
+  });
+  assert.equal(invitedCannotProvision.statusCode, 403);
+
+  await pool.query(
+    'UPDATE users SET last_totp_counter = NULL WHERE username = $1',
+    [ownerUsername],
+  );
+  const changedInvitedRole = await app.inject({
+    method: 'POST',
+    url: `/api/v1/users/${invitedUser.id}/role`,
+    headers: {
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      role: 'fleet',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(changedInvitedRole.statusCode, 200, changedInvitedRole.body);
+  assert.equal(changedInvitedRole.json().user.role, 'fleet');
+  const revokedAfterRoleChange = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/session',
+    headers: { cookie: invitedCookie },
+  });
+  assert.equal(revokedAfterRoleChange.statusCode, 401);
+
+  const ownerRecord = listedPendingUsers.json().users.find(
+    (user) => user.username === ownerUsername,
+  );
+  await pool.query(
+    'UPDATE users SET last_totp_counter = NULL WHERE username = $1',
+    [ownerUsername],
+  );
+  const selfDemotion = await app.inject({
+    method: 'POST',
+    url: `/api/v1/users/${ownerRecord.id}/role`,
+    headers: {
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      role: 'content',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(selfDemotion.statusCode, 409);
+  assert.equal(selfDemotion.json().error, 'last_owner_required');
+
+  await pool.query(
+    'UPDATE users SET last_totp_counter = NULL WHERE username = $1',
+    [ownerUsername],
+  );
+  const disabledInvitedUser = await app.inject({
+    method: 'POST',
+    url: `/api/v1/users/${invitedUser.id}/disable`,
+    headers: {
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      confirmation: 'editor-invited',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(disabledInvitedUser.statusCode, 200, disabledInvitedUser.body);
+  assert.equal(disabledInvitedUser.json().user.status, 'disabled');
+
+  await pool.query(
+    'UPDATE users SET last_totp_counter = NULL WHERE username = $1',
+    [ownerUsername],
+  );
+  const reissuedInvitation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/users/${invitedUser.id}/invitation`,
+    headers: {
+      cookie,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      confirmation: 'editor-invited',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret),
+    },
+  });
+  assert.equal(reissuedInvitation.statusCode, 200, reissuedInvitation.body);
+  assert.equal(reissuedInvitation.json().user.status, 'pending');
+  assert.notEqual(
+    reissuedInvitation.json().invitation.activationToken,
+    activationToken,
+  );
+  const oldTokenRejected = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/activation/totp',
+    payload: { activationToken },
+  });
+  assert.equal(oldTokenRejected.statusCode, 403);
+
   const releaseStateBefore = await app.inject({
     method: 'GET',
     url: '/api/v1/releases',

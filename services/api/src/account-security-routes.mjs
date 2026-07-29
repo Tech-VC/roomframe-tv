@@ -57,7 +57,7 @@ const clearOldChallenges = async (client, userId, purpose) => {
   );
 };
 
-const stepUpUser = async ({
+export const stepUpUser = async ({
   client,
   config,
   userId,

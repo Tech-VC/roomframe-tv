@@ -10,14 +10,14 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui11";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui11";
+} from "./scene-model.js?v=0.3.0-ui12";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui12";
 import {
   creationOptionsFromJSON,
   credentialToJSON,
   passkeysAvailable,
   requestOptionsFromJSON,
-} from "./passkey-client.js?v=0.3.0-ui11";
+} from "./passkey-client.js?v=0.3.0-ui12";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -131,8 +131,14 @@ const state = {
   recoveryChallengeId: null,
   passkeys: [],
   securitySessions: [],
+  adminUsers: [],
+  adminRoles: [],
+  userInvitation: null,
+  userActionTarget: null,
+  userActionReturnFocus: null,
   passkeyCanonicalUrl: null,
   passkeyReturnFocus: null,
+  activationChallengeId: null,
   studioLoaded: false,
 };
 
@@ -142,6 +148,7 @@ const refs = {
   loginPanel: $("#loginPanel"),
   bootstrapPanel: $("#bootstrapPanel"),
   recoveryPanel: $("#recoveryPanel"),
+  activationPanel: $("#activationPanel"),
   globalStatus: $("#globalStatus"),
   globalStatusText: $("#globalStatusText"),
   retryButton: $("#retryButton"),
@@ -196,10 +203,12 @@ const showGate = (panel) => {
   refs.loginPanel.classList.toggle("hidden", panel !== "login");
   refs.bootstrapPanel.classList.toggle("hidden", panel !== "bootstrap");
   refs.recoveryPanel.classList.toggle("hidden", panel !== "recovery");
+  refs.activationPanel.classList.toggle("hidden", panel !== "activation");
   const gateCopy = {
     login: ["AUTH / 02", "Poste de composition", "Administration locale"],
     bootstrap: ["INIT / 01", "Préparer l’instance", "Configuration applicative"],
     recovery: ["SECOURS / 03", "Récupération contrôlée", "Autorité locale temporaire"],
+    activation: ["ACTIVATION / 04", "Créer votre accès", "Invitation locale à usage unique"],
   }[panel];
   $("#gateNumber").textContent = gateCopy[0];
   $("#gateHeadline").textContent = gateCopy[1];
@@ -209,7 +218,9 @@ const showGate = (panel) => {
     ? $("#loginUsername")
     : panel === "bootstrap"
       ? $("#bootstrapDisplayName")
-      : $("#recoveryToken");
+      : panel === "recovery"
+        ? $("#recoveryToken")
+        : $("#activationToken");
   setTimeout(() => focusTarget.focus(), 0);
 };
 
@@ -231,6 +242,12 @@ const sessionIsAuthenticated = (payload) => Boolean(
 );
 
 const sessionUser = (payload) => payload?.user ?? payload?.session?.user ?? null;
+
+const sessionHasPermission = (permission) => {
+  const permissions = sessionUser(state.session)?.permissions;
+  return Array.isArray(permissions)
+    && (permissions.includes("*") || permissions.includes(permission));
+};
 
 const applyBranding = (instanceOrIdentity = {}) => {
   const branding = normalizeBranding(instanceOrIdentity.branding);
@@ -294,6 +311,9 @@ const boot = async () => {
 };
 
 const enterStudio = async () => {
+  if (!Array.isArray(sessionUser(state.session)?.permissions)) {
+    state.session = await api.get("auth/session");
+  }
   hideGate();
   renderSecurity();
   await loadStudio();
@@ -1522,12 +1542,129 @@ const renderSecuritySessions = () => {
   }));
 };
 
+const roleLabel = (slug) => (
+  state.adminRoles.find((role) => role.slug === slug)?.displayName
+  ?? slug
+  ?? "Rôle inconnu"
+);
+
+const userStatusLabel = (status) => ({
+  active: "actif",
+  pending: "en attente",
+  disabled: "désactivé",
+}[status] ?? "inconnu");
+
+const populateUserRoleSelects = () => {
+  for (const select of [$("#userInvitationRole"), $("#userActionRole")]) {
+    const selected = select.value;
+    select.replaceChildren(...state.adminRoles.map((role) => {
+      const option = make("option", "", role.displayName);
+      option.value = role.slug;
+      return option;
+    }));
+    if (state.adminRoles.some((role) => role.slug === selected)) {
+      select.value = selected;
+    }
+  }
+};
+
+const renderUserInvitationTicket = () => {
+  const ticket = $("#userInvitationTicket");
+  if (!state.userInvitation) {
+    ticket.classList.add("hidden");
+    $("#userInvitationToken").textContent = "";
+    return;
+  }
+  $("#userInvitationToken").textContent = state.userInvitation.activationToken;
+  $("#userInvitationTicketDescription").textContent = (
+    `${state.userInvitation.username} · expire ${securityDate(state.userInvitation.expiresAt)}. `
+    + "Ce jeton ne sera plus affiché après masquage ou rechargement."
+  );
+  ticket.classList.remove("hidden");
+};
+
+const renderAdminUsers = () => {
+  const container = $("#userList");
+  const currentUser = sessionUser(state.session);
+  const canRead = sessionHasPermission("users:read");
+  const canManage = currentUser?.role === "owner";
+  $("#openUserInvitation").classList.toggle("hidden", !canManage);
+  $("#openUserInvitation").disabled = !canManage;
+  populateUserRoleSelects();
+  renderUserInvitationTicket();
+  if (!canRead) {
+    container.replaceChildren(make(
+      "p",
+      "empty-copy",
+      "Votre rôle ne permet pas de consulter les autres comptes.",
+    ));
+    return;
+  }
+  if (state.adminUsers.length === 0) {
+    container.replaceChildren(make("p", "empty-copy", "Aucun compte communiqué."));
+    return;
+  }
+  container.replaceChildren(...state.adminUsers.map((user) => {
+    const row = make("article", "security-record");
+    const identity = make("div");
+    identity.append(
+      make("h3", "", user.username),
+      make("p", "", user.email || "Aucun e-mail associé"),
+    );
+    const activity = make("div");
+    const statusLabel = {
+      active: "ACTIF",
+      pending: "EN ATTENTE",
+      disabled: "DÉSACTIVÉ",
+    }[user.status] ?? "INCONNU";
+    activity.append(
+      make(
+        "span",
+        `record-state ${user.status === "pending" ? "pending" : user.status === "disabled" ? "disabled" : ""}`,
+        statusLabel,
+      ),
+      make(
+        "p",
+        "",
+        `${roleLabel(user.role)} · ${user.sessionCount} session${user.sessionCount > 1 ? "s" : ""}`
+          + ` · ${user.passkeyCount} passkey${user.passkeyCount > 1 ? "s" : ""}`
+          + (
+            user.status === "pending" && user.invitationExpiresAt
+              ? ` · invitation jusqu’au ${securityDate(user.invitationExpiresAt)}`
+              : ""
+          ),
+      ),
+    );
+    const manage = make("button", "tool", "Gérer");
+    manage.type = "button";
+    manage.dataset.userManage = user.id;
+    manage.disabled = !canManage || user.id === currentUser?.id;
+    manage.setAttribute(
+      "aria-label",
+      user.id === currentUser?.id
+        ? `Le compte courant ${user.username} ne peut pas se modifier lui-même`
+        : `Gérer le compte ${user.username}`,
+    );
+    row.append(identity, activity, manage);
+    return row;
+  }));
+};
+
 const loadSecurityState = async () => {
   formError("passkeyError");
   formError("sessionSecurityError");
-  const [passkeyResult, sessionResult] = await Promise.allSettled([
+  formError("userAdministrationError");
+  const canReadUsers = sessionHasPermission("users:read");
+  const [
+    passkeyResult,
+    sessionResult,
+    usersResult,
+    rolesResult,
+  ] = await Promise.allSettled([
     api.get("auth/passkeys"),
     api.get("auth/sessions"),
+    canReadUsers ? api.get("users") : Promise.resolve({ users: [] }),
+    canReadUsers ? api.get("roles") : Promise.resolve({ roles: [] }),
   ]);
   if (passkeyResult.status === "fulfilled") {
     state.passkeys = passkeyResult.value.passkeys ?? [];
@@ -1542,9 +1679,22 @@ const loadSecurityState = async () => {
     state.securitySessions = [];
     formError("sessionSecurityError", sessionResult.reason.message);
   }
+  if (usersResult.status === "fulfilled") {
+    state.adminUsers = usersResult.value.users ?? [];
+  } else {
+    state.adminUsers = [];
+    formError("userAdministrationError", usersResult.reason.message);
+  }
+  if (rolesResult.status === "fulfilled") {
+    state.adminRoles = rolesResult.value.roles ?? [];
+  } else {
+    state.adminRoles = [];
+    formError("userAdministrationError", rolesResult.reason.message);
+  }
   renderSecurity();
   renderPasskeys();
   renderSecuritySessions();
+  renderAdminUsers();
 };
 
 const selectNode = (id, focus = false) => {
@@ -1945,6 +2095,9 @@ $("#sessionList").addEventListener("click", async (event) => {
       state.scene = null;
       state.passkeys = [];
       state.securitySessions = [];
+      state.adminUsers = [];
+      state.adminRoles = [];
+      state.userInvitation = null;
       state.passkeyCanonicalUrl = null;
       state.preview = null;
       $("#loginForm").reset();
@@ -1971,6 +2124,310 @@ $("#revokeOtherSessions").addEventListener("click", async () => {
     formError("sessionSecurityError", error.message);
   } finally {
     button.disabled = false;
+  }
+});
+
+const userAdministrationErrorMessage = (error) => {
+  const messages = {
+    step_up_failed: "Phrase de passe ou nouveau code TOTP incorrect.",
+    conflict: "Cet identifiant ou cet e-mail existe déjà.",
+    self_management_forbidden: "Le compte courant ne peut pas se modifier lui-même.",
+    last_owner_required: "Au moins un propriétaire actif doit rester disponible.",
+    user_confirmation_failed: "L’identifiant retapé ne correspond pas.",
+    user_not_active: "Ce compte est déjà inactif.",
+    role_unchanged: "Choisissez un rôle différent.",
+    invalid_role: "Le rôle demandé n’existe pas.",
+  };
+  return messages[error?.message] ?? error?.message ?? "Gestion du compte impossible.";
+};
+
+$("#openUserInvitation").addEventListener("click", (event) => {
+  formError("userInvitationError");
+  state.userActionReturnFocus = event.currentTarget;
+  populateUserRoleSelects();
+  $("#userInvitationRole").value = (
+    state.adminRoles.some((role) => role.slug === "content")
+      ? "content"
+      : state.adminRoles[0]?.slug ?? ""
+  );
+  $("#userInvitationDialog").showModal();
+  $("#userInvitationUsername").focus();
+});
+
+$("#userInvitationCancel").addEventListener("click", () => {
+  $("#userInvitationDialog").close();
+});
+
+$("#userInvitationDialog").addEventListener("close", () => {
+  $("#userInvitationForm").reset();
+  formError("userInvitationError");
+  state.userActionReturnFocus?.focus();
+  state.userActionReturnFocus = null;
+});
+
+$("#userInvitationDialog").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#userInvitationDialog").close();
+  }
+});
+
+$("#userInvitationForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("userInvitationError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const submit = $("#userInvitationSubmit");
+  submit.disabled = true;
+  try {
+    const payload = await api.post("users", {
+      username: String(data.get("username") || "").trim().toLowerCase(),
+      email: String(data.get("email") || "").trim() || null,
+      role: String(data.get("role") || ""),
+      password: String(data.get("password") || ""),
+      totpCode: String(data.get("totpCode") || "").trim(),
+    });
+    state.userInvitation = {
+      username: payload.user.username,
+      activationToken: payload.invitation.activationToken,
+      expiresAt: payload.invitation.expiresAt,
+    };
+    $("#userInvitationDialog").close();
+    await loadSecurityState();
+    toast("Invitation créée. Transmettez le jeton avant de le masquer.");
+  } catch (error) {
+    formError("userInvitationError", userAdministrationErrorMessage(error));
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+$("#copyUserInvitation").addEventListener("click", async () => {
+  if (!state.userInvitation?.activationToken) return;
+  try {
+    await navigator.clipboard.writeText(state.userInvitation.activationToken);
+    toast("Jeton copié. Effacez le presse-papiers après transmission.");
+  } catch {
+    toast("Copie indisponible. Sélectionnez le jeton affiché.", true);
+  }
+});
+
+$("#hideUserInvitation").addEventListener("click", () => {
+  state.userInvitation = null;
+  renderUserInvitationTicket();
+  toast("Jeton masqué. Il ne peut pas être réaffiché.");
+});
+
+const updateUserActionControls = () => {
+  const action = $("#userActionKind").value;
+  const needsConfirmation = action !== "role";
+  $("#userActionRoleField").classList.toggle("hidden", action !== "role");
+  $("#userActionRole").required = action === "role";
+  $("#userActionConfirmationField").classList.toggle("hidden", !needsConfirmation);
+  $("#userActionConfirmation").required = needsConfirmation;
+  const target = state.userActionTarget;
+  $("#userActionHelp").textContent = {
+    role: "Le changement ferme toutes les sessions du compte.",
+    reissue: (
+      "Le compte sera désactivé, ses sessions et passkeys révoquées, puis un nouveau jeton sera affiché une seule fois."
+    ),
+    disable: "La désactivation ferme les sessions, retire les passkeys et révoque toute invitation active.",
+  }[action];
+  $("#userActionSubmit").textContent = {
+    role: "Changer le rôle",
+    reissue: "Révoquer et réinviter",
+    disable: "Désactiver",
+  }[action];
+  if (target) {
+    $("#userActionConfirmation").placeholder = target.username;
+  }
+};
+
+$("#userList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-user-manage]");
+  if (!button || button.disabled) return;
+  const user = state.adminUsers.find((entry) => entry.id === button.dataset.userManage);
+  if (!user) return;
+  state.userActionTarget = user;
+  state.userActionReturnFocus = button;
+  $("#userActionId").value = user.id;
+  $("#userActionDescription").textContent = (
+    `${user.username} · ${roleLabel(user.role)} · état ${userStatusLabel(user.status)}. `
+    + "Chaque action exige votre phrase de passe et un nouveau TOTP."
+  );
+  populateUserRoleSelects();
+  $("#userActionRole").value = user.role;
+  $("#userActionKind").value = user.active ? "role" : "reissue";
+  const disableOption = $("#userActionKind").querySelector('option[value="disable"]');
+  disableOption.disabled = !user.active;
+  updateUserActionControls();
+  formError("userActionError");
+  $("#userActionDialog").showModal();
+  $("#userActionKind").focus();
+});
+
+$("#userActionKind").addEventListener("change", updateUserActionControls);
+
+$("#userActionCancel").addEventListener("click", () => {
+  $("#userActionDialog").close();
+});
+
+$("#userActionDialog").addEventListener("close", () => {
+  $("#userActionForm").reset();
+  formError("userActionError");
+  state.userActionTarget = null;
+  state.userActionReturnFocus?.focus();
+  state.userActionReturnFocus = null;
+});
+
+$("#userActionDialog").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#userActionDialog").close();
+  }
+});
+
+$("#userActionForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("userActionError");
+  const target = state.userActionTarget;
+  if (!target) return;
+  const data = new FormData(event.currentTarget);
+  const action = String(data.get("action") || "");
+  const common = {
+    password: String(data.get("password") || ""),
+    totpCode: String(data.get("totpCode") || "").trim(),
+  };
+  const submit = $("#userActionSubmit");
+  submit.disabled = true;
+  try {
+    let payload;
+    if (action === "role") {
+      payload = await api.post(`users/${encodeURIComponent(target.id)}/role`, {
+        ...common,
+        role: String(data.get("role") || ""),
+      });
+    } else if (action === "reissue") {
+      payload = await api.post(`users/${encodeURIComponent(target.id)}/invitation`, {
+        ...common,
+        confirmation: String(data.get("confirmation") || "").trim().toLowerCase(),
+      });
+      state.userInvitation = {
+        username: payload.user.username,
+        activationToken: payload.invitation.activationToken,
+        expiresAt: payload.invitation.expiresAt,
+      };
+    } else {
+      payload = await api.post(`users/${encodeURIComponent(target.id)}/disable`, {
+        ...common,
+        confirmation: String(data.get("confirmation") || "").trim().toLowerCase(),
+      });
+    }
+    $("#userActionDialog").close();
+    await loadSecurityState();
+    toast(
+      action === "role"
+        ? "Rôle modifié et sessions fermées."
+        : action === "reissue"
+          ? "Ancien accès révoqué. Nouveau jeton affiché une seule fois."
+          : "Compte désactivé et accès révoqués.",
+    );
+  } catch (error) {
+    formError("userActionError", userAdministrationErrorMessage(error));
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+const resetActivationForm = () => {
+  state.activationChallengeId = null;
+  $("#activationForm").reset();
+  $("#activationTotpDetails").classList.add("hidden");
+  $("#activationTotpSecret").textContent = "";
+  $("#activationTotpUri").removeAttribute("href");
+  $("#activationTotpCode").required = false;
+  $("#activationSubmit").disabled = true;
+  formError("activationError");
+};
+
+const activationErrorMessage = (error) => ({
+  invalid_activation_token: "Cette invitation est invalide, expirée ou déjà consommée.",
+  invalid_activation_challenge: "Le défi TOTP est invalide ou expiré. Recommencez l’enrôlement.",
+  invalid_password_length: "La phrase de passe doit contenir entre 12 et 256 caractères.",
+  password_too_weak: "Choisissez une phrase de passe plus forte et moins prévisible.",
+}[error?.message] ?? error?.message ?? "Activation impossible.");
+
+$("#openActivationButton").addEventListener("click", () => {
+  formError("loginError");
+  resetActivationForm();
+  showGate("activation");
+});
+
+$("#cancelActivationButton").addEventListener("click", () => {
+  resetActivationForm();
+  showGate("login");
+});
+
+$("#prepareActivationTotpButton").addEventListener("click", async () => {
+  formError("activationError");
+  const form = $("#activationForm");
+  const data = new FormData(form);
+  if (!form.reportValidity()) return;
+  if (data.get("password") !== data.get("passwordConfirm")) {
+    formError("activationError", "Les phrases de passe ne correspondent pas.");
+    return;
+  }
+  const button = $("#prepareActivationTotpButton");
+  button.disabled = true;
+  try {
+    const payload = await api.post("auth/activation/totp", {
+      activationToken: String(data.get("activationToken") || ""),
+    }, false);
+    state.activationChallengeId = payload.challengeId;
+    $("#activationIdentity").textContent = payload.username;
+    $("#activationRole").textContent = payload.roleName || payload.role;
+    $("#activationTotpSecret").textContent = payload.secret;
+    $("#activationTotpUri").href = payload.otpauthUrl;
+    $("#activationTotpDetails").classList.remove("hidden");
+    $("#activationTotpCode").required = true;
+    $("#activationSubmit").disabled = false;
+    $("#activationTotpCode").focus();
+  } catch (error) {
+    formError("activationError", activationErrorMessage(error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("#activationForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("activationError");
+  if (!state.activationChallengeId) {
+    formError("activationError", "Préparez d’abord votre TOTP.");
+    return;
+  }
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  if (data.get("password") !== data.get("passwordConfirm")) {
+    formError("activationError", "Les phrases de passe ne correspondent pas.");
+    return;
+  }
+  const submit = $("#activationSubmit");
+  submit.disabled = true;
+  try {
+    const payload = await api.post("auth/activation/complete", {
+      activationToken: String(data.get("activationToken") || ""),
+      challengeId: state.activationChallengeId,
+      password: String(data.get("password") || ""),
+      totpCode: String(data.get("totpCode") || "").trim(),
+    }, false);
+    state.session = payload;
+    resetActivationForm();
+    setStatus("ok", "Compte activé · invitation consommée");
+    await enterStudio();
+  } catch (error) {
+    formError("activationError", activationErrorMessage(error));
+    submit.disabled = false;
   }
 });
 
@@ -2151,6 +2608,9 @@ refs.logoutButton.addEventListener("click", async () => {
     state.scene = null;
     state.passkeys = [];
     state.securitySessions = [];
+    state.adminUsers = [];
+    state.adminRoles = [];
+    state.userInvitation = null;
     state.passkeyCanonicalUrl = null;
     state.preview = null;
     state.previewSelection = "";

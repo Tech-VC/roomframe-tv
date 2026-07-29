@@ -28,6 +28,8 @@ POST /api/v1/auth/passkeys/registration/complete
 POST /api/v1/auth/passkeys/:passkeyId/revoke
 POST /api/v1/auth/passkey/options
 POST /api/v1/auth/passkey/complete
+POST /api/v1/auth/activation/totp
+POST /api/v1/auth/activation/complete
 GET  /api/v1/auth/sessions
 POST /api/v1/auth/sessions/revoke-others
 POST /api/v1/auth/sessions/:sessionId/revoke
@@ -110,6 +112,10 @@ PUT  /api/v1/settings/sources
 PUT  /api/v1/settings/sources/:kind
 PUT  /api/v1/settings/power
 GET  /api/v1/users
+POST /api/v1/users
+POST /api/v1/users/:userId/role
+POST /api/v1/users/:userId/disable
+POST /api/v1/users/:userId/invitation
 GET  /api/v1/roles
 GET  /api/v1/audit
 ```
@@ -117,6 +123,24 @@ GET  /api/v1/audit
 Chaque route applique une permission dédiée. Le rôle contenu peut, par
 exemple, obtenir le Studio sans recevoir le parc, les réglages de sources ou
 les releases. Les actions d’écriture sont ajoutées au journal d’audit.
+
+Les écritures sur les comptes sont réservées au rôle propriétaire au moyen de
+la permission interne `users:owner`. Elles exigent une session, le CSRF, la
+phrase de passe courante et un code TOTP frais. Une invitation contient
+32 octets aléatoires, n’est renvoyée en clair que dans la réponse de création
+ou de réémission, expire après 24 heures et n’est conservée en base que sous
+forme SHA-256.
+
+`POST /auth/activation/totp` échange cette invitation contre un défi TOTP de
+15 minutes. `POST /auth/activation/complete` exige ensuite une nouvelle phrase
+de passe, le premier code TOTP et consomme transactionnellement le défi et
+l’invitation. Aucun mot de passe temporaire n’est créé ni transmis.
+
+Changer un rôle ferme toutes les sessions de la cible. Désactiver ou réinviter
+un compte ferme aussi ses sessions, supprime ses passkeys et invalide ses
+défis et invitations antérieurs. Les mutations prennent un verrou advisory
+transactionnel avant de vérifier qu’au moins un propriétaire actif subsiste ;
+une exécution concurrente ne peut donc pas retirer le dernier propriétaire.
 
 `PUT /instance/branding` est réservé au propriétaire et exige le CSRF de
 session. Il met à jour atomiquement le nom affiché, cinq couleurs bornées au

@@ -96,7 +96,7 @@ certificat de CA public de test valide ; `scripts/test.sh` en génère un
 automatiquement et ne conserve pas sa clé privée.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-26 tests UI, soit 49 tests sur un clone frais. Les workflows GitHub de
+27 tests UI, soit 50 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
@@ -117,6 +117,9 @@ donc ce même ensemble. Les scénarios comprennent notamment :
 - isolation des assets d’une TV ;
 - seed appliqué une seule fois et migrations rejouables ;
 - récupération liée au bon compte, consommation unique et refus du rejeu ;
+- invitation administrateur affichée une fois, activation TOTP, refus du
+  rejeu, absence d’escalade depuis un rôle délégué, révocation de session et
+  conservation obligatoire du dernier propriétaire ;
 - upload multipart réel, détection MIME, traitement Sharp, hashes des
   variantes, suppression des métadonnées, déduplication et refus d’un faux
   média ;

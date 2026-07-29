@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui11">
-  <script type="module" src="/app.js?v=0.3.0-ui11"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui12">
+  <script type="module" src="/app.js?v=0.3.0-ui12"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -464,6 +464,24 @@
             <p class="form-error hidden" id="sessionSecurityError" role="alert"></p>
             <div class="security-records" id="sessionList" aria-live="polite"><p class="empty-copy">Chargement…</p></div>
           </section>
+          <section class="security-console" id="userAdministrationConsole" aria-labelledby="usersTitle">
+            <header>
+              <div><span>ÉQUIPE / DROITS LOCAUX</span><h2 id="usersTitle">Comptes de la régie</h2><p>Un compte reste inactif jusqu’à l’enrôlement de sa phrase de passe et de son TOTP.</p></div>
+              <button class="tool primary" id="openUserInvitation" type="button">Inviter un compte</button>
+            </header>
+            <aside class="invitation-ticket hidden" id="userInvitationTicket" aria-labelledby="userInvitationTicketTitle">
+              <span>JETON / AFFICHAGE UNIQUE</span>
+              <h3 id="userInvitationTicketTitle">Transmettre hors bande</h3>
+              <p id="userInvitationTicketDescription">Ce jeton ne sera plus affiché après masquage ou rechargement.</p>
+              <output id="userInvitationToken" aria-label="Jeton d’activation"></output>
+              <div>
+                <button class="tool" id="copyUserInvitation" type="button">Copier le jeton</button>
+                <button class="tool" id="hideUserInvitation" type="button">Masquer définitivement</button>
+              </div>
+            </aside>
+            <p class="form-error hidden" id="userAdministrationError" role="alert"></p>
+            <div class="security-records" id="userList" aria-live="polite"><p class="empty-copy">Chargement…</p></div>
+          </section>
         </div>
       </section>
 
@@ -509,6 +527,69 @@
           </div>
         </form>
       </dialog>
+
+      <dialog class="credential-dialog" id="userInvitationDialog" aria-labelledby="userInvitationTitle" aria-describedby="userInvitationDescription">
+        <form id="userInvitationForm">
+          <span class="record-kicker">COMPTE / INVITATION LOCALE</span>
+          <h2 id="userInvitationTitle">Préparer un accès</h2>
+          <p id="userInvitationDescription">RoomFrame crée un jeton valable 24 heures. Aucun mot de passe temporaire n’est généré.</p>
+          <label for="userInvitationUsername">Identifiant
+            <input id="userInvitationUsername" name="username" autocomplete="off" pattern="[a-z0-9][a-z0-9._-]{2,79}" maxlength="80" required>
+          </label>
+          <label for="userInvitationEmail">E-mail interne facultatif
+            <input id="userInvitationEmail" name="email" type="email" autocomplete="off" maxlength="254">
+          </label>
+          <label for="userInvitationRole">Rôle
+            <select id="userInvitationRole" name="role" required></select>
+          </label>
+          <label for="userInvitationPassword">Votre phrase de passe
+            <input id="userInvitationPassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="userInvitationTotp">Nouveau code TOTP
+            <input id="userInvitationTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+          </label>
+          <p class="credential-confirmation-help">Le jeton d’activation sera affiché une seule fois après cette confirmation.</p>
+          <p class="form-error hidden" id="userInvitationError" role="alert"></p>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="userInvitationCancel" type="button">Annuler</button>
+            <button class="tool primary" id="userInvitationSubmit" type="submit">Créer l’invitation</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="credential-dialog" id="userActionDialog" aria-labelledby="userActionTitle" aria-describedby="userActionDescription">
+        <form id="userActionForm">
+          <span class="record-kicker">COMPTE / ACTION SENSIBLE</span>
+          <h2 id="userActionTitle">Gérer ce compte</h2>
+          <p id="userActionDescription">Les changements de rôle ferment les sessions. La désactivation retire aussi les passkeys.</p>
+          <input id="userActionId" name="userId" type="hidden">
+          <label for="userActionKind">Action
+            <select id="userActionKind" name="action" required>
+              <option value="role">Changer le rôle</option>
+              <option value="reissue">Réémettre une invitation</option>
+              <option value="disable">Désactiver immédiatement</option>
+            </select>
+          </label>
+          <label id="userActionRoleField" for="userActionRole">Nouveau rôle
+            <select id="userActionRole" name="role"></select>
+          </label>
+          <label class="hidden" id="userActionConfirmationField" for="userActionConfirmation">Retaper l’identifiant
+            <input id="userActionConfirmation" name="confirmation" autocomplete="off">
+          </label>
+          <label for="userActionPassword">Votre phrase de passe
+            <input id="userActionPassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="userActionTotp">Nouveau code TOTP
+            <input id="userActionTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+          </label>
+          <p class="credential-confirmation-help" id="userActionHelp">Le compte devra se reconnecter après le changement.</p>
+          <p class="form-error hidden" id="userActionError" role="alert"></p>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="userActionCancel" type="button">Annuler</button>
+            <button class="tool primary" id="userActionSubmit" type="submit">Appliquer</button>
+          </div>
+        </form>
+      </dialog>
     </main>
   </div>
 
@@ -535,6 +616,7 @@
         <button class="next" type="submit"><span>Entrer</span><b aria-hidden="true">→</b></button>
         <button class="passkey-login" id="loginPasskeyButton" type="button"><span>Phrase de passe + passkey</span><b aria-hidden="true">◇</b></button>
         <p class="passkey-login-note" id="loginPasskeyNote">Touch ID, code de l’appareil ou clé de sécurité. Disponible uniquement sur le nom HTTPS principal.</p>
+        <button class="gate-switch" id="openActivationButton" type="button">Activer une invitation reçue</button>
         <button class="gate-switch" id="openRecoveryButton" type="button">Utiliser une récupération locale root-only</button>
       </form>
     </section>
@@ -590,6 +672,40 @@
         <p class="form-error hidden" id="recoveryError" role="alert"></p>
         <button class="next" type="submit">Réinitialiser et révoquer les accès</button>
         <button class="gate-switch" id="cancelRecoveryButton" type="button">Retour à la connexion</button>
+      </form>
+    </section>
+    <section class="gate-panel hidden" id="activationPanel" aria-labelledby="activationTitle">
+      <div class="access-state"><span class="access-pulse"></span><span>Invitation locale</span><b>Usage unique · 24 h</b></div>
+      <form class="gate-form" id="activationForm">
+        <span class="form-index">ACTIVATION / 04</span>
+        <h2 id="activationTitle">Créer votre accès.</h2>
+        <p>Le jeton reçu ne contient aucun mot de passe. Choisissez votre phrase de passe puis enrôlez votre propre TOTP.</p>
+        <label for="activationToken">Jeton d’activation
+          <input id="activationToken" name="activationToken" type="password" autocomplete="off" minlength="40" maxlength="128" required>
+        </label>
+        <div class="form-grid">
+          <label for="activationPassword">Nouvelle phrase de passe
+            <input id="activationPassword" name="password" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
+          <label for="activationPasswordConfirm">Confirmation
+            <input id="activationPasswordConfirm" name="passwordConfirm" type="password" autocomplete="new-password" minlength="12" required>
+          </label>
+        </div>
+        <div class="totp-enrolment">
+          <button class="tool" id="prepareActivationTotpButton" type="button">Préparer mon TOTP</button>
+          <div class="hidden" id="activationTotpDetails">
+            <p><strong id="activationIdentity">Compte invité</strong> · <span id="activationRole">rôle local</span></p>
+            <p>Ajoutez ce secret à votre application d’authentification, puis saisissez le code courant.</p>
+            <output id="activationTotpSecret" aria-label="Secret TOTP du nouveau compte"></output>
+            <a id="activationTotpUri" href="#">Ouvrir l’application compatible</a>
+            <label for="activationTotpCode">Code TOTP
+              <input id="activationTotpCode" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+            </label>
+          </div>
+        </div>
+        <p class="form-error hidden" id="activationError" role="alert"></p>
+        <button class="next" id="activationSubmit" type="submit" disabled>Activer et ouvrir la régie</button>
+        <button class="gate-switch" id="cancelActivationButton" type="button">Retour à la connexion</button>
       </form>
     </section>
   </div>

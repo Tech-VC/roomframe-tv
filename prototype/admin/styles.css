@@ -306,7 +306,7 @@ textarea { min-height: 58px; resize: vertical; }
   color: var(--muted); font: 900 9px/1.2 var(--mono, monospace);
   letter-spacing: .12em; text-transform: uppercase;
 }
-.credential-dialog input {
+.credential-dialog input, .credential-dialog select {
   display: block; width: 100%; margin-top: 8px; border: 0;
   border-bottom: 2px solid var(--ink); background: transparent; padding: 10px 0;
 }
@@ -371,8 +371,27 @@ textarea { min-height: 58px; resize: vertical; }
   letter-spacing: .12em; text-transform: uppercase;
 }
 .security-record .record-state.remote { color: var(--muted); }
+.security-record .record-state.pending { color: #a46800; }
+.security-record .record-state.disabled { color: var(--danger); }
 .security-record .tool { justify-self: end; }
 .security-console > .form-error { margin: 14px 0 0; }
+.invitation-ticket {
+  display: grid; grid-template-columns: minmax(180px, .8fr) minmax(300px, 1.5fr) auto;
+  align-items: center; gap: 18px; margin: 18px 0; padding: 18px;
+  border: 1px solid var(--ink); border-left: 10px solid var(--signal);
+  background: color-mix(in srgb, var(--paper) 90%, var(--signal));
+}
+.invitation-ticket > span {
+  color: var(--signal); font: 900 9px/1 var(--font-mono);
+  letter-spacing: .14em;
+}
+.invitation-ticket h3 { margin: 8px 0 4px; font: 800 19px/1 var(--font-display); }
+.invitation-ticket p { margin: 0; color: var(--muted); font-size: 10px; }
+.invitation-ticket output {
+  min-width: 0; overflow-wrap: anywhere; user-select: all;
+  font: 700 11px/1.5 var(--font-mono);
+}
+.invitation-ticket > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .gate { position: fixed; inset: 0; z-index: 150; display: grid; grid-template-columns: 38% 62%; background: #10120f; color: #f1eee5; }
 .gate-art { padding: 44px 50px; display: flex; flex-direction: column; justify-content: space-between; border-right: 1px solid #4f5149; background: radial-gradient(circle at 20% 10%, rgba(233,67,24,.26), transparent 34%), #10120f; }
@@ -394,9 +413,9 @@ textarea { min-height: 58px; resize: vertical; }
 .form-grid input { display: block; }
 .form-grid .wide { grid-column: 1 / -1; }
 .totp-enrolment { border-top: 1px solid var(--line); margin-top: 28px; padding-top: 18px; }
-#totpDetails { margin-top: 18px; padding: 18px; border-left: 5px solid var(--blue); background: var(--soft); }
-#totpSecret { display: block; overflow-wrap: anywhere; font-family: monospace; font-size: 15px; margin: 12px 0; user-select: all; }
-#totpUri { display: inline-block; margin-bottom: 12px; }
+#totpDetails, #activationTotpDetails, #recoveryTotpDetails { margin-top: 18px; padding: 18px; border-left: 5px solid var(--blue); background: var(--soft); }
+#totpSecret, #activationTotpSecret, #recoveryTotpSecret { display: block; overflow-wrap: anywhere; font-family: monospace; font-size: 15px; margin: 12px 0; user-select: all; }
+#totpUri, #activationTotpUri, #recoveryTotpUri { display: inline-block; margin-bottom: 12px; }
 .form-error { padding: 12px; border-left: 5px solid var(--danger); background: #f4d9d2; color: #6e1c0f !important; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 180; max-width: 420px; padding: 14px 18px; background: var(--ink); color: white; transform: translateY(140px); transition: transform .2s; font-size: 12px; }
 .toast.show { transform: none; }
@@ -657,4 +676,6 @@ body { background: var(--paper); }
   .deployment-console form, .release-board { grid-template-columns: 1fr; }
   .security-console > header, .security-record { grid-template-columns: 1fr; align-items: start; }
   .security-record .tool { justify-self: start; }
+  .invitation-ticket { grid-template-columns: 1fr; }
+  .invitation-ticket > div { justify-content: flex-start; }
 }

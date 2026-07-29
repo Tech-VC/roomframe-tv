@@ -215,12 +215,14 @@ Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
 test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
 runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
-26 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 49 tests. Les workflows GitHub de
+27 tests Studio/synchronisation TV et
+23 tests API, contrôle de syntaxe serveur inclus, soit 50 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 WebAuthn avec signatures réelles, CSRF, les révisions, l’enrôlement TV, le seed
 unique, la récupération locale,
+les invitations administrateur one-shot, l’activation TOTP sans mot de passe
+temporaire, la révocation de session et la protection du dernier propriétaire,
 la compatibilité des scènes UI, le rejet concis des réponses API non JSON,
 la stabilité des formulaires asynchrones, le détourage prudent des logos et le refus des
 bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test

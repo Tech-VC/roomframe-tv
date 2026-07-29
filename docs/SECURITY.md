@@ -82,6 +82,32 @@ sudo roomframe-bootstrap-token --show
 L’API le compare en temps constant. La création du propriétaire, de l’instance
 et du seed est transactionnelle ; une seconde tentative reçoit un conflit.
 
+## Invitations et rôles administrateur
+
+Seul un propriétaire peut créer, réinviter, désactiver ou modifier le rôle
+d’un autre compte. L’invitation est une valeur aléatoire de 32 octets, affichée
+une seule fois, valable 24 heures et stockée uniquement sous forme SHA-256.
+RoomFrame ne crée jamais de mot de passe temporaire.
+
+La personne invitée choisit sa propre phrase de passe et enrôle TOTP au moyen
+d’un défi chiffré valable 15 minutes. L’activation est transactionnelle :
+l’invitation et le défi sont consommés avec le nouveau hash Argon2id, le secret
+TOTP chiffré et la première session. Un jeton utilisé, révoqué ou expiré ne
+peut pas être rejoué.
+
+Les mutations sensibles exigent une session active, le CSRF, la phrase de
+passe courante du propriétaire et un code TOTP frais. Un changement de rôle
+révoque immédiatement toutes les sessions du compte concerné. Une
+désactivation ou une réinvitation supprime également ses passkeys et défis
+WebAuthn, puis invalide ses invitations précédentes.
+
+La cible ne peut pas être le compte courant. Un verrou advisory PostgreSQL
+sérialise les mutations de propriétaires et la transaction refuse toute
+opération qui laisserait l’instance sans propriétaire actif. Les rôles
+disponibles appartiennent à une liste fermée ; les rôles contenu, parc et
+sécurité ne peuvent ni provisionner un compte ni s’accorder davantage de
+droits.
+
 ## Sessions, permissions et audit
 
 Les jetons de session ne sont stockés qu’après HMAC. Le cookie

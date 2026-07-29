@@ -85,7 +85,8 @@ TV ── ticket chiffré sans secret sortant ───────────�
   séparés.
 
 Les modèles persistants couvrent l’instance, les
-rôles/utilisateurs/sessions/passkeys et défis WebAuthn,
+rôles/utilisateurs/sessions/passkeys, défis WebAuthn et invitations
+administrateur à usage unique,
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
@@ -93,6 +94,13 @@ automatique opt-in, les programmations de scènes, les générations de
 credential TV, les demandes/certificats clients individuels et l’audit.
 La migration d’appairage conserve aussi, uniquement pendant les 30 minutes du
 ticket, l’enveloppe chiffrée de la CA HTTPS ; elle est effacée à l’activation.
+
+La console de sécurité du Studio liste les comptes selon les permissions de la
+session. Le propriétaire peut y créer une invitation, changer un rôle,
+désactiver ou réinviter un compte. Le jeton en clair ne vit que dans la réponse
+active du navigateur et disparaît lorsque le ticket est masqué ou la session
+fermée. La page de connexion contient le parcours autonome d’activation ;
+aucun serveur SMTP ni service cloud n’est requis.
 
 ## Une seule origine HTTPS
 

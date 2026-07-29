@@ -8,6 +8,7 @@ import { registerBootstrapAuthRoutes } from './bootstrap-auth-routes.mjs';
 import { createPool } from './database.mjs';
 import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
+import { registerUserRoutes } from './user-routes.mjs';
 import { createValidators } from './validation.mjs';
 
 const safeServerErrorCodes = new Set([
@@ -30,6 +31,7 @@ export const buildApp = async ({ config, logger = true }) => {
           'req.body.password',
           'req.body.bootstrapToken',
           'req.body.recoveryToken',
+          'req.body.activationToken',
           'req.body.enrollmentKey',
           'req.body.nextKey',
           'req.body.totpCode',
@@ -118,6 +120,12 @@ export const buildApp = async ({ config, logger = true }) => {
       app,
       pool,
       config,
+    });
+    registerUserRoutes({
+      app,
+      pool,
+      config,
+      validators,
     });
     registerStudioRoutes({
       app,

@@ -214,6 +214,19 @@ Les instructions locales `AGENTS.md`, les dossiers privés de validation
 `.DS_Store` et AppleDouble `._*`, sont explicitement exclus de cette copie et
 des archives de release.
 
+## Ajouter un compte d’administration
+
+Une fois le propriétaire connecté, la console **Sécurité** du Studio crée une
+invitation avec un rôle fermé. RoomFrame affiche alors un jeton une seule fois ;
+il faut le transmettre à la personne par un canal local approprié. Depuis la
+page de connexion, **Activer une invitation reçue** permet à cette personne de
+choisir sa phrase de passe, d’enrôler TOTP et d’ouvrir sa première session.
+
+Ce parcours n’utilise ni adresse SMTP ni service cloud. Aucun mot de passe
+temporaire n’est généré. Une invitation expire après 24 heures ; le
+propriétaire peut la réémettre, ce qui révoque les anciennes sessions,
+passkeys, défis et invitations de ce compte.
+
 ## Commandes d’exploitation
 
 ```bash

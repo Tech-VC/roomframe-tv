@@ -123,3 +123,23 @@ test("les passkeys et les sessions restent des parcours API vérifiés", () => {
     /passkeyRevokeDialog"\)\.addEventListener\("keydown"[\s\S]+event\.key === "Escape"/,
   );
 });
+
+test("les invitations administrateur restent one-shot et séparées des rôles", () => {
+  assert.match(markup, /id="userAdministrationConsole"/);
+  assert.match(markup, /id="userInvitationDialog"/);
+  assert.match(markup, /id="userActionDialog"/);
+  assert.match(markup, /id="activationPanel"/);
+  assert.match(markup, /Aucun mot de passe temporaire n’est généré/);
+  assert.match(markup, /affiché une seule fois/);
+  assert.match(source, /api\.post\("users"/);
+  assert.match(source, /auth\/activation\/totp/);
+  assert.match(source, /auth\/activation\/complete/);
+  assert.match(source, /users\/\$\{encodeURIComponent\(target\.id\)\}\/role/);
+  assert.match(source, /users\/\$\{encodeURIComponent\(target\.id\)\}\/disable/);
+  assert.match(source, /users\/\$\{encodeURIComponent\(target\.id\)\}\/invitation/);
+  assert.match(source, /state\.userInvitation = null/);
+  assert.match(source, /\$\("#userInvitationToken"\)\.textContent = ""/);
+  assert.match(source, /state\.activationChallengeId = null/);
+  assert.match(source, /role\.slug === "content"/);
+  assert.match(source, /invalid_activation_token/);
+});
