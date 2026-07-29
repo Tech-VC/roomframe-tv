@@ -3,8 +3,8 @@ x-api-environment: &api-environment
   ROOMFRAME_DB_HOST: postgres
   ROOMFRAME_DB_PORT: "5432"
   ROOMFRAME_DB_NAME: roomframe
-  ROOMFRAME_DB_USER: roomframe
-  ROOMFRAME_POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+  ROOMFRAME_DB_USER: roomframe_runtime
+  ROOMFRAME_DB_PASSWORD_FILE: /run/secrets/postgres_runtime_password
   ROOMFRAME_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
   ROOMFRAME_SESSION_SECRET_FILE: /run/secrets/session_secret
   ROOMFRAME_TOTP_KEY_FILE: /run/secrets/totp_encryption_key
@@ -34,7 +34,7 @@ x-api-build: &api-build
   dockerfile: services/api/Dockerfile
 
 x-api-secrets: &api-secrets
-  - postgres_password
+  - postgres_runtime_password
   - bootstrap_token
   - session_secret
   - totp_encryption_key
@@ -82,8 +82,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test:
         - CMD
@@ -114,15 +114,15 @@ services:
     read_only: true
     environment: *api-environment
     secrets:
-      - postgres_password
+      - postgres_runtime_password
     volumes:
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/media:/data/media
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/processing:/data/processing
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=128m
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "process.kill(1, 0)"]
       interval: 15s
@@ -148,7 +148,7 @@ services:
     read_only: true
     environment: *api-environment
     secrets:
-      - postgres_password
+      - postgres_runtime_password
     volumes:
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/processing:/data/processing
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/releases:/data/releases
@@ -156,8 +156,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "process.kill(1, 0)"]
       interval: 30s
@@ -175,6 +175,70 @@ services:
       - backend
       - update-egress
 
+  database-roles:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    command: ["/opt/roomframe/postgres-bootstrap-roles.sh"]
+    restart: "no"
+    environment:
+      ROOMFRAME_DB_HOST: postgres
+      ROOMFRAME_DB_PORT: "5432"
+      ROOMFRAME_DB_NAME: roomframe
+      ROOMFRAME_DB_ADMIN_USER: roomframe
+      ROOMFRAME_DB_ADMIN_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - ./scripts/postgres-bootstrap-roles.sh:/opt/roomframe/postgres-bootstrap-roles.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    networks:
+      - backend
+
+  migrate:
+    build: *api-build
+    image: roomframe-api:${ROOMFRAME_VERSION:-dev}
+    command: ["npm", "run", "migrate"]
+    restart: "no"
+    user: "${ROOMFRAME_RUNTIME_UID:?ROOMFRAME_RUNTIME_UID requis}:${ROOMFRAME_RUNTIME_GID:?ROOMFRAME_RUNTIME_GID requis}"
+    read_only: true
+    environment:
+      NODE_ENV: production
+      ROOMFRAME_DB_HOST: postgres
+      ROOMFRAME_DB_PORT: "5432"
+      ROOMFRAME_DB_NAME: roomframe
+      ROOMFRAME_DB_USER: roomframe_migrator
+      ROOMFRAME_DB_PASSWORD_FILE: /run/secrets/postgres_migrator_password
+      ROOMFRAME_DB_MIGRATION_ROLE: roomframe_owner
+      ROOMFRAME_DB_RUNTIME_ROLE: roomframe_runtime
+      ROOMFRAME_MIGRATIONS_DIR: /app/database/migrations
+    secrets:
+      - postgres_migrator_password
+    depends_on:
+      database-roles:
+        condition: service_completed_successfully
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 96
+    networks:
+      - backend
+
   postgres:
     image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     restart: unless-stopped
@@ -185,6 +249,8 @@ services:
       TZ: ${ROOMFRAME_TIMEZONE:-UTC}
     secrets:
       - postgres_password
+      - postgres_migrator_password
+      - postgres_runtime_password
     volumes:
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/postgres:/var/lib/postgresql/data
     healthcheck:
@@ -212,6 +278,10 @@ networks:
 secrets:
   postgres_password:
     file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/postgres_password
+  postgres_migrator_password:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/postgres_migrator_password
+  postgres_runtime_password:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/postgres_runtime_password
   bootstrap_token:
     file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/bootstrap_token
   session_secret:

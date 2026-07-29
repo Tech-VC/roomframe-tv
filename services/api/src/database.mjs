@@ -15,9 +15,26 @@ const migrationBody = (sql) => sql
   .replace(/^\s*BEGIN\s*;\s*/i, '')
   .replace(/\s*COMMIT\s*;\s*$/i, '');
 
-export const runMigrations = async (pool, migrationsDir) => {
+const safeRole = (role, label) => {
+  if (role === null || role === undefined || role === '') return null;
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) {
+    throw new Error(`${label}_invalid`);
+  }
+  return `"${role}"`;
+};
+
+export const runMigrations = async (
+  pool,
+  migrationsDir,
+  { migrationRole = null, runtimeRole = null } = {},
+) => {
+  const quotedMigrationRole = safeRole(migrationRole, 'migration_role');
+  const quotedRuntimeRole = safeRole(runtimeRole, 'runtime_role');
   const client = await pool.connect();
   try {
+    if (quotedMigrationRole) {
+      await client.query(`SET ROLE ${quotedMigrationRole}`);
+    }
     await client.query("SELECT pg_advisory_lock(hashtext('roomframe-schema-migrations'))");
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -57,8 +74,16 @@ export const runMigrations = async (pool, migrationsDir) => {
         throw error;
       }
     }
+    if (quotedRuntimeRole) {
+      await client.query(
+        `REVOKE ALL PRIVILEGES ON TABLE public.schema_migrations FROM ${quotedRuntimeRole}`,
+      );
+    }
   } finally {
     await client.query("SELECT pg_advisory_unlock(hashtext('roomframe-schema-migrations'))").catch(() => {});
+    if (quotedMigrationRole) {
+      await client.query('RESET ROLE').catch(() => {});
+    }
     client.release();
   }
 };

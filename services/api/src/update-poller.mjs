@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { loadConfig } from './config.mjs';
-import { createPool, runMigrations } from './database.mjs';
+import { createPool } from './database.mjs';
 import { pollGithubUpdates } from './github-update-poller.mjs';
 import { createValidators } from './validation.mjs';
 
@@ -12,7 +12,6 @@ const pool = createPool({
   ...config.database,
   application_name: 'roomframe-update-poller',
 });
-await runMigrations(pool, config.migrationsDir);
 const validators = await createValidators(config.contractsDir);
 const lease = await pool.connect();
 const acquired = await lease.query(

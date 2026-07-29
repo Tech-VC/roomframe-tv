@@ -245,6 +245,14 @@ done
 [[ "$ready" -eq 1 ]] || fail "PostgreSQL isolé n'est pas devenu disponible"
 
 docker exec "$VERIFY_CONTAINER" \
+  psql \
+    --username=roomframe \
+    --dbname=roomframe_restore_test \
+    --set ON_ERROR_STOP=1 \
+    --command 'CREATE ROLE roomframe_runtime NOLOGIN' \
+    >/dev/null
+
+docker exec "$VERIFY_CONTAINER" \
   pg_restore \
     --exit-on-error \
     --single-transaction \

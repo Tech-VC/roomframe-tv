@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",
+    "migrate": "node src/migrate.mjs",
     "worker": "node src/worker.mjs",
     "update-poller": "node src/update-poller.mjs",
     "check": "node scripts/check-syntax.mjs",

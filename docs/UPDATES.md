@@ -19,7 +19,8 @@ dans ce jalon. Si PostgreSQL existe :
 2. il exécute `roomframe-backup` avant de recopier le code ;
 3. il conserve les secrets et le seed existants ;
 4. il reconstruit et redémarre la pile ;
-5. l’API applique les nouvelles migrations additives sous verrou ;
+5. le conteneur one-shot `migrate` applique les nouvelles migrations additives
+   sous verrou avant le redémarrage de l’API ;
 6. les healthchecks HTTPS et worker doivent réussir.
 
 Pour une release signée déjà importée, le chemin privilégié est désormais :
@@ -260,15 +261,17 @@ Le jalon ne comprend pas encore :
 - la matérialisation d’images OCI lorsqu’un bundle en fournit ;
 - la validation physique de l’installation silencieuse APK en Device Owner ;
 
-Deux frontières restent particulièrement importantes :
+Une frontière reste particulièrement importante :
 
-- le rôle PostgreSQL `roomframe` initial cumule propriété, migration et accès
-  applicatif ; sa séparation exigera une migration et une procédure
-  d’exploitation versionnées ;
 - `roomframe-apply-update` est un composant privilégié minimal, séparé de
   l’API web. Aucun endpoint HTTP ne reçoit directement le droit de remplacer
   le code, de contrôler Docker ou de restaurer une base. Le courtier systemd
   ne consomme que des releases signées déjà importées et revalidées.
+
+La mise à jour conserve les trois secrets PostgreSQL existants. L’étape
+`database-roles` est idempotente, transfère les anciens objets encore possédés
+par le rôle historique, puis le migrateur one-shot applique les fichiers
+versionnés. Les services runtime ne peuvent pas appliquer une migration.
 
 La séquence serveur actuellement exécutable est :
 

@@ -26,6 +26,7 @@ import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 
 const databaseHost = process.env.ROOMFRAME_TEST_DB_HOST;
+const splitDatabaseRoles = process.env.ROOMFRAME_TEST_DB_SPLIT_ROLES === '1';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 
 const token = () => crypto.randomBytes(32).toString('base64url');
@@ -102,15 +103,67 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   if (!/(?:^|_)test(?:$|_)/.test(config.database.database)) {
     throw new Error('integration_database_must_be_dedicated_to_tests');
   }
-  const resetPool = createPool({
-    ...config.database,
-    application_name: 'roomframe-integration-reset',
+  if (!splitDatabaseRoles) {
+    const resetPool = createPool({
+      ...config.database,
+      application_name: 'roomframe-integration-reset',
+    });
+    await resetPool.query('DROP SCHEMA public CASCADE');
+    await resetPool.query('CREATE SCHEMA public');
+    await runMigrations(resetPool, config.migrationsDir);
+    await resetPool.end();
+  }
+  const { app, pool, validators } = await buildApp({
+    config,
+    logger: process.env.ROOMFRAME_TEST_LOG === '1',
   });
-  await resetPool.query('DROP SCHEMA public CASCADE');
-  await resetPool.query('CREATE SCHEMA public');
-  await resetPool.end();
-  const { app, pool, validators } = await buildApp({ config, logger: false });
   t.after(() => app.close());
+
+  if (splitDatabaseRoles) {
+    const privileges = await pool.query(`
+      SELECT
+        current_user = 'roomframe_runtime' AS runtime_identity,
+        pg_get_userbyid(database.datdba) = 'roomframe_owner' AS owner_identity,
+        has_database_privilege(current_user, current_database(), 'CONNECT') AS can_connect,
+        NOT has_database_privilege(current_user, current_database(), 'CREATE') AS cannot_create_db,
+        NOT has_database_privilege(current_user, current_database(), 'TEMP') AS cannot_create_temp,
+        has_schema_privilege(current_user, 'public', 'USAGE') AS can_use_schema,
+        NOT has_schema_privilege(current_user, 'public', 'CREATE') AS cannot_create_schema,
+        has_table_privilege(
+          current_user,
+          'public.users',
+          'SELECT,INSERT,UPDATE,DELETE'
+        ) AS can_use_tables,
+        NOT has_table_privilege(
+          current_user,
+          'public.schema_migrations',
+          'SELECT'
+        ) AS cannot_read_migrations,
+        NOT pg_has_role(current_user, 'roomframe_owner', 'MEMBER') AS cannot_assume_owner
+      FROM pg_database database
+      WHERE database.datname = current_database()
+    `);
+    assert.deepEqual(privileges.rows[0], {
+      runtime_identity: true,
+      owner_identity: true,
+      can_connect: true,
+      cannot_create_db: true,
+      cannot_create_temp: true,
+      can_use_schema: true,
+      cannot_create_schema: true,
+      can_use_tables: true,
+      cannot_read_migrations: true,
+      cannot_assume_owner: true,
+    });
+    await assert.rejects(
+      pool.query('CREATE TABLE public.runtime_ddl_must_fail (id integer)'),
+      (error) => error?.code === '42501',
+    );
+    await assert.rejects(
+      pool.query('SELECT version FROM public.schema_migrations LIMIT 1'),
+      (error) => error?.code === '42501',
+    );
+  }
 
   const statusBefore = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
   assert.equal(statusBefore.statusCode, 200);
@@ -1712,7 +1765,17 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(locked.statusCode, 409);
 
-  await runMigrations(pool, config.migrationsDir);
+  const migrationPool = createPool({
+    ...config.database,
+    user: process.env.ROOMFRAME_TEST_DB_MIGRATOR_USER ?? config.database.user,
+    password: process.env.ROOMFRAME_TEST_DB_MIGRATOR_PASSWORD ?? config.database.password,
+    application_name: 'roomframe-integration-migrate',
+  });
+  await runMigrations(migrationPool, config.migrationsDir, {
+    migrationRole: splitDatabaseRoles ? 'roomframe_owner' : null,
+    runtimeRole: splitDatabaseRoles ? 'roomframe_runtime' : null,
+  });
+  await migrationPool.end();
   const seedsAfterMigrations = await pool.query('SELECT count(*) AS count FROM experience_seed_history');
   assert.equal(seedsAfterMigrations.rows[0].count, '1');
   const updatePolicyAfterMigrations = await pool.query(

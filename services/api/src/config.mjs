@@ -34,7 +34,9 @@ export const loadConfig = async (overrides = {}) => {
   const requireAuthSecrets = overrides.requireAuthSecrets !== false;
   const secretRoot = overrides.secretRoot ?? process.env.ROOMFRAME_SECRET_DIR ?? '/run/secrets';
   const dataRoot = overrides.dataRoot ?? process.env.ROOMFRAME_DATA_DIR ?? '/data';
-  const passwordFile = overrides.postgresPasswordFile
+  const passwordFile = overrides.dbPasswordFile
+    ?? overrides.postgresPasswordFile
+    ?? process.env.ROOMFRAME_DB_PASSWORD_FILE
     ?? process.env.ROOMFRAME_POSTGRES_PASSWORD_FILE
     ?? path.join(secretRoot, 'postgres_password');
   const bootstrapTokenFile = overrides.bootstrapTokenFile
@@ -47,8 +49,9 @@ export const loadConfig = async (overrides = {}) => {
     ?? process.env.ROOMFRAME_TOTP_KEY_FILE
     ?? path.join(secretRoot, 'totp_encryption_key');
 
-  const postgresPassword = overrides.postgresPassword
-    ?? await readTextFile(passwordFile, 'postgres_password');
+  const databasePassword = overrides.dbPassword
+    ?? overrides.postgresPassword
+    ?? await readTextFile(passwordFile, 'database_password');
   const [bootstrapToken, sessionSecret, totpEncryptionKey] = requireAuthSecrets
     ? await Promise.all([
       overrides.bootstrapToken ?? readTextFile(bootstrapTokenFile, 'bootstrap_token'),
@@ -146,10 +149,16 @@ export const loadConfig = async (overrides = {}) => {
       port: positiveInteger(overrides.dbPort ?? process.env.ROOMFRAME_DB_PORT, 5432),
       database: overrides.dbName ?? process.env.ROOMFRAME_DB_NAME ?? 'roomframe',
       user: overrides.dbUser ?? process.env.ROOMFRAME_DB_USER ?? 'roomframe',
-      password: postgresPassword,
+      password: databasePassword,
       max: positiveInteger(overrides.dbPoolSize ?? process.env.ROOMFRAME_DB_POOL_SIZE, 10),
       application_name: overrides.applicationName ?? 'roomframe-api',
     },
+    databaseMigrationRole: overrides.databaseMigrationRole
+      ?? process.env.ROOMFRAME_DB_MIGRATION_ROLE
+      ?? null,
+    databaseRuntimeRole: overrides.databaseRuntimeRole
+      ?? process.env.ROOMFRAME_DB_RUNTIME_ROLE
+      ?? null,
     bootstrapToken,
     sessionSecret,
     totpEncryptionKey,

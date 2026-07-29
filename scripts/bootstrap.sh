@@ -120,6 +120,8 @@ create_secret_once() {
 }
 
 create_secret_once postgres_password 48
+create_secret_once postgres_migrator_password 48
+create_secret_once postgres_runtime_password 48
 create_secret_once bootstrap_token 32
 create_secret_once session_secret 48
 create_secret_once totp_encryption_key 32

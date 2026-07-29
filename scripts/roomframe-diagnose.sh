@@ -50,7 +50,8 @@ for directory in app postgres media processing releases backups pki caddy caddy-
   fi
 done
 
-for secret_name in postgres_password bootstrap_token session_secret totp_encryption_key; do
+for secret_name in postgres_password postgres_migrator_password postgres_runtime_password \
+  bootstrap_token session_secret totp_encryption_key; do
   secret_path="$CONFIG_DIR/secrets/$secret_name"
   if [[ ! -f "$secret_path" || ! -s "$secret_path" || -L "$secret_path" ]]; then
     bad "secret absent, vide ou non régulier: $secret_name"
@@ -99,6 +100,49 @@ if [[ -x "$COMPOSE_COMMAND" ]]; then
       *) bad "service $service_name: ${service_status:-état inconnu}" ;;
     esac
   done
+  for service_name in database-roles migrate; do
+    container_id="$("$COMPOSE_COMMAND" ps -a -q "$service_name" 2>/dev/null || true)"
+    if [[ -z "$container_id" ]]; then
+      bad "étape d'initialisation absente: $service_name"
+      continue
+    fi
+    setup_status="$(
+      docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' \
+        "$container_id" 2>/dev/null || true
+    )"
+    if [[ "$setup_status" == "exited:0" ]]; then
+      ok "étape d'initialisation $service_name terminée"
+    else
+      bad "étape d'initialisation $service_name: ${setup_status:-état inconnu}"
+    fi
+  done
+  database_privileges="$(
+    "$COMPOSE_COMMAND" exec -T postgres \
+      psql \
+        --username=roomframe \
+        --dbname=roomframe \
+        --tuples-only \
+        --no-align \
+        --set ON_ERROR_STOP=1 \
+        --command "
+          SELECT
+            pg_get_userbyid(datdba) = 'roomframe_owner',
+            has_schema_privilege('roomframe_runtime', 'public', 'USAGE'),
+            NOT has_schema_privilege('roomframe_runtime', 'public', 'CREATE'),
+            NOT has_table_privilege(
+              'roomframe_runtime',
+              'public.schema_migrations',
+              'SELECT'
+            )
+          FROM pg_database
+          WHERE datname = current_database();
+        " 2>/dev/null || true
+  )"
+  if [[ "$database_privileges" == "t|t|t|t" ]]; then
+    ok "rôles PostgreSQL propriétaire/migration/runtime séparés"
+  else
+    bad "séparation des privilèges PostgreSQL non confirmée"
+  fi
   server_update_counts="$(
     "$COMPOSE_COMMAND" exec -T postgres \
       psql \

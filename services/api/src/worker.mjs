@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { loadConfig } from './config.mjs';
-import { createPool, runMigrations } from './database.mjs';
+import { createPool } from './database.mjs';
 import {
   processOneMediaJob,
   recoverAbandonedMediaJobs,
@@ -12,7 +12,6 @@ const config = await loadConfig({
   requireAuthSecrets: false,
 });
 const pool = createPool({ ...config.database, application_name: 'roomframe-worker' });
-await runMigrations(pool, config.migrationsDir);
 const workerLease = await pool.connect();
 const acquired = await workerLease.query(
   "SELECT pg_try_advisory_lock(hashtext('roomframe-media-worker')) AS acquired",

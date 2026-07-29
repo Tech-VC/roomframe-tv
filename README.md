@@ -99,7 +99,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 
 ## Fonctions réellement présentes dans le jalon
 
-- migrations PostgreSQL additives avec checksum et verrou advisory ;
+- migrations PostgreSQL additives avec checksum et verrou advisory, exécutées
+  par un rôle dédié avant le démarrage des services applicatifs ;
 - modèles instance, utilisateurs, rôles, sessions, groupes, TV, scènes,
   révisions, médias, messages, horaires, métriques, événements, releases,
   déploiements et audit ;
@@ -200,7 +201,9 @@ Node.js 22.12 ou plus récent, Python 3 et Docker sont utilisés par les checks 
 
 Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
-test n’est pas fourni. Il exécute 23 tests Studio/synchronisation TV et
+test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
+runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
+23 tests Studio/synchronisation TV et
 23 tests API, contrôle de syntaxe serveur inclus, soit 46 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
@@ -231,9 +234,6 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   doivent encore être validés sur la TV réelle ;
 - la rotation et la révocation des clés TV sont actives ; les certificats
   clients individuels et le mTLS restent à finaliser avant production ;
-- le rôle PostgreSQL initial cumule propriété, migrations et accès runtime ;
-  le moteur root est séparé de l’API web, mais le rôle de migration PostgreSQL
-  doit encore être séparé du rôle runtime ;
 - HDMI, Cast, AirPlay, puissance et retour automatique sont des contrats
   d’adaptateurs, pas des capacités Philips annoncées comme fonctionnelles ;
 - PhairPlay n’est pas intégré avant validation de la version Android, de l’ABI

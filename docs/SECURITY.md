@@ -20,6 +20,8 @@ l’architecture cible, mais ne sont pas encore implémentés dans ce jalon.
 L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 
 - `postgres_password` ;
+- `postgres_migrator_password` ;
+- `postgres_runtime_password` ;
 - `bootstrap_token` ;
 - `session_secret` ;
 - `totp_encryption_key`.
@@ -30,7 +32,11 @@ lire puisqu’il ne peut pas traverser le répertoire `0700`. Docker monte ensui
 individuellement et en lecture seule uniquement les secrets autorisés pour
 chaque conteneur ; ce mode permet à l’API exécutée sans privilèges de lire son
 montage. Les secrets ne transitent jamais dans les variables d’environnement.
-Une seconde installation conserve leur contenu.
+Une seconde installation conserve leur contenu. `postgres_password` reste le
+secret du compte d’administration local utilisé uniquement par PostgreSQL et
+les opérations root. `database-roles` reçoit ce secret le temps de préparer
+les rôles. Le conteneur one-shot `migrate` ne reçoit que le secret migrateur ;
+l’API, le worker et le poller ne reçoivent que le secret runtime.
 
 `/etc/roomframe/runtime.conf` contient uniquement les chemins, URL, hôte,
 IPv4, version et fuseau nécessaires à Compose.
@@ -159,6 +165,12 @@ synchroniser.
 
 - seul Caddy publie `443/tcp` ;
 - PostgreSQL reste sur le réseau Docker interne ;
+- `roomframe_owner` ne peut pas se connecter ; `roomframe_migrator` peut
+  prendre ce rôle uniquement dans le conteneur de migration one-shot ;
+  `roomframe_runtime` possède les droits de données nécessaires mais aucun
+  droit de création de base, schéma, table ou table temporaire ;
+- l’historique `schema_migrations` est explicitement refusé au runtime et la
+  table RLS des cibles de déploiement possède une politique limitée à ce rôle ;
 - l’installateur crée le compte système Debian `roomframe`, sans home ni shell
   de connexion ; l’API, le worker et le poller utilisent son UID/GID explicite ;
 - API, worker média et poller d’updates utilisent une racine en lecture seule,
@@ -244,8 +256,9 @@ la politique de l’organisation.
 `roomframe-verify-backup --latest`, exécutable uniquement par root, refuse les
 liens, entrées inattendues, permissions trop ouvertes, archives dangereuses et
 checksums invalides. Le dump est réellement restauré dans un conteneur
-PostgreSQL éphémère avec `--network none`; aucune donnée de production n’est
-écrite ou remplacée.
+PostgreSQL éphémère avec `--network none`. Un rôle runtime sans login y est
+créé uniquement pour restaurer les politiques RLS référencées par le dump ;
+aucune donnée de production n’est écrite ou remplacée.
 
 `roomframe-restore` partage le verrou de maintenance avec l’installateur et les
 sauvegardes. Il exige un enfant direct du répertoire de sauvegardes et une

@@ -683,11 +683,22 @@ if [[ "$NO_START" -eq 0 ]]; then
   # Build before interruption, then recreate containers and networks. Compose
   # does not change the `internal` flag of an existing network during `up`;
   # keeping an older frontend network would silently preserve API egress.
-  "$INSTALL_DIR/scripts/roomframe-compose.sh" build api worker update-poller
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" build api worker update-poller migrate
   "$INSTALL_DIR/scripts/roomframe-compose.sh" down --remove-orphans
   # Recreate even when the image tag is unchanged: Compose otherwise keeps
   # stale bind-mounted secret metadata after bootstrap hardening.
   "$INSTALL_DIR/scripts/roomframe-compose.sh" up -d --no-build --force-recreate --remove-orphans
+
+  for setup_service in database-roles migrate; do
+    setup_id="$(
+      "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -a -q "$setup_service" 2>/dev/null || true
+    )"
+    [[ -n "$setup_id" ]] \
+      || fail "L'étape d'initialisation $setup_service n'a pas été créée."
+    setup_status="$(docker inspect --format '{{.State.Status}}:{{.State.ExitCode}}' "$setup_id")"
+    [[ "$setup_status" == "exited:0" ]] \
+      || fail "L'étape d'initialisation $setup_service a échoué ($setup_status). Exécutez: sudo roomframe-compose logs $setup_service"
+  done
 
   log "Vérification de l'interface HTTPS…"
   healthy=0

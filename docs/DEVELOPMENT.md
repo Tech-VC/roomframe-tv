@@ -41,8 +41,12 @@ Depuis la racine :
 `test.sh` exécute d’abord ces checks, puis installe avec `npm ci` les
 dépendances API verrouillées si elles sont absentes. Si aucune base de test
 n’est fournie, il démarre ensuite un conteneur PostgreSQL 17 éphémère sur
-l’interface locale. Il lance enfin les tests Studio/simulateur, le contrôle de
-syntaxe API et les tests serveur en série, puis supprime le conteneur.
+l’interface locale. Il y crée les rôles propriétaire, migration et runtime,
+applique les migrations avec le migrateur puis exécute l’intégration avec le
+seul rôle runtime. Le test confirme notamment que ce rôle ne peut pas créer
+d’objet, lire `schema_migrations` ou prendre le rôle propriétaire. Il lance
+enfin les tests Studio/simulateur, le contrôle de syntaxe API et les tests
+serveur en série, puis supprime le conteneur.
 
 Les tests UI sont bien inclus dans la commande globale :
 

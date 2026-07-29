@@ -126,6 +126,26 @@ if rg --fixed-strings --line-number '/var/run/docker.sock' compose.yaml; then
   exit 1
 fi
 
+if rg --line-number 'runMigrations' \
+  services/api/src/app.mjs \
+  services/api/src/worker.mjs \
+  services/api/src/update-poller.mjs; then
+  echo "Les services permanents ne doivent jamais appliquer les migrations." >&2
+  exit 1
+fi
+grep -Fq 'ROOMFRAME_DB_USER: roomframe_runtime' compose.yaml || {
+  echo "Les services applicatifs doivent utiliser le rôle PostgreSQL runtime." >&2
+  exit 1
+}
+grep -Fq 'ROOMFRAME_DB_USER: roomframe_migrator' compose.yaml || {
+  echo "Le conteneur de migration PostgreSQL dédié est absent." >&2
+  exit 1
+}
+grep -Fq 'TO roomframe_runtime' database/migrations/0012_runtime_deployment_policy.sql || {
+  echo "La table RLS de déploiement doit autoriser explicitement le runtime." >&2
+  exit 1
+}
+
 compose=()
 if docker compose version >/dev/null 2>&1; then
   compose=(docker compose)

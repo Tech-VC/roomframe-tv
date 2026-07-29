@@ -28,6 +28,10 @@ Navigateur ── HTTPS ── Caddy ── API Node.js ── PostgreSQL
 
 Worker Sharp/FFmpeg ── file PostgreSQL ── médias privés
 
+Bootstrap rôles ── admin PostgreSQL ── propriétaire sans login
+Migration one-shot ── migrateur ──────── schéma versionné
+API + worker + poller ── runtime ─────── données applicatives
+
 Poller GitHub ── HTTPS sortant ── release `.rfupdate`
       │
       ├── vérificateur Ed25519 commun
@@ -52,7 +56,12 @@ Timer systemd root ── courtier local ───────────┘
   `roomframe`, sans home ni shell de connexion ;
 - la demande de récupération est montée en lecture seule dans l’API ; l’état
   de consommation autoritatif reste transactionnel en base ;
-- l’API, le worker et le poller appliquent les migrations sous verrou advisory ;
+- `database-roles` prépare idempotemment le propriétaire sans login,
+  le migrateur et le runtime ; seul `migrate`, conteneur one-shot, peut prendre
+  le rôle propriétaire et appliquer les migrations sous verrou advisory ;
+- l’API, le worker et le poller utilisent uniquement `roomframe_runtime`,
+  n’ont aucun droit DDL et ne peuvent ni lire ni modifier
+  `schema_migrations` ;
 - un seul worker média détient le verrou global de traitement ;
 - un seul poller GitHub détient son propre verrou global ;
 - l’administration peut écrire une demande d’application serveur, mais seul

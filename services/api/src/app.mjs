@@ -4,7 +4,7 @@ import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import { registerBootstrapAuthRoutes } from './bootstrap-auth-routes.mjs';
-import { createPool, runMigrations } from './database.mjs';
+import { createPool } from './database.mjs';
 import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
 import { createValidators } from './validation.mjs';
@@ -71,7 +71,6 @@ export const buildApp = async ({ config, logger = true }) => {
 
   const pool = createPool(config.database);
   try {
-    await runMigrations(pool, config.migrationsDir);
     const validators = await createValidators(config.contractsDir);
     const experience = await loadVerifiedDefaultExperience(config.defaultBundleDir, validators);
 

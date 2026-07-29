@@ -142,9 +142,11 @@ créé avant l’ajout de cette politique.
 /var/lib/roomframe/seed/            expérience initiale figée
 ```
 
-Les secrets PostgreSQL, bootstrap, session et chiffrement TOTP sont créés
-uniquement lorsqu’ils sont absents. Une seconde exécution conserve les fichiers
-existants ; aucun secret n’est régénéré silencieusement.
+Les secrets PostgreSQL administrateur, migrateur et runtime, ainsi que les
+secrets bootstrap, session et chiffrement TOTP, sont créés uniquement
+lorsqu’ils sont absents. Une seconde exécution conserve les fichiers existants ;
+aucun secret n’est régénéré silencieusement. Une installation antérieure reçoit
+les deux nouveaux secrets PostgreSQL sans modifier son secret administrateur.
 
 Un verrou local `/run/lock/roomframe-install.lock` refuse une seconde
 installation, sauvegarde, restauration ou application de release tant qu’une
@@ -165,10 +167,17 @@ aux comptes non-root sur l’hôte, mais deviennent lisibles par l’API non-roo
 une fois montés individuellement et en lecture seule par Docker. Chaque service
 ne reçoit que les secrets déclarés dans `compose.yaml`.
 
+`database-roles` transfère idempotemment la propriété des objets historiques à
+`roomframe_owner`, puis `migrate` applique les migrations avant tout service
+permanent. Le propriétaire n’a pas de login ; le migrateur est one-shot et le
+runtime ne possède aucun droit DDL. L’API, le worker et le poller ne lancent
+jamais de migration à leur démarrage.
+
 Le service `update-poller` est séparé de l’API et du worker média. Il ne reçoit
-que le secret PostgreSQL, le magasin de clés publiques en lecture seule et les
-volumes `processing`/`releases`. Il ne publie aucun port. Lui seul rejoint un
-réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau interne.
+que le secret PostgreSQL runtime, le magasin de clés publiques en lecture seule
+et les volumes `processing`/`releases`. Il ne publie aucun port. Lui seul
+rejoint un réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau
+interne.
 
 Le poller importe seulement. L’application automatique du serveur reste
 `manual` par défaut et se configure ensuite dans le Studio. Lorsqu’elle est
