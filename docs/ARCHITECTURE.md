@@ -12,7 +12,9 @@ configure jamais l’IP, le masque, la passerelle, les routes ou les DNS.
 ### Configuration de l’instance
 
 Le bootstrap applicatif crée l’identité, le premier propriétaire avec TOTP et
-la première scène. Les salles, contenus, sources et politiques appartiennent à
+la première scène. Une fois connecté, ce propriétaire peut enrôler une
+passkey, liée à l’origine HTTPS canonique et confirmée par phrase de passe +
+nouveau TOTP. Les salles, contenus, sources et politiques appartiennent à
 l’application ; aucun champ réseau serveur n’est demandé.
 
 ## Pile du jalon 0.3.0
@@ -82,7 +84,8 @@ TV ── ticket chiffré sans secret sortant ───────────�
 - code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
   séparés.
 
-Les modèles persistants couvrent l’instance, les rôles/utilisateurs/sessions,
+Les modèles persistants couvrent l’instance, les
+rôles/utilisateurs/sessions/passkeys et défis WebAuthn,
 les groupes/TV, les scènes et révisions, les médias et jobs, les messages, les
 sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
@@ -171,6 +174,11 @@ réels de bootstrap, authentification, scènes, médias, messages et releases. L
 modèle partagé côté interface est testé avec le validateur de layout de l’API.
 Les interactions couvrent déplacement, redimensionnement, clavier, calques,
 propriétés, palette et historique.
+
+La console sécurité reste dans cette même direction éditoriale. Elle permet
+d’enrôler ou révoquer les passkeys du compte courant et de fermer ses sessions.
+Les conversions WebAuthn restent dans un module navigateur dédié ; les défis,
+la vérification cryptographique et les audits restent côté API.
 
 Le sélecteur d’aperçu TV/groupe résout côté serveur les affectations publiées
 et reste distinct du brouillon modifiable. Le Studio expose également la

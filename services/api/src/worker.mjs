@@ -36,6 +36,11 @@ const runMaintenance = async () => {
       [config.telemetryRetentionDays],
     ),
     pool.query("DELETE FROM sessions WHERE expires_at < now() - interval '7 days'"),
+    pool.query(
+      `DELETE FROM webauthn_challenges
+       WHERE expires_at < now() - interval '7 days'
+          OR used_at < now() - interval '7 days'`,
+    ),
     pool.query("DELETE FROM bootstrap_challenges WHERE expires_at < now() - interval '7 days'"),
     pool.query("DELETE FROM recovery_authorities WHERE expires_at < now() - interval '7 days'"),
   ]);

@@ -96,13 +96,16 @@ certificat de CA public de test valide ; `scripts/test.sh` en génère un
 automatiquement et ne conserve pas sa clé privée.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-23 tests UI, soit 46 tests sur un clone frais. Les workflows GitHub de
+26 tests UI, soit 49 tests sur un clone frais. Les workflows GitHub de
 validation et de release appellent tous deux `./scripts/test.sh` et couvrent
 donc ce même ensemble. Les scénarios comprennent notamment :
 
 - bootstrap concurrent : une réussite, un conflit ;
 - Argon2id, chiffrement TOTP et vecteurs RFC 6238 ;
 - cookie sécurisé, session, permissions, origine et CSRF ;
+- WebAuthn avec paire P-256 éphémère, attestation CBOR minimale, signature
+  d’assertion réelle, compteur, rejet du rejeu, origine canonique et révocation
+  de session ;
 - identité publique bornée, charte globale protégée par permission/CSRF et
   document `branding.json` hashé pour les TV ;
 - bibliothèque de scènes, révision, conflit, publication, affectation ciblée

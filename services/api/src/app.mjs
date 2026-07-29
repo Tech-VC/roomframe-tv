@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
+import { registerAccountSecurityRoutes } from './account-security-routes.mjs';
 import { registerBootstrapAuthRoutes } from './bootstrap-auth-routes.mjs';
 import { createPool } from './database.mjs';
 import { loadVerifiedDefaultExperience } from './seed.mjs';
@@ -11,6 +12,7 @@ import { createValidators } from './validation.mjs';
 
 const safeServerErrorCodes = new Set([
   'insufficient_storage',
+  'passkey_not_configured',
   'server_ca_not_ready',
   'server_ca_invalid',
 ]);
@@ -70,7 +72,11 @@ export const buildApp = async ({ config, logger = true }) => {
   app.addHook('onSend', async (_request, reply, payload) => {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('referrer-policy', 'no-referrer');
-    reply.header('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    reply.header(
+      'permissions-policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), '
+        + 'publickey-credentials-create=(self), publickey-credentials-get=(self)',
+    );
     reply.header('cache-control', reply.getHeader('cache-control') ?? 'no-store');
     return payload;
   });
@@ -108,6 +114,11 @@ export const buildApp = async ({ config, logger = true }) => {
       validators,
       experience,
     });
+    registerAccountSecurityRoutes({
+      app,
+      pool,
+      config,
+    });
     registerStudioRoutes({
       app,
       pool,
@@ -143,6 +154,9 @@ export const buildApp = async ({ config, logger = true }) => {
         ...(status < 500 && error.validation ? { validation: error.validation } : {}),
         ...(status === 409 && error.currentRevision
           ? { currentRevision: error.currentRevision }
+          : {}),
+        ...(status === 409 && error.preferredUrl
+          ? { preferredUrl: error.preferredUrl }
           : {}),
       });
     });

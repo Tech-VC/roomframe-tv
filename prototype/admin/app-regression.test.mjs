@@ -101,3 +101,25 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /server_ca_not_ready/);
   assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
 });
+
+test("les passkeys et les sessions restent des parcours API vérifiés", () => {
+  assert.match(markup, /id="loginPasskeyButton"/);
+  assert.match(markup, /id="passkeyRegistrationDialog"/);
+  assert.match(markup, /id="passkeyRevokeDialog"/);
+  assert.match(markup, /id="sessionList"/);
+  assert.match(source, /navigator\.credentials\.get/);
+  assert.match(source, /navigator\.credentials\.create/);
+  assert.match(source, /auth\/passkeys\/registration\/options/);
+  assert.match(source, /auth\/passkeys\/registration\/complete/);
+  assert.match(source, /auth\/passkey\/complete/);
+  assert.match(source, /auth\/sessions\/revoke-others/);
+  assert.match(source, /step_up_failed/);
+  assert.match(
+    source,
+    /passkeyRegistrationDialog"\)\.addEventListener\("keydown"[\s\S]+event\.key === "Escape"/,
+  );
+  assert.match(
+    source,
+    /passkeyRevokeDialog"\)\.addEventListener\("keydown"[\s\S]+event\.key === "Escape"/,
+  );
+});

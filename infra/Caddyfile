@@ -25,7 +25,7 @@ __ROOMFRAME_SITE_ADDRESSES__ {
     X-Content-Type-Options "nosniff"
     X-Frame-Options "DENY"
     Referrer-Policy "no-referrer"
-    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()"
+    Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=(), publickey-credentials-create=(self), publickey-credentials-get=(self)"
     Cross-Origin-Opener-Policy "same-origin"
     Cross-Origin-Resource-Policy "same-origin"
     Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'"

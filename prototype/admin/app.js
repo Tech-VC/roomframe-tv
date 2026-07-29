@@ -10,8 +10,14 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui10";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui10";
+} from "./scene-model.js?v=0.3.0-ui11";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui11";
+import {
+  creationOptionsFromJSON,
+  credentialToJSON,
+  passkeysAvailable,
+  requestOptionsFromJSON,
+} from "./passkey-client.js?v=0.3.0-ui11";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -123,6 +129,10 @@ const state = {
   previewSelection: "",
   totpSetupId: null,
   recoveryChallengeId: null,
+  passkeys: [],
+  securitySessions: [],
+  passkeyCanonicalUrl: null,
+  passkeyReturnFocus: null,
   studioLoaded: false,
 };
 
@@ -287,6 +297,7 @@ const enterStudio = async () => {
   hideGate();
   renderSecurity();
   await loadStudio();
+  await loadSecurityState();
 };
 
 const loadStudio = async (sceneId = null) => {
@@ -1364,10 +1375,176 @@ const renderSecurity = () => {
   const entries = [
     ["Session", user?.username ?? user?.email ?? "Authentifiée"],
     ["Rôle", user?.role ?? (Array.isArray(user?.roles) ? user.roles.join(", ") : "Non communiqué")],
-    ["Double validation", "TOTP obligatoire à chaque connexion"],
+    [
+      "Double validation",
+      state.passkeys.length > 0
+        ? `TOTP actif · ${state.passkeys.length} passkey${state.passkeys.length > 1 ? "s" : ""}`
+        : "TOTP obligatoire · aucune passkey liée",
+    ],
     ["Protection TOTP", "Secret chiffré · code 30 s · réutilisation refusée"],
+    ["Sessions actives", state.securitySessions.length || "Chargement…"],
   ];
   for (const [term, description] of entries) ledger.append(make("dt", "", term), make("dd", "", description));
+};
+
+const securityDate = (value) => (
+  value ? new Date(value).toLocaleString("fr-FR") : "Jamais"
+);
+
+const sessionAgentLabel = (value) => {
+  const agent = String(value || "");
+  const platform = /Macintosh|Mac OS X/i.test(agent)
+    ? "Mac"
+    : /Android/i.test(agent)
+      ? "Android"
+      : /Windows/i.test(agent)
+        ? "Windows"
+        : /Linux/i.test(agent)
+          ? "Linux"
+          : "Navigateur";
+  const browser = /Edg\//.test(agent)
+    ? "Edge"
+    : /Chrome\//.test(agent)
+      ? "Chrome"
+      : /Safari\//.test(agent)
+        ? "Safari"
+        : /Firefox\//.test(agent)
+          ? "Firefox"
+          : "client web";
+  return `${platform} · ${browser}`;
+};
+
+const passkeyErrorMessage = (error) => {
+  if (error?.name === "NotAllowedError") {
+    return "La demande a été annulée ou l’appareil n’a pas validé la passkey.";
+  }
+  const messages = {
+    passkey_not_available: "Aucune passkey n’est encore liée à ce compte. Utilisez le TOTP.",
+    passkey_not_configured: "Les passkeys ne sont pas configurées sur cette instance.",
+    passkey_canonical_origin_required: (
+      `Ouvrez le nom HTTPS principal${
+        error?.payload?.preferredUrl ? ` : ${error.payload.preferredUrl}` : ""
+      }. Les passkeys ne fonctionnent pas sur l’URL IP de secours.`
+    ),
+    step_up_failed: "Phrase de passe ou nouveau code TOTP incorrect.",
+    invalid_passkey_response: "La preuve passkey a été refusée.",
+    invalid_passkey_challenge: "La demande passkey a expiré. Recommencez.",
+  };
+  return messages[error?.message] ?? error?.message ?? "Opération passkey impossible.";
+};
+
+const renderPasskeys = () => {
+  const container = $("#passkeyList");
+  const available = passkeysAvailable();
+  $("#openPasskeyRegistration").disabled = !available;
+  $("#passkeyCanonicalUrl").textContent = state.passkeyCanonicalUrl
+    ? `Origine liée : ${state.passkeyCanonicalUrl}`
+    : available
+      ? "Origine HTTPS principale non communiquée."
+      : "Ce navigateur ne fournit pas WebAuthn dans ce contexte sécurisé.";
+  if (state.passkeys.length === 0) {
+    container.replaceChildren(make(
+      "p",
+      "empty-copy",
+      available
+        ? "Aucune passkey. Le TOTP reste obligatoire pour ouvrir la régie."
+        : "Aucune passkey affichée. Utilisez un navigateur WebAuthn sur le nom HTTPS principal.",
+    ));
+    return;
+  }
+  container.replaceChildren(...state.passkeys.map((passkey) => {
+    const row = make("article", "security-record");
+    const identity = make("div");
+    identity.append(
+      make("h3", "", passkey.label),
+      make(
+        "p",
+        "",
+        `${passkey.deviceType === "multiDevice" ? "Synchronisée" : "Appareil unique"}`
+          + `${passkey.backedUp ? " · sauvegardée" : ""}`,
+      ),
+    );
+    const activity = make("div");
+    activity.append(
+      make("span", "record-state", passkey.lastUsedAt ? "UTILISÉE" : "PRÊTE"),
+      make(
+        "p",
+        "",
+        `Ajoutée ${securityDate(passkey.createdAt)} · Dernier usage ${securityDate(passkey.lastUsedAt)}`,
+      ),
+    );
+    const revoke = make("button", "tool", "Révoquer");
+    revoke.type = "button";
+    revoke.dataset.passkeyRevoke = passkey.id;
+    revoke.setAttribute("aria-label", `Révoquer la passkey ${passkey.label}`);
+    row.append(identity, activity, revoke);
+    return row;
+  }));
+};
+
+const renderSecuritySessions = () => {
+  const container = $("#sessionList");
+  $("#revokeOtherSessions").disabled = state.securitySessions.length <= 1;
+  if (state.securitySessions.length === 0) {
+    container.replaceChildren(make("p", "empty-copy", "Aucune session active communiquée."));
+    return;
+  }
+  container.replaceChildren(...state.securitySessions.map((session) => {
+    const row = make("article", "security-record");
+    const identity = make("div");
+    identity.append(
+      make("h3", "", sessionAgentLabel(session.userAgent)),
+      make("p", "", session.remoteAddress || "Adresse non communiquée"),
+    );
+    const activity = make("div");
+    activity.append(
+      make(
+        "span",
+        `record-state${session.current ? "" : " remote"}`,
+        session.current ? "CETTE SESSION" : "AUTORISÉE",
+      ),
+      make(
+        "p",
+        "",
+        `Ouverte ${securityDate(session.createdAt)} · Vue ${securityDate(session.lastSeenAt)}`
+          + ` · Expire ${securityDate(session.expiresAt)}`,
+      ),
+    );
+    const revoke = make("button", "tool", session.current ? "Se déconnecter" : "Fermer");
+    revoke.type = "button";
+    revoke.dataset.sessionRevoke = session.id;
+    revoke.setAttribute(
+      "aria-label",
+      session.current ? "Fermer cette session" : `Fermer la session ${sessionAgentLabel(session.userAgent)}`,
+    );
+    row.append(identity, activity, revoke);
+    return row;
+  }));
+};
+
+const loadSecurityState = async () => {
+  formError("passkeyError");
+  formError("sessionSecurityError");
+  const [passkeyResult, sessionResult] = await Promise.allSettled([
+    api.get("auth/passkeys"),
+    api.get("auth/sessions"),
+  ]);
+  if (passkeyResult.status === "fulfilled") {
+    state.passkeys = passkeyResult.value.passkeys ?? [];
+    state.passkeyCanonicalUrl = passkeyResult.value.canonicalUrl ?? null;
+  } else {
+    state.passkeys = [];
+    formError("passkeyError", passkeyErrorMessage(passkeyResult.reason));
+  }
+  if (sessionResult.status === "fulfilled") {
+    state.securitySessions = sessionResult.value.sessions ?? [];
+  } else {
+    state.securitySessions = [];
+    formError("sessionSecurityError", sessionResult.reason.message);
+  }
+  renderSecurity();
+  renderPasskeys();
+  renderSecuritySessions();
 };
 
 const selectNode = (id, focus = false) => {
@@ -1583,6 +1760,220 @@ $("#loginForm").addEventListener("submit", async (event) => {
   }
 });
 
+$("#loginPasskeyButton").addEventListener("click", async () => {
+  formError("loginError");
+  if (!passkeysAvailable()) {
+    formError(
+      "loginError",
+      "Ce navigateur ne fournit pas WebAuthn sur cette origine HTTPS.",
+    );
+    return;
+  }
+  const username = $("#loginUsername").value.trim();
+  const password = $("#loginPassword").value;
+  if (!username || !password) {
+    formError("loginError", "Saisissez l’identifiant et la phrase de passe.");
+    $("#loginUsername").focus();
+    return;
+  }
+  const button = $("#loginPasskeyButton");
+  button.disabled = true;
+  try {
+    const challenge = await api.post("auth/passkey/options", {
+      username,
+      password,
+    }, false);
+    const credential = await navigator.credentials.get({
+      publicKey: requestOptionsFromJSON(challenge.options),
+    });
+    const payload = await api.post("auth/passkey/complete", {
+      challengeId: challenge.challengeId,
+      response: credentialToJSON(credential),
+    }, false);
+    state.session = payload.session ?? payload;
+    if (!sessionIsAuthenticated(state.session) && !payload.authenticated) {
+      throw new Error("Session non créée.");
+    }
+    $("#loginForm").reset();
+    await enterStudio();
+  } catch (error) {
+    formError("loginError", passkeyErrorMessage(error));
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("#openPasskeyRegistration").addEventListener("click", (event) => {
+  formError("passkeyError");
+  if (!passkeysAvailable()) {
+    formError("passkeyError", "WebAuthn n’est pas disponible dans ce navigateur.");
+    return;
+  }
+  if (
+    state.passkeyCanonicalUrl
+    && location.origin !== state.passkeyCanonicalUrl
+  ) {
+    formError(
+      "passkeyError",
+      `Ouvrez ${state.passkeyCanonicalUrl} pour ajouter une passkey.`,
+    );
+    return;
+  }
+  state.passkeyReturnFocus = event.currentTarget;
+  $("#passkeyRegistrationDialog").showModal();
+  $("#passkeyLabel").focus();
+});
+
+$("#passkeyRegistrationCancel").addEventListener("click", () => {
+  $("#passkeyRegistrationDialog").close();
+});
+
+$("#passkeyRegistrationDialog").addEventListener("close", () => {
+  $("#passkeyRegistrationForm").reset();
+  formError("passkeyRegistrationError");
+  state.passkeyReturnFocus?.focus();
+  state.passkeyReturnFocus = null;
+});
+
+$("#passkeyRegistrationDialog").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#passkeyRegistrationDialog").close();
+  }
+});
+
+$("#passkeyRegistrationForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("passkeyRegistrationError");
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const label = String(data.get("label") || "").trim();
+  const submit = $("#passkeyRegistrationSubmit");
+  submit.disabled = true;
+  try {
+    const challenge = await api.post("auth/passkeys/registration/options", {
+      label,
+      password: String(data.get("password") || ""),
+      totpCode: String(data.get("totpCode") || "").trim(),
+    });
+    const credential = await navigator.credentials.create({
+      publicKey: creationOptionsFromJSON(challenge.options),
+    });
+    await api.post("auth/passkeys/registration/complete", {
+      challengeId: challenge.challengeId,
+      label,
+      response: credentialToJSON(credential),
+    });
+    $("#passkeyRegistrationDialog").close();
+    await loadSecurityState();
+    toast("Passkey liée et journalisée.");
+  } catch (error) {
+    formError("passkeyRegistrationError", passkeyErrorMessage(error));
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+$("#passkeyList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-passkey-revoke]");
+  if (!button) return;
+  const passkey = state.passkeys.find((entry) => entry.id === button.dataset.passkeyRevoke);
+  if (!passkey) return;
+  state.passkeyReturnFocus = button;
+  $("#passkeyRevokeId").value = passkey.id;
+  $("#passkeyRevokeDescription").textContent = (
+    `« ${passkey.label} » ne pourra plus ouvrir la régie. `
+    + "Confirmez avec votre phrase de passe et un nouveau code TOTP."
+  );
+  $("#passkeyRevokeDialog").showModal();
+  $("#passkeyRevokePassword").focus();
+});
+
+$("#passkeyRevokeCancel").addEventListener("click", () => {
+  $("#passkeyRevokeDialog").close();
+});
+
+$("#passkeyRevokeDialog").addEventListener("close", () => {
+  $("#passkeyRevokeForm").reset();
+  formError("passkeyRevokeError");
+  state.passkeyReturnFocus?.focus();
+  state.passkeyReturnFocus = null;
+});
+
+$("#passkeyRevokeDialog").addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    $("#passkeyRevokeDialog").close();
+  }
+});
+
+$("#passkeyRevokeForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  formError("passkeyRevokeError");
+  const data = new FormData(event.currentTarget);
+  const passkeyId = String(data.get("passkeyId") || "");
+  const submit = $("#passkeyRevokeSubmit");
+  submit.disabled = true;
+  try {
+    await api.post(`auth/passkeys/${encodeURIComponent(passkeyId)}/revoke`, {
+      password: String(data.get("password") || ""),
+      totpCode: String(data.get("totpCode") || "").trim(),
+    });
+    $("#passkeyRevokeDialog").close();
+    await loadSecurityState();
+    toast("Passkey révoquée.");
+  } catch (error) {
+    formError("passkeyRevokeError", passkeyErrorMessage(error));
+  } finally {
+    submit.disabled = false;
+  }
+});
+
+$("#sessionList").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-session-revoke]");
+  if (!button) return;
+  button.disabled = true;
+  formError("sessionSecurityError");
+  try {
+    const result = await api.post(
+      `auth/sessions/${encodeURIComponent(button.dataset.sessionRevoke)}/revoke`,
+      {},
+    );
+    if (result.current) {
+      api.csrfToken = "";
+      state.session = null;
+      state.scene = null;
+      state.passkeys = [];
+      state.securitySessions = [];
+      state.passkeyCanonicalUrl = null;
+      state.preview = null;
+      $("#loginForm").reset();
+      showGate("login");
+      return;
+    }
+    await loadSecurityState();
+    toast("Session distante fermée.");
+  } catch (error) {
+    formError("sessionSecurityError", error.message);
+    button.disabled = false;
+  }
+});
+
+$("#revokeOtherSessions").addEventListener("click", async () => {
+  const button = $("#revokeOtherSessions");
+  button.disabled = true;
+  formError("sessionSecurityError");
+  try {
+    const result = await api.post("auth/sessions/revoke-others", {});
+    await loadSecurityState();
+    toast(`${result.revoked} autre${result.revoked > 1 ? "s" : ""} session${result.revoked > 1 ? "s" : ""} fermée${result.revoked > 1 ? "s" : ""}.`);
+  } catch (error) {
+    formError("sessionSecurityError", error.message);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $("#openRecoveryButton").addEventListener("click", () => {
   formError("loginError");
   showGate("recovery");
@@ -1661,7 +2052,7 @@ $("#recoveryForm").addEventListener("submit", async (event) => {
     showGate("login");
     $("#loginUsername").value = username;
     $("#loginPassword").focus();
-    toast("Compte récupéré. Toutes les anciennes sessions ont été révoquées.");
+    toast("Compte récupéré. Les anciennes sessions et passkeys ont été révoquées.");
   } catch (error) {
     formError("recoveryError", error.message);
   } finally {
@@ -1758,6 +2149,9 @@ refs.logoutButton.addEventListener("click", async () => {
     api.csrfToken = "";
     state.session = null;
     state.scene = null;
+    state.passkeys = [];
+    state.securitySessions = [];
+    state.passkeyCanonicalUrl = null;
     state.preview = null;
     state.previewSelection = "";
     $("#loginForm").reset();

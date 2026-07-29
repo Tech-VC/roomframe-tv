@@ -32,6 +32,12 @@ L'IPv4 est ajoutée au certificat Caddy et reste toujours affichée comme URL de
 secours. Un échec ou une incohérence DNS produit un avertissement et la ligne A
 à créer, sans bloquer l'installation.
 
+Les passkeys administrateur sont volontairement liées au FQDN HTTPS principal :
+WebAuthn ne peut pas partager une identité entre ce nom et l’URL IP. Le secours
+par IP reste donc disponible avec phrase de passe + TOTP. Créer le DNS unicast
+et faire approuver la CA Caddy dans le navigateur sont nécessaires avant
+l’enrôlement d’une passkey.
+
 Caddy présente le certificat de cette IPv4 comme certificat SNI par défaut :
 l’URL de secours fonctionne aussi avec les clients TLS qui n’envoient pas de
 nom de serveur pour une adresse IP.

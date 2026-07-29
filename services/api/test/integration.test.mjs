@@ -26,6 +26,10 @@ import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 import { loadServerCa } from '../src/trust-bootstrap.mjs';
+import {
+  createAuthenticationResponse,
+  createRegistrationFixture,
+} from './webauthn-fixture.mjs';
 
 const databaseHost = process.env.ROOMFRAME_TEST_DB_HOST;
 const splitDatabaseRoles = process.env.ROOMFRAME_TEST_DB_SPLIT_ROLES === '1';
@@ -246,6 +250,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   const conflict = completions.find((response) => response.statusCode === 409);
   assert.ok(success, completions.map((response) => response.statusCode));
   assert.ok(conflict, completions.map((response) => response.statusCode));
+  const ownerIndex = completions.indexOf(success);
+  const ownerUsername = candidateUsernames[ownerIndex];
+  const ownerPassword = `Correct-Horse-Battery-${ownerIndex + 7}!`;
+  const ownerTotpSecret = challenges[ownerIndex].secret;
 
   const databaseState = await pool.query(`
     SELECT
@@ -278,6 +286,162 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(session.statusCode, 200);
   const csrfToken = session.json().csrfToken;
+  const wrongPasskeyOrigin = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkeys/registration/options',
+    headers: {
+      cookie,
+      origin: config.fallbackUrl,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      label: 'Mac de régie',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret, 1),
+    },
+  });
+  assert.equal(wrongPasskeyOrigin.statusCode, 409);
+  assert.equal(
+    wrongPasskeyOrigin.json().error,
+    'passkey_canonical_origin_required',
+  );
+  assert.equal(wrongPasskeyOrigin.json().preferredUrl, config.preferredUrl);
+
+  const registrationOptionsResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkeys/registration/options',
+    headers: {
+      cookie,
+      origin: config.preferredUrl,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      label: 'Mac de régie',
+      password: ownerPassword,
+      totpCode: totpNow(ownerTotpSecret, 1),
+    },
+  });
+  assert.equal(
+    registrationOptionsResponse.statusCode,
+    201,
+    registrationOptionsResponse.body,
+  );
+  const registrationChallenge = registrationOptionsResponse.json();
+  assert.equal(
+    registrationChallenge.options.authenticatorSelection.userVerification,
+    'required',
+  );
+  assert.equal(registrationChallenge.options.rp.id, 'roomframe.test');
+  const passkeyFixture = createRegistrationFixture({
+    options: registrationChallenge.options,
+    origin: config.preferredUrl,
+    rpID: 'roomframe.test',
+  });
+  const registeredPasskey = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkeys/registration/complete',
+    headers: {
+      cookie,
+      origin: config.preferredUrl,
+      'x-csrf-token': csrfToken,
+    },
+    payload: {
+      challengeId: registrationChallenge.challengeId,
+      label: 'Mac de régie',
+      response: passkeyFixture.response,
+    },
+  });
+  assert.equal(registeredPasskey.statusCode, 201, registeredPasskey.body);
+  assert.equal(registeredPasskey.json().passkey.label, 'Mac de régie');
+  assert.equal(registeredPasskey.json().passkey.deviceType, 'singleDevice');
+
+  const passkeys = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/passkeys',
+    headers: { cookie },
+  });
+  assert.equal(passkeys.statusCode, 200);
+  assert.equal(passkeys.json().passkeys.length, 1);
+  assert.equal(passkeys.json().canonicalUrl, config.preferredUrl);
+
+  const passkeyLoginOptionsResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkey/options',
+    headers: { origin: config.preferredUrl },
+    payload: {
+      username: ownerUsername,
+      password: ownerPassword,
+    },
+  });
+  assert.equal(
+    passkeyLoginOptionsResponse.statusCode,
+    201,
+    passkeyLoginOptionsResponse.body,
+  );
+  const passkeyLoginChallenge = passkeyLoginOptionsResponse.json();
+  const passkeyAuthentication = createAuthenticationResponse({
+    options: passkeyLoginChallenge.options,
+    origin: config.preferredUrl,
+    rpID: 'roomframe.test',
+    fixture: passkeyFixture,
+  });
+  const passkeyLogin = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkey/complete',
+    headers: { origin: config.preferredUrl },
+    payload: {
+      challengeId: passkeyLoginChallenge.challengeId,
+      response: passkeyAuthentication,
+    },
+  });
+  assert.equal(passkeyLogin.statusCode, 200, passkeyLogin.body);
+  assert.equal(passkeyLogin.json().user.username, ownerUsername);
+  const passkeyCookie = cookieHeader(passkeyLogin);
+  assert.match(passkeyCookie, /^__Host-roomframe_session=/);
+  const passkeyCsrf = passkeyLogin.json().csrfToken;
+  const replayedPasskey = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/passkey/complete',
+    headers: { origin: config.preferredUrl },
+    payload: {
+      challengeId: passkeyLoginChallenge.challengeId,
+      response: passkeyAuthentication,
+    },
+  });
+  assert.equal(replayedPasskey.statusCode, 403);
+
+  const activeSessions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/sessions',
+    headers: { cookie: passkeyCookie },
+  });
+  assert.equal(activeSessions.statusCode, 200);
+  assert.equal(activeSessions.json().sessions.length, 2);
+  const currentPasskeySession = activeSessions.json().sessions.find(
+    (entry) => entry.current,
+  );
+  assert.ok(currentPasskeySession);
+  const revokedCurrentSession = await app.inject({
+    method: 'POST',
+    url: `/api/v1/auth/sessions/${currentPasskeySession.id}/revoke`,
+    headers: {
+      cookie: passkeyCookie,
+      'x-csrf-token': passkeyCsrf,
+    },
+  });
+  assert.equal(revokedCurrentSession.statusCode, 200);
+  assert.equal(revokedCurrentSession.json().current, true);
+  assert.match(
+    String(revokedCurrentSession.headers['set-cookie']),
+    /__Host-roomframe_session=;/,
+  );
+  const revokedSessionAccess = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/session',
+    headers: { cookie: passkeyCookie },
+  });
+  assert.equal(revokedSessionAccess.statusCode, 401);
+
   const releaseStateBefore = await app.inject({
     method: 'GET',
     url: '/api/v1/releases',
@@ -729,13 +893,14 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     const roleCsrf = csrfTokenForSession(sessionId, config.sessionSecret);
     await pool.query(
       `INSERT INTO users (
-         id, username, password_hash, role_id, totp_secret_encrypted
+         id, username, password_hash, role_id, totp_secret_encrypted,
+         webauthn_user_id
        ) VALUES (
          $1, $2, 'not-used-by-this-test',
          (SELECT id FROM roles WHERE slug = $3),
-         '{"version":1}'::jsonb
+         '{"version":1}'::jsonb, $4
        )`,
-      [userId, username, role],
+      [userId, username, role, Buffer.from(userId.replaceAll('-', ''), 'hex')],
     );
     await pool.query(
       `INSERT INTO sessions (id, user_id, token_hash, csrf_hash, expires_at)
@@ -2284,6 +2449,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(recovered.statusCode, 200);
   assert.equal(recovered.json().recovered, true);
+  const passkeysAfterRecovery = await pool.query(
+    'SELECT count(*) AS count FROM user_webauthn_credentials',
+  );
+  assert.equal(passkeysAfterRecovery.rows[0].count, '0');
   const replayedRecovery = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/recovery/complete',

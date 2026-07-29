@@ -364,6 +364,11 @@ sudo roomframe-bootstrap-token --show
 L’assistant utilise ce jeton pour créer un défi TOTP et le premier
 administrateur. Le bootstrap est ensuite verrouillé dans PostgreSQL.
 
+Après cette configuration, le propriétaire peut ajouter une passkey depuis la
+section Sécurité. Cette opération doit être faite sur le FQDN HTTPS principal,
+après installation de la CA locale dans le navigateur. L’URL IP de secours
+reste utilisable avec TOTP, mais ne sert pas d’identité WebAuthn.
+
 Une rotation explicite du fichier reste possible avant la configuration :
 
 ```bash
@@ -390,7 +395,8 @@ sudo roomframe-recover-admin --create --ttl-minutes 30
 Une demande active n’est remplacée qu’avec `--replace`. Le jeton clair est
 affiché une fois ; seul son SHA-256 et son expiration sont enregistrés. L’API
 lie ensuite le défi au nom d’utilisateur, exige un nouveau TOTP et un nouveau
-mot de passe, révoque les sessions existantes et interdit le rejeu.
+mot de passe, révoque les sessions et passkeys existantes et interdit le
+rejeu.
 
 ## HTTPS local
 

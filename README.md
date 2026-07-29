@@ -10,7 +10,8 @@ les salles, les comptes, les médias, les certificats et les règles sont créé
 sur chaque instance après l’installation.
 
 > État actuel : le jalon `0.3.0` est exécutable avec PostgreSQL, bootstrap à
-> usage unique, TOTP, sessions, Studio relié à l’API, pipeline média,
+> usage unique, TOTP, passkeys WebAuthn, sessions révocables, Studio relié à
+> l’API, pipeline média,
 > synchronisation TV et vérification des mises à jour signées. Le simulateur
 > et le client Android conservent la dernière révision valide hors ligne ; le
 > client natif rend la scène sans WebView et contrôle les APK distribués par
@@ -85,6 +86,8 @@ Le bootstrap crée une seule instance et un premier propriétaire :
 
 - mot de passe haché avec Argon2id ;
 - enrôlement TOTP puis validation d’un premier code ;
+- ajout ultérieur de passkeys depuis le nom HTTPS principal, avec confirmation
+  par phrase de passe et nouveau code TOTP ;
 - cookie de session sécurisé et protection CSRF ;
 - chargement du bundle neutre seulement si la base est vide ;
 - verrouillage définitif du bootstrap après succès.
@@ -106,6 +109,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - modèles instance, utilisateurs, rôles, sessions, groupes, TV, scènes,
   révisions, médias, messages, horaires, métriques, événements, releases,
   déploiements et audit ;
+- connexion au choix par phrase de passe + TOTP ou phrase de passe + passkey
+  avec vérification utilisateur, défis éphémères en base, compteur de signature,
+  liste des passkeys et révocation des sessions actives ;
 - révisions de scène immuables et publication transactionnelle ;
 - Studio de régie relié aux flux réels de bootstrap, session, scènes, médias,
   messages et releases, avec glisser-déposer, redimensionnement, calques,
@@ -209,11 +215,12 @@ Sur un clone frais, `scripts/test.sh` installe les dépendances verrouillées,
 puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur de
 test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
 runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
-23 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 46 tests. Les workflows GitHub de
+26 tests Studio/synchronisation TV et
+23 tests API, contrôle de syntaxe serveur inclus, soit 49 tests. Les workflows GitHub de
 validation et de release utilisent cette même commande. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
-CSRF, les révisions, l’enrôlement TV, le seed unique, la récupération locale,
+WebAuthn avec signatures réelles, CSRF, les révisions, l’enrôlement TV, le seed
+unique, la récupération locale,
 la compatibilité des scènes UI, le rejet concis des réponses API non JSON,
 la stabilité des formulaires asynchrones, le détourage prudent des logos et le refus des
 bundles de mise à jour altérés ou contenant des clés JSON dupliquées. Le test

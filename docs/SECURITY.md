@@ -5,17 +5,18 @@
 - aucun secret, certificat d’instance ou mot de passe dans Git ;
 - HTTPS obligatoire, avec administration et API de même origine ;
 - bootstrap à usage unique puis verrou définitif ;
-- Argon2id, MFA TOTP, sessions bornées, CSRF et limitation de débit ;
+- Argon2id, MFA TOTP ou passkey WebAuthn, sessions bornées et révocables, CSRF
+  et limitation de débit ;
 - rôles explicites et journal d’audit ;
 - validation stricte des scènes, médias et bundles ;
 - moindre privilège des conteneurs et exposition réseau minimale ;
 - collecte de télémétrie technique limitée, sans contenu vu ni appareil
   personnel.
 
-WebAuthn et la découverte locale authentifiée restent des étapes à venir.
-L’appairage de la CA HTTPS, les certificats individuels TV et le mTLS sont
-implémentés ; leur fonctionnement avec le firmware Philips reste à observer
-sur le matériel réel.
+La découverte locale authentifiée reste une étape à venir. WebAuthn est
+implémenté pour les comptes administrateur ; l’appairage de la CA HTTPS, les
+certificats individuels TV et le mTLS sont également implémentés. Les parcours
+propres à la TV restent à observer sur le firmware Philips réel.
 
 ## Secrets de l’instance
 
@@ -53,12 +54,24 @@ Le secret TOTP est généré aléatoirement, chiffré au repos avec AES-256-GCM 
 associé à un défi temporaire. La vérification tolère une fenêtre d’un pas et
 refuse la réutilisation d’un compteur déjà accepté.
 
-Le TOTP est obligatoire à chaque connexion : six chiffres, période de
-30 secondes, HMAC-SHA-1 conforme au profil interopérable RFC 6238. Les
-tentatives de connexion sont limitées à huit par tranche de 15 minutes. Ce
-facteur protège notamment contre la réutilisation isolée d’une phrase de
-passe, mais ne doit pas être présenté comme résistant au phishing. WebAuthn et
-les passkeys restent l’étape prévue pour cette propriété.
+La connexion habituelle exige le TOTP : six chiffres, période de 30 secondes,
+HMAC-SHA-1 conforme au profil interopérable RFC 6238. Un compte ayant enrôlé
+une passkey peut choisir à la place le parcours phrase de passe + passkey. Ce
+jalon ne propose pas de connexion sans mot de passe.
+
+L’enrôlement ou la révocation d’une passkey exige une session, le CSRF, la
+phrase de passe actuelle et un nouveau code TOTP non réutilisé. Les défis
+WebAuthn sont aléatoires, liés au compte et, pour l’enrôlement, à la session ;
+ils expirent après cinq minutes et ne peuvent être consommés qu’une fois.
+L’API exige `userVerification=required`, vérifie exactement l’origine et le
+RP ID attendus, conserve uniquement la clé publique et le compteur de
+signature puis journalise l’usage. Les clés privées restent dans
+l’authenticator choisi par l’utilisateur.
+
+Les passkeys ne fonctionnent volontairement que sur le nom HTTPS principal
+configuré. L’URL IP reste un secours pour la connexion TOTP, mais elle ne crée
+pas une seconde identité WebAuthn. Les tentatives de connexion sont limitées
+à huit par tranche de 15 minutes.
 
 Le jeton initial est lu explicitement avec :
 
@@ -87,6 +100,11 @@ Les rôles initiaux séparent propriétaire, contenu et sécurité. Les lectures
 agrégées du Studio retirent les collections auxquelles le rôle n’a pas droit.
 Les actions sensibles produisent un événement dans `audit_log`.
 
+Le Studio liste au maximum les 50 sessions actives du compte courant avec leur
+date, expiration, adresse distante et agent utilisateur borné. Le compte peut
+fermer une session précise ou toutes les autres ; fermer la session courante
+supprime aussi immédiatement son cookie.
+
 ## Récupération locale
 
 ```bash
@@ -99,6 +117,7 @@ en base, lie le défi TOTP au compte demandé, puis :
 
 - remplace le hash du mot de passe et le secret TOTP ;
 - révoque toutes les sessions du compte ;
+- supprime toutes les passkeys et tous les défis WebAuthn du compte ;
 - consomme le défi et l’autorité ;
 - journalise la récupération.
 
@@ -115,7 +134,9 @@ Les en-têtes incluent HSTS, `nosniff`, refus des frames, politique de
 référent, Permissions Policy et une CSP restrictive. Les scripts et feuilles
 de style doivent être des fichiers locaux ; la CSP n’autorise ni code inline,
 ni objet, ni frame, ni base externe. Les aperçus contrôlés peuvent utiliser
-`blob:` et certaines images `data:`.
+`blob:` et certaines images `data:`. La Permissions Policy autorise
+explicitement la création et l’utilisation de credentials WebAuthn uniquement
+sur la même origine.
 
 `scripts/check.sh` refuse les scripts, styles et attributs de style inline dans
 les deux interfaces.

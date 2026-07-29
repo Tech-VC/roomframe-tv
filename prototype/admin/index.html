@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui10">
-  <script type="module" src="/app.js?v=0.3.0-ui10"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui11">
+  <script type="module" src="/app.js?v=0.3.0-ui11"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -445,9 +445,70 @@
       </section>
 
       <section class="workspace-panel full-panel" id="view-security" aria-labelledby="securityTitle">
-        <aside class="panel-index"><div class="eyebrow">Confiance locale</div><h1 class="editorial-title" id="securityTitle">Chaque<br>écran a<br>une identité.</h1><p class="note">La session et les capacités affichées proviennent uniquement de l’API.</p></aside>
-        <div class="panel-content"><dl class="security-ledger" id="securityLedger"><dt>Session</dt><dd>Chargement…</dd></dl></div>
+        <aside class="panel-index"><div class="eyebrow">Confiance locale</div><h1 class="editorial-title" id="securityTitle">Chaque<br>accès laisse<br>une trace.</h1><p class="note">Les passkeys restent liées au nom HTTPS principal. Le TOTP demeure disponible en secours contrôlé.</p></aside>
+        <div class="panel-content">
+          <dl class="security-ledger" id="securityLedger"><dt>Session</dt><dd>Chargement…</dd></dl>
+          <section class="security-console" aria-labelledby="passkeysTitle">
+            <header>
+              <div><span>FACTEURS / ANTI-HAMEÇONNAGE</span><h2 id="passkeysTitle">Passkeys de ce compte</h2><p id="passkeyCanonicalUrl">Chargement de l’origine HTTPS…</p></div>
+              <button class="tool primary" id="openPasskeyRegistration" type="button">Ajouter une passkey</button>
+            </header>
+            <p class="form-error hidden" id="passkeyError" role="alert"></p>
+            <div class="security-records" id="passkeyList" aria-live="polite"><p class="empty-copy">Chargement…</p></div>
+          </section>
+          <section class="security-console" aria-labelledby="sessionsTitle">
+            <header>
+              <div><span>SESSIONS / CE COMPTE</span><h2 id="sessionsTitle">Postes actuellement autorisés</h2><p>Une révocation est immédiate et journalisée.</p></div>
+              <button class="tool" id="revokeOtherSessions" type="button">Fermer les autres sessions</button>
+            </header>
+            <p class="form-error hidden" id="sessionSecurityError" role="alert"></p>
+            <div class="security-records" id="sessionList" aria-live="polite"><p class="empty-copy">Chargement…</p></div>
+          </section>
+        </div>
       </section>
+
+      <dialog class="credential-dialog" id="passkeyRegistrationDialog" aria-labelledby="passkeyRegistrationTitle" aria-describedby="passkeyRegistrationDescription">
+        <form id="passkeyRegistrationForm">
+          <span class="record-kicker">PASSKEY / AJOUT SENSIBLE</span>
+          <h2 id="passkeyRegistrationTitle">Lier un appareil de confiance</h2>
+          <p id="passkeyRegistrationDescription">Confirmez votre phrase de passe et un nouveau code TOTP. Le navigateur demandera ensuite Touch ID, le code du Mac ou une clé de sécurité.</p>
+          <label for="passkeyLabel">Nom de repère
+            <input id="passkeyLabel" name="label" maxlength="80" autocomplete="off" value="Mac de régie" required>
+          </label>
+          <label for="passkeyPassword">Phrase de passe actuelle
+            <input id="passkeyPassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="passkeyTotp">Nouveau code TOTP
+            <input id="passkeyTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+          </label>
+          <p class="credential-confirmation-help">Un code TOTP déjà utilisé pour ouvrir la session sera refusé. Attendez le code suivant si nécessaire.</p>
+          <p class="form-error hidden" id="passkeyRegistrationError" role="alert"></p>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="passkeyRegistrationCancel" type="button">Annuler</button>
+            <button class="tool primary" id="passkeyRegistrationSubmit" type="submit">Continuer sur l’appareil</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="credential-dialog" id="passkeyRevokeDialog" aria-labelledby="passkeyRevokeTitle" aria-describedby="passkeyRevokeDescription">
+        <form id="passkeyRevokeForm">
+          <span class="record-kicker">PASSKEY / RÉVOCATION</span>
+          <h2 id="passkeyRevokeTitle">Retirer cette passkey</h2>
+          <p id="passkeyRevokeDescription">La passkey ne pourra plus ouvrir la régie. Confirmez avec votre phrase de passe et un nouveau code TOTP.</p>
+          <input id="passkeyRevokeId" name="passkeyId" type="hidden">
+          <label for="passkeyRevokePassword">Phrase de passe actuelle
+            <input id="passkeyRevokePassword" name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <label for="passkeyRevokeTotp">Nouveau code TOTP
+            <input id="passkeyRevokeTotp" name="totpCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+          </label>
+          <p class="form-error hidden" id="passkeyRevokeError" role="alert"></p>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="passkeyRevokeCancel" type="button">Annuler</button>
+            <button class="tool primary" id="passkeyRevokeSubmit" type="submit">Révoquer</button>
+          </div>
+        </form>
+      </dialog>
     </main>
   </div>
 
@@ -472,6 +533,8 @@
         </div>
         <p class="form-error hidden" id="loginError" role="alert"></p>
         <button class="next" type="submit"><span>Entrer</span><b aria-hidden="true">→</b></button>
+        <button class="passkey-login" id="loginPasskeyButton" type="button"><span>Phrase de passe + passkey</span><b aria-hidden="true">◇</b></button>
+        <p class="passkey-login-note" id="loginPasskeyNote">Touch ID, code de l’appareil ou clé de sécurité. Disponible uniquement sur le nom HTTPS principal.</p>
         <button class="gate-switch" id="openRecoveryButton" type="button">Utiliser une récupération locale root-only</button>
       </form>
     </section>
@@ -508,7 +571,7 @@
       <form class="gate-form" id="recoveryForm">
         <span class="form-index">SECOURS / ROOT</span>
         <h2 id="recoveryTitle">Reprendre le contrôle.</h2>
-        <p>Cette procédure exige le jeton affiché localement par <code>roomframe-recover-admin</code>. Elle remplace le mot de passe et le TOTP puis révoque les anciennes sessions.</p>
+        <p>Cette procédure exige le jeton affiché localement par <code>roomframe-recover-admin</code>. Elle remplace le mot de passe et le TOTP puis révoque les sessions et passkeys existantes.</p>
         <div class="form-grid">
           <label class="wide" for="recoveryToken">Jeton de récupération<input id="recoveryToken" name="recoveryToken" type="password" autocomplete="off" minlength="20" required></label>
           <label class="wide" for="recoveryUsername">Compte à récupérer<input id="recoveryUsername" name="username" autocomplete="username" required></label>
@@ -525,7 +588,7 @@
           </div>
         </div>
         <p class="form-error hidden" id="recoveryError" role="alert"></p>
-        <button class="next" type="submit">Réinitialiser et révoquer les sessions</button>
+        <button class="next" type="submit">Réinitialiser et révoquer les accès</button>
         <button class="gate-switch" id="cancelRecoveryButton" type="button">Retour à la connexion</button>
       </form>
     </section>

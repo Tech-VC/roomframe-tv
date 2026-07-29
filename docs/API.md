@@ -22,6 +22,15 @@ POST /api/v1/bootstrap/complete
 POST /api/v1/auth/login
 GET  /api/v1/auth/session
 POST /api/v1/auth/logout
+GET  /api/v1/auth/passkeys
+POST /api/v1/auth/passkeys/registration/options
+POST /api/v1/auth/passkeys/registration/complete
+POST /api/v1/auth/passkeys/:passkeyId/revoke
+POST /api/v1/auth/passkey/options
+POST /api/v1/auth/passkey/complete
+GET  /api/v1/auth/sessions
+POST /api/v1/auth/sessions/revoke-others
+POST /api/v1/auth/sessions/:sessionId/revoke
 POST /api/v1/auth/recovery/totp
 POST /api/v1/auth/recovery/complete
 ```
@@ -45,10 +54,33 @@ retourné par l’API dans l’en-tête `x-csrf-token`. L’origine HTTPS préf�
 l’origine IP de secours sont toutes deux reconnues ; une origine tierce est
 refusée.
 
+Le second facteur peut être un TOTP ou une passkey déjà enrôlée. Le parcours
+passkey reste précédé par la vérification de la phrase de passe :
+
+1. `POST /auth/passkey/options` valide le compte et la phrase de passe, puis
+   crée un défi d’authentification de cinq minutes ;
+2. le navigateur demande une vérification utilisateur à l’authenticator ;
+3. `POST /auth/passkey/complete` contrôle le défi, l’origine, le RP ID, la
+   signature et le compteur, consomme le défi puis crée la session.
+
+L’enrôlement d’une passkey utilise les deux routes
+`/auth/passkeys/registration/*`. La première exige une session, le CSRF, la
+phrase de passe et un nouveau TOTP ; la seconde reste liée à la même session.
+La clé privée ne quitte pas l’authenticator. RoomFrame stocke l’identifiant,
+la clé publique, les transports annoncés et le compteur de signature.
+
+WebAuthn est lié uniquement à l’origine HTTPS préférée. Une demande depuis
+l’URL IP de secours reçoit `409 passkey_canonical_origin_required` avec
+`preferredUrl`. Cette URL IP conserve le parcours phrase de passe + TOTP.
+
+`GET /auth/sessions` ne retourne que les sessions actives du compte courant,
+au maximum 50. Les deux routes de révocation exigent le CSRF et journalisent
+l’action. La révocation de la session courante efface aussi le cookie.
+
 La récupération reprend le même enrôlement TOTP, mais avec une autorité locale
 créée par `roomframe-recover-admin`. Le défi est lié au compte ciblé et le
 jeton ne peut être consommé qu’une fois. Toutes les anciennes sessions du
-compte sont révoquées après succès.
+compte et ses passkeys sont révoquées après succès.
 
 ## Studio et parc
 

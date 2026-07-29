@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   appendAudit,
+  attachSessionCookie,
   clearSessionCookie,
   issueSession,
   requireCsrf,
@@ -265,11 +266,12 @@ export const registerBootstrapAuthRoutes = ({
       };
       await client.query(
         `INSERT INTO users (
-           id, username, email, password_hash, role_id, totp_secret_encrypted, last_totp_counter
+           id, username, email, password_hash, role_id, totp_secret_encrypted,
+           last_totp_counter, webauthn_user_id
          ) VALUES (
            $1, $2, $3, $4,
            (SELECT id FROM roles WHERE slug = 'owner'),
-           $5, $6
+           $5, $6, $7
          )`,
         [
           user.id,
@@ -278,6 +280,7 @@ export const registerBootstrapAuthRoutes = ({
           passwordHash,
           JSON.stringify(encryptSecret(totpSecret, config.totpEncryptionKey)),
           totpCounter,
+          Buffer.from(user.id.replaceAll('-', ''), 'hex'),
         ],
       );
       const initialized = await initializeEmptyInstance({
@@ -296,9 +299,10 @@ export const registerBootstrapAuthRoutes = ({
         targetId: initialized.instance.instanceId,
         remoteAddress: request.ip,
       });
-      const session = await issueSession({ client, reply, config, user, request });
+      const session = await issueSession({ client, config, user, request });
       return { user, initialized, session };
     });
+    attachSessionCookie(reply, result.session);
     return reply.code(201).send({
       configured: true,
       instanceId: result.initialized.instance.instanceId,
@@ -351,7 +355,6 @@ export const registerBootstrapAuthRoutes = ({
       }
       const session = await issueSession({
         client,
-        reply,
         config,
         user: updated.rows[0],
         request,
@@ -365,6 +368,7 @@ export const registerBootstrapAuthRoutes = ({
       });
       return session;
     });
+    attachSessionCookie(reply, response);
     return {
       user: { id: user.id, username: user.username, email: user.email, role: user.role },
       csrfToken: response.csrfToken,
@@ -496,6 +500,14 @@ export const registerBootstrapAuthRoutes = ({
       await client.query('UPDATE sessions SET revoked_at = now() WHERE user_id = $1', [
         updated.rows[0].id,
       ]);
+      const revokedPasskeys = await client.query(
+        'DELETE FROM user_webauthn_credentials WHERE user_id = $1',
+        [updated.rows[0].id],
+      );
+      await client.query(
+        'DELETE FROM webauthn_challenges WHERE user_id = $1',
+        [updated.rows[0].id],
+      );
       await client.query(
         `UPDATE bootstrap_challenges
          SET used_at = now()
@@ -512,6 +524,7 @@ export const registerBootstrapAuthRoutes = ({
         targetType: 'user',
         targetId: updated.rows[0].id,
         remoteAddress: request.ip,
+        details: { revokedPasskeys: revokedPasskeys.rowCount },
       });
     });
     return { recovered: true };
