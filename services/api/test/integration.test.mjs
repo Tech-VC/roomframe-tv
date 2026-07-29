@@ -25,6 +25,7 @@ import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
+import { loadServerCa } from '../src/trust-bootstrap.mjs';
 
 const databaseHost = process.env.ROOMFRAME_TEST_DB_HOST;
 const splitDatabaseRoles = process.env.ROOMFRAME_TEST_DB_SPLIT_ROLES === '1';
@@ -62,6 +63,30 @@ const multipartFile = ({ filename, mime, contents }) => {
   };
 };
 
+const decryptTrustBootstrap = ({
+  payload,
+  deviceId,
+  enrollmentKey,
+}) => {
+  assert.equal(payload.version, 1);
+  assert.equal(payload.algorithm, 'AES-256-GCM');
+  assert.equal(payload.keyDerivation, 'HKDF-SHA256');
+  assert.equal(payload.context, 'roomframe-server-ca-bootstrap-v1');
+  const info = Buffer.from(`${payload.context}\n${deviceId}`, 'utf8');
+  const keyMaterial = Buffer.from(enrollmentKey, 'base64url');
+  const salt = Buffer.from(payload.salt, 'base64url');
+  const iv = Buffer.from(payload.iv, 'base64url');
+  const tag = Buffer.from(payload.tag, 'base64url');
+  const key = Buffer.from(crypto.hkdfSync('sha256', keyMaterial, salt, info, 32));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAAD(info);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([
+    decipher.update(Buffer.from(payload.ciphertext, 'base64url')),
+    decipher.final(),
+  ]).toString('utf8');
+};
+
 test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV restent cohérents', {
   skip: !databaseHost,
   timeout: 120_000,
@@ -73,6 +98,13 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     tvClientCaFile,
     `-----BEGIN CERTIFICATE-----\n${'A'.repeat(600)}\n-----END CERTIFICATE-----\n`,
     { mode: 0o600 },
+  );
+  const serverCaFile = process.env.ROOMFRAME_TEST_SERVER_CA_FILE;
+  assert.ok(serverCaFile, 'ROOMFRAME_TEST_SERVER_CA_FILE est requis');
+  const serverCaPem = await readFile(serverCaFile, 'utf8');
+  await assert.rejects(
+    loadServerCa(tvClientCaFile),
+    (error) => error?.message === 'server_ca_invalid' && error?.statusCode === 503,
   );
   const bootstrapToken = token();
   const config = await loadConfig({
@@ -94,6 +126,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     backupsDir: path.join(temporary, 'backups'),
     updateTrustDir: path.join(temporary, 'trust'),
     tvClientCaFile,
+    serverCaFile,
     updateGithubRepository: 'example/roomframe',
     updateGithubChannel: 'stable',
     updatePollMinutes: 360,
@@ -804,6 +837,39 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(enrollment.statusCode, 201);
   const pendingDevice = enrollment.json();
+  assert.deepEqual(pendingDevice.trustBootstrap, {
+    mode: 'encrypted-server-ca',
+    version: 1,
+  });
+  const trustBootstrap = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/trust-bootstrap?deviceId=${pendingDevice.id}`,
+  });
+  assert.equal(trustBootstrap.statusCode, 200, trustBootstrap.body);
+  assert.equal(
+    decryptTrustBootstrap({
+      payload: trustBootstrap.json(),
+      deviceId: pendingDevice.id,
+      enrollmentKey: pendingDevice.enrollmentKey,
+    }),
+    serverCaPem,
+  );
+  assert.throws(() => decryptTrustBootstrap({
+    payload: {
+      ...trustBootstrap.json(),
+      tag: (
+        `${trustBootstrap.json().tag[0] === 'A' ? 'B' : 'A'}`
+        + trustBootstrap.json().tag.slice(1)
+      ),
+    },
+    deviceId: pendingDevice.id,
+    enrollmentKey: pendingDevice.enrollmentKey,
+  }));
+  const missingTrustBootstrap = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/trust-bootstrap?deviceId=not-an-uuid',
+  });
+  assert.equal(missingTrustBootstrap.statusCode, 404);
   const pendingSync = await app.inject({
     method: 'GET',
     url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
@@ -822,6 +888,11 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(claimed.statusCode, 201);
+  const consumedTrustBootstrap = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/trust-bootstrap?deviceId=${pendingDevice.id}`,
+  });
+  assert.equal(consumedTrustBootstrap.statusCode, 404);
   const deviceCredential = claimed.json();
   assert.equal(deviceCredential.credentialDelivery, 'one-time');
   assert.equal(deviceCredential.credentialGeneration, 1);
@@ -1013,6 +1084,22 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(certificateRenewal.statusCode, 201, certificateRenewal.body);
   assert.equal(certificateRenewal.json().status, 'pending');
+  const certificateRenewalRepeated = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/renew',
+    headers: activationHeaders,
+    payload: {},
+  });
+  assert.equal(
+    certificateRenewalRepeated.statusCode,
+    200,
+    certificateRenewalRepeated.body,
+  );
+  assert.equal(
+    certificateRenewalRepeated.json().requestId,
+    certificateRenewal.json().requestId,
+  );
+  assert.equal(certificateRenewalRepeated.json().idempotent, true);
   const renewedFingerprint = crypto
     .createHash('sha256')
     .update('roomframe-integration-renewed-client-certificate')
@@ -1421,6 +1508,27 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(reenrollment.statusCode, 200, reenrollment.body);
   assert.equal(reenrollment.json().enrollmentState, 'pending');
   assert.equal(reenrollment.json().credentialGeneration, 3);
+  assert.deepEqual(reenrollment.json().trustBootstrap, {
+    mode: 'encrypted-server-ca',
+    version: 1,
+  });
+  const reenrollmentTrustBootstrap = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/trust-bootstrap?deviceId=${otherPendingDevice.id}`,
+  });
+  assert.equal(
+    reenrollmentTrustBootstrap.statusCode,
+    200,
+    reenrollmentTrustBootstrap.body,
+  );
+  assert.equal(
+    decryptTrustBootstrap({
+      payload: reenrollmentTrustBootstrap.json(),
+      deviceId: otherPendingDevice.id,
+      enrollmentKey: reenrollment.json().enrollmentKey,
+    }),
+    serverCaPem,
+  );
   const reenrolledTv = await app.inject({
     method: 'POST',
     url: '/api/v1/tv/enroll',

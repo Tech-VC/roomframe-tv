@@ -146,6 +146,7 @@ héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 ## Enrôlement et synchronisation TV
 
 ```text
+GET  /api/v1/tv/trust-bootstrap?deviceId=<UUID>
 POST /api/v1/tv/enroll
 POST /api/v1/tv/credentials/rotate
 POST /api/v1/tv/credentials/confirm
@@ -160,10 +161,17 @@ GET  /api/v1/default-assets/*
 ```
 
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
-`POST /api/v1/tvs/enrollment`. La TV échange cette clé temporaire une seule
-fois sur `POST /api/v1/tv/enroll`; l’API lui remet alors une nouvelle clé
-d’appareil. Une TV encore en attente ne peut pas synchroniser. Le client
-Android joint aussi une clé publique RSA SPKI et une preuve `RS256` suivant
+`POST /api/v1/tvs/enrollment`. Avant de transmettre la clé temporaire, la TV
+récupère sur `GET /tv/trust-bootstrap` la CA HTTPS chiffrée du ticket. Le
+payload suit `contracts/tv-trust-bootstrap.schema.json` : AES-256-GCM,
+HKDF-SHA256, sel et IV propres au ticket, avec l’UUID dans le contexte
+authentifié. La clé d’enrôlement n’est jamais envoyée pendant ce premier
+contact non encore approuvé. L’APK déchiffre la CA, valide la chaîne TLS
+observée et l’épingle, puis échange la clé une seule fois sur
+`POST /api/v1/tv/enroll`; l’API lui remet alors une nouvelle clé d’appareil.
+Le blob chiffré est supprimé lors de cet échange. Une TV encore en attente ne
+peut pas synchroniser. Le client Android joint aussi une clé publique RSA SPKI
+et une preuve `RS256` suivant
 `contracts/tv-certificate.schema.json`. La clé privée correspondante reste
 non exportable dans Android Keystore.
 

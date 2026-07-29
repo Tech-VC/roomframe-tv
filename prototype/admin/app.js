@@ -1022,7 +1022,10 @@ const renderEnrollmentTicket = () => {
   $("#enrollmentServer").value = location.origin;
   $("#enrollmentDeviceId").value = ticket.id;
   $("#enrollmentSecret").value = ticket.enrollmentKey;
-  $("#enrollmentExpiry").textContent = `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. Après échange, cette clé ne fonctionne plus.`;
+  $("#enrollmentExpiry").textContent = (
+    `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. `
+    + "La TV appaire l’autorité HTTPS avant d’envoyer la clé, puis cette clé ne fonctionne plus."
+  );
 };
 
 const setEnrollmentTicket = (ticket) => {
@@ -1039,6 +1042,14 @@ const setEnrollmentTicket = (ticket) => {
     }
   }, delay);
 };
+
+const enrollmentErrorMessage = (error) => (
+  error?.message === "server_ca_not_ready"
+    ? "L’autorité HTTPS locale n’est pas encore prête. Exécutez le diagnostic serveur puis réessayez."
+    : error?.message === "server_ca_invalid"
+      ? "L’autorité HTTPS locale est invalide ou désynchronisée. Corrigez le diagnostic serveur avant l’enrôlement."
+      : error?.message
+);
 
 const tvCredentialActionSpec = {
   revoke: {
@@ -2092,7 +2103,9 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
       !/^[0-9a-f-]{36}$/i.test(String(ticket.id || "")) ||
       typeof ticket.enrollmentKey !== "string" ||
       ticket.enrollmentKey.length < 20 ||
-      !ticket.expiresAt
+      !ticket.expiresAt ||
+      ticket.trustBootstrap?.mode !== "encrypted-server-ca" ||
+      ticket.trustBootstrap?.version !== 1
     ) {
       throw new Error("Réponse d’enrôlement incomplète.");
     }
@@ -2109,7 +2122,7 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
     setEnrollmentTicket(ticket);
     toast("Enrôlement créé. La clé ne sera plus réaffichée après masquage.");
   } catch (error) {
-    formError("enrollmentError", error.message);
+    formError("enrollmentError", enrollmentErrorMessage(error));
   } finally {
     submit.disabled = false;
   }
@@ -2213,7 +2226,7 @@ $("#tvCredentialForm").addEventListener("submit", async (event) => {
     $("#tvCredentialDialog").close();
     renderCollections();
   } catch (error) {
-    formError("tvCredentialError", error.message);
+    formError("tvCredentialError", enrollmentErrorMessage(error));
   } finally {
     submit.disabled = false;
   }

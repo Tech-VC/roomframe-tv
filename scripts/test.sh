@@ -83,12 +83,18 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
     --health-timeout=2s \
     --health-retries=30 \
     postgres:17-alpine >/dev/null
+  healthy_samples=0
   for _ in $(seq 1 40); do
     state="$(docker inspect --format '{{.State.Health.Status}}' "$test_container")"
-    [[ "$state" == "healthy" ]] && break
+    if [[ "$state" == "healthy" ]]; then
+      healthy_samples=$((healthy_samples + 1))
+      [[ "$healthy_samples" -ge 2 ]] && break
+    else
+      healthy_samples=0
+    fi
     sleep 1
   done
-  [[ "${state:-}" == "healthy" ]] || {
+  [[ "${state:-}" == "healthy" && "$healthy_samples" -ge 2 ]] || {
     echo "PostgreSQL de test n'est pas devenu sain." >&2
     exit 1
   }
@@ -231,15 +237,20 @@ certificate_metadata="$(
     --serial AABBCCDDEEFF00112233445566778899 \
     --output "$certificate_test_directory/tv.crt"
 )"
-[[ "$certificate_metadata" =~ ^[a-f0-9]{64}$'\t'AABBCCDDEEFF00112233445566778899$'\t' ]] || {
+IFS=$'\t' read -r certificate_fingerprint certificate_serial certificate_expiry \
+  <<<"$certificate_metadata"
+if [[ ! "$certificate_fingerprint" =~ ^[a-f0-9]{64}$ ]] \
+  || [[ "$certificate_serial" != "AABBCCDDEEFF00112233445566778899" ]] \
+  || [[ -z "$certificate_expiry" ]]; then
   echo "Métadonnées du certificat client TV invalides." >&2
   exit 1
-}
+fi
 openssl verify \
   -CAfile "$certificate_test_directory/ca.crt" \
   -purpose sslclient \
   "$certificate_test_directory/tv.crt" \
   >/dev/null
+export ROOMFRAME_TEST_SERVER_CA_FILE="$certificate_test_directory/ca.crt"
 
 "$NODE_BIN" --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 (

@@ -12,6 +12,11 @@ class TvEnrollmentClient {
         val normalizedUrl = DeviceCredentialStore.validateServerUrl(serverUrl)
         val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
         DeviceCredentialStore.validateDeviceKey(enrollmentKey)
+        ServerTrustBootstrapClient().bootstrap(
+            normalizedUrl,
+            normalizedId,
+            enrollmentKey,
+        )
         val certificateProof = TvClientCertificateStore().enrollmentProof(
             normalizedId,
             enrollmentKey,

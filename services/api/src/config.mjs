@@ -98,6 +98,9 @@ export const loadConfig = async (overrides = {}) => {
     tvClientCaFile: overrides.tvClientCaFile
       ?? process.env.ROOMFRAME_TV_CLIENT_CA_FILE
       ?? '/run/roomframe/tv-client-ca.crt',
+    serverCaFile: overrides.serverCaFile
+      ?? process.env.ROOMFRAME_SERVER_CA_FILE
+      ?? '/run/roomframe/server-ca/ca.crt',
     updateGithubRepository: normalizeGithubRepository(
       overrides.updateGithubRepository
       ?? process.env.ROOMFRAME_UPDATE_GITHUB_REPOSITORY,

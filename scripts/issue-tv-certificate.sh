@@ -43,9 +43,11 @@ done
   || { echo "Identifiant TV invalide." >&2; exit 2; }
 [[ "$SERIAL_HEX" =~ ^[A-F0-9]{2,40}$ ]] \
   || { echo "Numéro de série X.509 invalide." >&2; exit 2; }
-[[ "$VALIDITY_DAYS" =~ ^[0-9]+$ ]] \
-  && ((10#$VALIDITY_DAYS >= 30 && 10#$VALIDITY_DAYS <= 397)) \
-  || { echo "Validité X.509 hors limites (30 à 397 jours)." >&2; exit 2; }
+if [[ ! "$VALIDITY_DAYS" =~ ^[0-9]+$ ]] \
+  || ((10#$VALIDITY_DAYS < 30 || 10#$VALIDITY_DAYS > 397)); then
+  echo "Validité X.509 hors limites (30 à 397 jours)." >&2
+  exit 2
+fi
 
 for input in "$PUBLIC_KEY_DER" "$CA_CERTIFICATE" "$CA_PRIVATE_KEY"; do
   [[ -f "$input" && -s "$input" && ! -L "$input" ]] \

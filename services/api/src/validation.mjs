@@ -14,6 +14,7 @@ const schemaNames = [
   'tv-sync.schema.json',
   'tv-credential.schema.json',
   'tv-certificate.schema.json',
+  'tv-trust-bootstrap.schema.json',
 ];
 
 const allowedProps = {
@@ -214,5 +215,6 @@ export const createValidators = async (contractsDir) => {
     assertTvSync: (value) => assert('tv-sync.schema.json', value),
     assertTvCredential: (value) => assert('tv-credential.schema.json', value),
     assertTvCertificate: (value) => assert('tv-certificate.schema.json', value),
+    assertTvTrustBootstrap: (value) => assert('tv-trust-bootstrap.schema.json', value),
   });
 };

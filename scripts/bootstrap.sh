@@ -10,6 +10,8 @@ TV_CA_DIR="$DATA_DIR/pki/tv-client-ca"
 TV_CA_PRIVATE_DIR="$TV_CA_DIR/private"
 TV_CA_CERTIFICATE="$TV_CA_DIR/ca.crt"
 TV_CA_PRIVATE_KEY="$TV_CA_PRIVATE_DIR/ca.key"
+SERVER_CA_PUBLIC_DIR="$DATA_DIR/pki/server-ca"
+SERVER_CA_PUBLIC_CERTIFICATE="$SERVER_CA_PUBLIC_DIR/ca.crt"
 RUNTIME_UID="${ROOMFRAME_RUNTIME_UID:-}"
 RUNTIME_GID="${ROOMFRAME_RUNTIME_GID:-}"
 
@@ -58,6 +60,7 @@ managed_paths=(
   "$DATA_DIR/pki/update-trust"
   "$TV_CA_DIR"
   "$TV_CA_PRIVATE_DIR"
+  "$SERVER_CA_PUBLIC_DIR"
   "$DATA_DIR/caddy"
   "$DATA_DIR/caddy-config"
   "$DATA_DIR/seed"
@@ -67,6 +70,10 @@ managed_paths=(
 for managed_path in "${managed_paths[@]}"; do
   [[ ! -L "$managed_path" ]] || fail "lien symbolique interdit dans le stockage géré: $managed_path"
 done
+[[ ! -e "$SERVER_CA_PUBLIC_CERTIFICATE" || (
+  -f "$SERVER_CA_PUBLIC_CERTIFICATE"
+  && ! -L "$SERVER_CA_PUBLIC_CERTIFICATE"
+) ]] || fail "copie publique de CA serveur invalide"
 
 umask 077
 mkdir -p \
@@ -78,6 +85,7 @@ mkdir -p \
   "$DATA_DIR/backups" \
   "$DATA_DIR/pki/update-trust" \
   "$TV_CA_PRIVATE_DIR" \
+  "$SERVER_CA_PUBLIC_DIR" \
   "$DATA_DIR/caddy" \
   "$DATA_DIR/caddy-config" \
   "$SEED_DIR" \
@@ -225,5 +233,11 @@ chmod 0755 "$TV_CA_DIR"
 chmod 0700 "$TV_CA_PRIVATE_DIR"
 chmod 0600 "$TV_CA_PRIVATE_KEY"
 chmod 0644 "$TV_CA_CERTIFICATE"
+chown root:root "$SERVER_CA_PUBLIC_DIR"
+chmod 0755 "$SERVER_CA_PUBLIC_DIR"
+if [[ -f "$SERVER_CA_PUBLIC_CERTIFICATE" ]]; then
+  chown root:root "$SERVER_CA_PUBLIC_CERTIFICATE"
+  chmod 0644 "$SERVER_CA_PUBLIC_CERTIFICATE"
+fi
 
 printf '%s\n' "Bootstrap persistant prêt; secrets existants et seed existant conservés."

@@ -96,4 +96,8 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /L’ancienne clé ne fonctionne plus/);
   assert.match(source, /if \(event\.key === "Escape"\)/);
   assert.match(source, /state\.tvCredentialReturnFocus/);
+  assert.match(source, /trustBootstrap\?\.mode !== "encrypted-server-ca"/);
+  assert.match(source, /La TV appaire l’autorité HTTPS avant d’envoyer la clé/);
+  assert.match(source, /server_ca_not_ready/);
+  assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
 });

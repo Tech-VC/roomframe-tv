@@ -658,7 +658,8 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
     roomframe-verify-backup roomframe-restore roomframe-apply-update \
     roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
-    roomframe-trust-update-key roomframe-tv-certificate-broker; do
+    roomframe-trust-update-key roomframe-tv-certificate-broker \
+    roomframe-sync-server-ca; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -725,6 +726,9 @@ if [[ "$NO_START" -eq 0 ]]; then
   [[ "$healthy" -eq 1 ]] \
     || fail "Les services ont démarré mais /health ne répond pas. Exécutez: sudo roomframe-diagnose"
 
+  "$INSTALL_DIR/scripts/roomframe-sync-server-ca.sh" >/dev/null \
+    || fail "La publication de la CA HTTPS pour l’enrôlement TV a échoué."
+
   for background_service in worker update-poller; do
     background_id="$(
       "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q "$background_service" 2>/dev/null || true
@@ -767,6 +771,7 @@ printf 'API locale TV             : %s\n' "$API_URL"
 printf 'URL de secours par IP     : %s\n' "$FALLBACK_URL"
 printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
+printf 'Copie publique CA serveur : %s\n' "$DATA_DIR/pki/server-ca/ca.crt"
 printf 'Autorité cliente TV       : %s\n' "$DATA_DIR/pki/tv-client-ca/ca.crt"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'

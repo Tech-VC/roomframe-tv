@@ -9,6 +9,12 @@ import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
 import { createValidators } from './validation.mjs';
 
+const safeServerErrorCodes = new Set([
+  'insufficient_storage',
+  'server_ca_not_ready',
+  'server_ca_invalid',
+]);
+
 export const buildApp = async ({ config, logger = true }) => {
   const app = Fastify({
     logger: logger ? {
@@ -128,8 +134,8 @@ export const buildApp = async ({ config, logger = true }) => {
       }
       if (status >= 500) {
         request.log.error({ err: error }, 'request_failed');
-        code = error.message === 'insufficient_storage'
-          ? 'insufficient_storage'
+        code = safeServerErrorCodes.has(error.message)
+          ? error.message
           : 'internal_error';
       }
       return reply.code(status).send({

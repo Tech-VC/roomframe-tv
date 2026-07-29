@@ -33,6 +33,11 @@ import {
   releaseSourceKey,
   serializeReleaseSource,
 } from './update-source.mjs';
+import {
+  encryptServerTrustBootstrap,
+  loadServerCa,
+  serializeServerTrustBootstrap,
+} from './trust-bootstrap.mjs';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const deviceKeyPattern = /^[A-Za-z0-9_-]{32,200}$/;
@@ -1500,14 +1505,26 @@ export const registerStudioRoutes = ({
   }, async (request, reply) => {
     const id = crypto.randomUUID();
     const enrollmentKey = randomToken(32);
+    const serverCa = await loadServerCa(config.serverCaFile);
+    const trustBootstrap = encryptServerTrustBootstrap({
+      certificatePem: serverCa.pem,
+      certificateFingerprintSha256: serverCa.fingerprintSha256,
+      deviceId: id,
+      enrollmentKey,
+    });
     const groupId = optionalUuid(request.body?.groupId);
     const enrollmentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
     await withTransaction(pool, async (client) => {
       await client.query(
         `INSERT INTO screens (
            id, device_key, display_name, room_name, group_id, enrollment_state,
-           enrollment_expires_at
-         ) VALUES ($1, $2, $3, $4, $5, 'pending', $6)`,
+           enrollment_expires_at, server_ca_bootstrap_salt,
+           server_ca_bootstrap_iv, server_ca_bootstrap_ciphertext,
+           server_ca_bootstrap_tag, server_ca_bootstrap_fingerprint_sha256,
+           server_ca_bootstrap_created_at
+         ) VALUES (
+           $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, now()
+         )`,
         [
           id,
           sha256(enrollmentKey),
@@ -1515,16 +1532,56 @@ export const registerStudioRoutes = ({
           cleanText(request.body?.roomName, 'room_name', 100),
           groupId,
           enrollmentExpiresAt,
+          trustBootstrap.salt,
+          trustBootstrap.iv,
+          trustBootstrap.ciphertext,
+          trustBootstrap.tag,
+          trustBootstrap.fingerprintSha256,
         ],
       );
-      await writeAudit(client, request, 'tv.enrollment.created', 'tv', id);
+      await writeAudit(client, request, 'tv.enrollment.created', 'tv', id, {
+        serverTrustBootstrapVersion: 1,
+        serverCaFingerprintSha256: trustBootstrap.fingerprintSha256,
+      });
     });
     return reply.code(201).send({
       id,
       enrollmentKey,
       expiresAt: enrollmentExpiresAt.toISOString(),
       expiresNote: 'À remettre une seule fois à la TV pendant un enrôlement local contrôlé.',
+      trustBootstrap: {
+        mode: 'encrypted-server-ca',
+        version: 1,
+      },
     });
+  });
+
+  app.get('/api/v1/tv/trust-bootstrap', {
+    config: { rateLimit: { max: 60, timeWindow: '15 minutes' } },
+  }, async (request, reply) => {
+    const rawDeviceId = String(request.query?.deviceId ?? '');
+    if (!uuidPattern.test(rawDeviceId)) {
+      return reply.code(404).send({ error: 'trust_bootstrap_not_found' });
+    }
+    const result = await pool.query(
+      `SELECT server_ca_bootstrap_salt, server_ca_bootstrap_iv,
+              server_ca_bootstrap_ciphertext, server_ca_bootstrap_tag
+       FROM screens
+       WHERE id = $1
+         AND enrollment_state = 'pending'
+         AND enrollment_expires_at > now()
+         AND server_ca_bootstrap_salt IS NOT NULL
+         AND server_ca_bootstrap_iv IS NOT NULL
+         AND server_ca_bootstrap_ciphertext IS NOT NULL
+         AND server_ca_bootstrap_tag IS NOT NULL`,
+      [rawDeviceId],
+    );
+    if (!result.rows[0]) {
+      return reply.code(404).send({ error: 'trust_bootstrap_not_found' });
+    }
+    const payload = serializeServerTrustBootstrap(result.rows[0]);
+    validators.assertTvTrustBootstrap(payload);
+    return reply.header('cache-control', 'no-store').send(payload);
   });
 
   app.post('/api/v1/tv/enroll', {
@@ -1564,6 +1621,12 @@ export const registerStudioRoutes = ({
              enrollment_expires_at = NULL, device_key_rotated_at = now(),
              device_key_pending = NULL, device_key_pending_expires_at = NULL,
              credentials_revoked_at = NULL,
+             server_ca_bootstrap_salt = NULL,
+             server_ca_bootstrap_iv = NULL,
+             server_ca_bootstrap_ciphertext = NULL,
+             server_ca_bootstrap_tag = NULL,
+             server_ca_bootstrap_fingerprint_sha256 = NULL,
+             server_ca_bootstrap_created_at = NULL,
              last_seen_at = now(), updated_at = now()
          WHERE id = $1
          RETURNING id, display_name, room_name, credential_generation,
@@ -1750,78 +1813,84 @@ export const registerStudioRoutes = ({
 
   app.post('/api/v1/tv/certificate/renew', {
     config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
-  }, async (request, reply) => withTransaction(pool, async (client) => {
-    const { screen } = await activeTvFromRequest(client, request, { lock: true });
-    if (
-      !screen.client_certificate_expires_at
-      || new Date(screen.client_certificate_expires_at).getTime() - Date.now()
-        > tvCertificateRenewalWindowMs
-    ) {
-      throw Object.assign(new Error('tv_certificate_renewal_not_due'), {
-        statusCode: 409,
+  }, async (request, reply) => {
+    const renewal = await withTransaction(pool, async (client) => {
+      const { screen } = await activeTvFromRequest(client, request, { lock: true });
+      if (
+        !screen.client_certificate_expires_at
+        || new Date(screen.client_certificate_expires_at).getTime() - Date.now()
+          > tvCertificateRenewalWindowMs
+      ) {
+        throw Object.assign(new Error('tv_certificate_renewal_not_due'), {
+          statusCode: 409,
+        });
+      }
+      if (screen.client_certificate_pending_fingerprint) {
+        throw Object.assign(new Error('tv_certificate_activation_pending'), {
+          statusCode: 409,
+        });
+      }
+      const existing = await client.query(
+        `SELECT id, status
+         FROM tv_certificate_requests
+         WHERE screen_id = $1 AND status IN ('pending', 'issuing')
+         ORDER BY requested_at DESC
+         LIMIT 1`,
+        [screen.id],
+      );
+      if (existing.rows[0]) {
+        return {
+          requestId: existing.rows[0].id,
+          status: existing.rows[0].status,
+          idempotent: true,
+          created: false,
+        };
+      }
+      const current = await client.query(
+        `SELECT public_key_spki, public_key_sha256
+         FROM tv_certificate_requests
+         WHERE screen_id = $1
+           AND status = 'issued'
+           AND certificate_fingerprint_sha256 = $2
+         ORDER BY issued_at DESC
+         LIMIT 1`,
+        [screen.id, screen.client_certificate_fingerprint],
+      );
+      if (!current.rows[0]) {
+        throw Object.assign(new Error('tv_certificate_public_key_missing'), {
+          statusCode: 409,
+        });
+      }
+      const requestId = crypto.randomUUID();
+      await client.query(
+        `INSERT INTO tv_certificate_requests (
+           id, screen_id, public_key_spki, public_key_sha256
+         ) VALUES ($1, $2, $3, $4)`,
+        [
+          requestId,
+          screen.id,
+          current.rows[0].public_key_spki,
+          current.rows[0].public_key_sha256,
+        ],
+      );
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: 'tv.certificate.renewal_requested',
+        targetType: 'tv',
+        targetId: screen.id,
+        remoteAddress: request.ip,
+        details: { requestId },
       });
-    }
-    if (screen.client_certificate_pending_fingerprint) {
-      throw Object.assign(new Error('tv_certificate_activation_pending'), {
-        statusCode: 409,
-      });
-    }
-    const existing = await client.query(
-      `SELECT id, status
-       FROM tv_certificate_requests
-       WHERE screen_id = $1 AND status IN ('pending', 'issuing')
-       ORDER BY requested_at DESC
-       LIMIT 1`,
-      [screen.id],
-    );
-    if (existing.rows[0]) {
       return {
-        requestId: existing.rows[0].id,
-        status: existing.rows[0].status,
-        idempotent: true,
-      };
-    }
-    const current = await client.query(
-      `SELECT public_key_spki, public_key_sha256
-       FROM tv_certificate_requests
-       WHERE screen_id = $1
-         AND status = 'issued'
-         AND certificate_fingerprint_sha256 = $2
-       ORDER BY issued_at DESC
-       LIMIT 1`,
-      [screen.id, screen.client_certificate_fingerprint],
-    );
-    if (!current.rows[0]) {
-      throw Object.assign(new Error('tv_certificate_public_key_missing'), {
-        statusCode: 409,
-      });
-    }
-    const requestId = crypto.randomUUID();
-    await client.query(
-      `INSERT INTO tv_certificate_requests (
-         id, screen_id, public_key_spki, public_key_sha256
-       ) VALUES ($1, $2, $3, $4)`,
-      [
         requestId,
-        screen.id,
-        current.rows[0].public_key_spki,
-        current.rows[0].public_key_sha256,
-      ],
-    );
-    await appendAudit(client, {
-      actorType: 'tv',
-      action: 'tv.certificate.renewal_requested',
-      targetType: 'tv',
-      targetId: screen.id,
-      remoteAddress: request.ip,
-      details: { requestId },
+        status: 'pending',
+        idempotent: false,
+        created: true,
+      };
     });
-    return reply.code(201).send({
-      requestId,
-      status: 'pending',
-      idempotent: false,
-    });
-  }));
+    const { created, ...payload } = renewal;
+    return reply.code(created ? 201 : 200).send(payload);
+  });
 
   app.post('/api/v1/tv/credentials/rotate', {
     config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
@@ -1982,6 +2051,12 @@ export const registerStudioRoutes = ({
              client_certificate_pending_issued_at = NULL,
              client_certificate_pending_expires_at = NULL,
              client_certificate_pending_required_at = NULL,
+             server_ca_bootstrap_salt = NULL,
+             server_ca_bootstrap_iv = NULL,
+             server_ca_bootstrap_ciphertext = NULL,
+             server_ca_bootstrap_tag = NULL,
+             server_ca_bootstrap_fingerprint_sha256 = NULL,
+             server_ca_bootstrap_created_at = NULL,
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation,
@@ -2021,6 +2096,13 @@ export const registerStudioRoutes = ({
     const tvId = optionalUuid(request.params.tvId);
     const enrollmentKey = randomToken(32);
     const enrollmentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    const serverCa = await loadServerCa(config.serverCaFile);
+    const trustBootstrap = encryptServerTrustBootstrap({
+      certificatePem: serverCa.pem,
+      certificateFingerprintSha256: serverCa.fingerprintSha256,
+      deviceId: tvId,
+      enrollmentKey,
+    });
     return withTransaction(pool, async (client) => {
       const current = await client.query(
         'SELECT * FROM screens WHERE id = $1 FOR UPDATE',
@@ -2054,16 +2136,33 @@ export const registerStudioRoutes = ({
              client_certificate_pending_issued_at = NULL,
              client_certificate_pending_expires_at = NULL,
              client_certificate_pending_required_at = NULL,
+             server_ca_bootstrap_salt = $4,
+             server_ca_bootstrap_iv = $5,
+             server_ca_bootstrap_ciphertext = $6,
+             server_ca_bootstrap_tag = $7,
+             server_ca_bootstrap_fingerprint_sha256 = $8,
+             server_ca_bootstrap_created_at = now(),
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation`,
-        [tvId, sha256(enrollmentKey), enrollmentExpiresAt],
+        [
+          tvId,
+          sha256(enrollmentKey),
+          enrollmentExpiresAt,
+          trustBootstrap.salt,
+          trustBootstrap.iv,
+          trustBootstrap.ciphertext,
+          trustBootstrap.tag,
+          trustBootstrap.fingerprintSha256,
+        ],
       );
       await writeAudit(client, request, 'tv.reenrollment.created', 'tv', tvId, {
         previousState: screen.enrollment_state,
         previousGeneration: Number(screen.credential_generation),
         credentialGeneration: Number(updated.rows[0].credential_generation),
         expiresAt: enrollmentExpiresAt,
+        serverTrustBootstrapVersion: 1,
+        serverCaFingerprintSha256: trustBootstrap.fingerprintSha256,
       });
       await client.query(
         `UPDATE tv_certificate_requests
@@ -2078,6 +2177,10 @@ export const registerStudioRoutes = ({
         enrollmentKey,
         expiresAt: enrollmentExpiresAt,
         expiresNote: 'À remettre une seule fois à la TV pendant un enrôlement local contrôlé.',
+        trustBootstrap: {
+          mode: 'encrypted-server-ca',
+          version: 1,
+        },
       };
     });
   });

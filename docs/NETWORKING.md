@@ -41,6 +41,12 @@ certificats individuels lorsqu’une TV en présente un. L’API les rend
 obligatoires uniquement après leur activation pour l’identité TV concernée ;
 aucun second port ou hôte mTLS n’est nécessaire.
 
+Au premier enrôlement, l’APK effectue un GET sans secret pour obtenir une
+enveloppe de CA chiffrée par le ticket. Il ne transmet la clé à usage unique
+qu’après déchiffrement, contrôle de la chaîne TLS réellement rencontrée,
+validation du nom/IP et épinglage local de la CA. Cette étape fonctionne avec
+le FQDN comme avec l’URL IP de secours.
+
 ## Cas particulier de `.local`
 
 `.local` est réservé à mDNS dans de nombreux clients, alors que certains
@@ -85,13 +91,14 @@ l’interface LAN déjà configurée.
 1. FQDN provisionné ou déjà mémorisé ;
 2. découverte locale signée sur le VLAN autorisé ;
 3. adresse IP ou nom saisi manuellement ;
-4. validation de la CA ou de l'empreinte ;
+4. appairage chiffré et validation de la CA ;
 5. code d'enrôlement approuvé dans l'administration.
 
 Aucun balayage massif de ports n'est prévu.
 
 Le jalon `0.3.0` prend en charge le FQDN, l’URL IP de secours, HTTPS et
 l’enrôlement explicite côté serveur. L’écran Android accepte manuellement
-l’origine HTTPS, l’identifiant TV et la clé à usage unique. La découverte locale
+l’origine HTTPS, l’identifiant TV et la clé à usage unique ; la CA est
+appairée automatiquement sans confiance aveugle. La découverte locale
 signée reste à implémenter ; elle ne doit pas être remplacée par une découverte
 mDNS non authentifiée.

@@ -17,6 +17,7 @@ x-api-environment: &api-environment
   ROOMFRAME_SERVER_STATE_FILE: /run/roomframe/server-state.json
   ROOMFRAME_UPDATE_TRUST_DIR: /run/roomframe/update-trust
   ROOMFRAME_TV_CLIENT_CA_FILE: /run/roomframe/tv-client-ca.crt
+  ROOMFRAME_SERVER_CA_FILE: /run/roomframe/server-ca/ca.crt
   ROOMFRAME_UPDATE_GITHUB_REPOSITORY: ${ROOMFRAME_UPDATE_GITHUB_REPOSITORY:-}
   ROOMFRAME_UPDATE_GITHUB_CHANNEL: ${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-stable}
   ROOMFRAME_UPDATE_POLL_MINUTES: ${ROOMFRAME_UPDATE_POLL_MINUTES:-360}
@@ -82,6 +83,7 @@ services:
       - ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/server-state.json:/run/roomframe/server-state.json:ro
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/update-trust:/run/roomframe/update-trust:ro
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/tv-client-ca/ca.crt:/run/roomframe/tv-client-ca.crt:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/server-ca:/run/roomframe/server-ca:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     depends_on:

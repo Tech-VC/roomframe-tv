@@ -48,6 +48,10 @@ TV ── clé publique + preuve ── API ── demande SQL
 Courtier certificat root ────────────┘
        │
        └── CA root-only ── certificat public individuel ── TV/mTLS
+
+Caddy ── CA HTTPS publique ── copie root contrôlée ── API
+TV ── ticket chiffré sans secret sortant ────────────┘
+       └── déchiffrement + validation de la chaîne ── pin d’instance
 ```
 
 - Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
@@ -84,6 +88,8 @@ sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
 automatique opt-in, les programmations de scènes, les générations de
 credential TV, les demandes/certificats clients individuels et l’audit.
+La migration d’appairage conserve aussi, uniquement pendant les 30 minutes du
+ticket, l’enveloppe chiffrée de la CA HTTPS ; elle est effacée à l’activation.
 
 ## Une seule origine HTTPS
 

@@ -135,6 +135,7 @@ créé avant l’ajout de cette politique.
 /var/lib/roomframe/media/           originaux privés et variantes
 /var/lib/roomframe/processing/      uploads temporaires et file locale
 /var/lib/roomframe/pki/tv-client-ca/ CA cliente TV persistante root-only
+/var/lib/roomframe/pki/server-ca/    copie publique CA HTTPS pour appairage TV
 /var/lib/roomframe/releases/        mises à jour vérifiées
 /var/lib/roomframe/backups/         sauvegardes
 /var/lib/roomframe/pki/             confiance et clés publiques
@@ -234,6 +235,7 @@ sudo roomframe-trust-update-key --key-id release-main \
   --sha256 EMPREINTE_SHA256
 sudo roomframe-trust-update-key --revoke --key-id release-main \
   --sha256 EMPREINTE_SHA256
+sudo roomframe-sync-server-ca
 ```
 
 Les mêmes outils sont présents sous `/opt/roomframe/scripts/`. La commande
@@ -400,9 +402,22 @@ premier démarrage dans :
 ```
 
 Cette racine doit être distribuée par un canal administré aux navigateurs et
-épinglée ou installée lors de l’enrôlement des TV. Ne contournez pas les
+épinglée ou installée lors de l’enrôlement des TV. L’APK release récupère une
+copie chiffrée avec sa clé d’enrôlement, valide la chaîne TLS observée puis
+épingle la CA avant de transmettre cette clé. Ne contournez pas les
 avertissements TLS pour l’usage normal. L’API n’est pas publiée directement :
 Caddy expose uniquement `443/tcp`.
+
+L’installateur publie uniquement le certificat public vers :
+
+```text
+/var/lib/roomframe/pki/server-ca/ca.crt
+```
+
+La commande idempotente `sudo roomframe-sync-server-ca` refait cette
+synchronisation après un démarrage différé avec `--no-start`. Elle n’expose ni
+la clé racine ni la clé intermédiaire Caddy. `roomframe-diagnose` refuse une
+copie absente, mal protégée ou différente de la CA active.
 
 Une autorité distincte destinée aux certificats clients TV est créée une seule
 fois pendant le bootstrap :

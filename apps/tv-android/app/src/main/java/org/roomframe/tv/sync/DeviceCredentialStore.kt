@@ -153,7 +153,11 @@ class DeviceCredentialStore(context: Context) {
     }
 
     fun clear() {
-        preferences.edit().clear().commit()
+        check(preferences.edit().clear().commit()) {
+            "Impossible d’effacer l’identité TV"
+        }
+        TvClientCertificateStore().clear()
+        RoomFrameServerTrust().clear()
     }
 
     private fun decrypt(encrypted: ByteArray, iv: ByteArray, associatedData: ByteArray): String {

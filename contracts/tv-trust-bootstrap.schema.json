@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/tv-trust-bootstrap.schema.json",
+  "title": "RoomFrame encrypted server trust bootstrap",
+  "type": "object",
+  "required": [
+    "version",
+    "algorithm",
+    "keyDerivation",
+    "context",
+    "salt",
+    "iv",
+    "ciphertext",
+    "tag"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "algorithm": {
+      "const": "AES-256-GCM"
+    },
+    "keyDerivation": {
+      "const": "HKDF-SHA256"
+    },
+    "context": {
+      "const": "roomframe-server-ca-bootstrap-v1"
+    },
+    "salt": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "iv": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16}$"
+    },
+    "ciphertext": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{667,21846}$"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{22}$"
+    }
+  },
+  "additionalProperties": false
+}

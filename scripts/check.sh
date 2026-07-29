@@ -120,6 +120,22 @@ grep -Fq 'tvCertificateProofPayload' services/api/src/studio-routes.mjs || {
   echo "La preuve de possession de la clé privée TV est absente." >&2
   exit 1
 }
+server_ca_sync_help="$(bash scripts/roomframe-sync-server-ca.sh --help)"
+grep -Fq "Aucune clé privée Caddy" <<<"$server_ca_sync_help" || {
+  echo "La publication de CA serveur doit exclure explicitement toute clé privée." >&2
+  exit 1
+}
+grep -Fq 'roomframe-server-ca-bootstrap-v1' \
+  services/api/src/trust-bootstrap.mjs \
+  contracts/tv-trust-bootstrap.schema.json || {
+  echo "Le contexte d'appairage de la CA serveur doit être partagé et versionné." >&2
+  exit 1
+}
+if rg --fixed-strings --line-number \
+  'pki/authorities/local/root.key' compose.yaml services/api; then
+  echo "La clé privée HTTPS Caddy ne doit être montée dans aucun conteneur applicatif." >&2
+  exit 1
+fi
 
 while IFS= read -r -d '' document; do
   python3 -m json.tool "$document" >/dev/null

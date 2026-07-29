@@ -13,9 +13,9 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.KeyManager
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocketFactory
 import javax.security.auth.x500.X500Principal
 
 data class TvCertificateEnrollmentProof(
@@ -113,15 +113,17 @@ class TvClientCertificateStore {
         return (chain.first() as? X509Certificate)?.notAfter?.time
     }
 
-    fun sslSocketFactoryOrNull(): SSLSocketFactory? {
+    fun keyManagersOrNull(): Array<KeyManager>? {
         if (currentFingerprintSha256() == null) return null
-        val keyManagers = KeyManagerFactory
+        return KeyManagerFactory
             .getInstance(KeyManagerFactory.getDefaultAlgorithm())
             .apply { init(androidKeyStore(), null) }
             .keyManagers
-        return SSLContext.getInstance("TLS").apply {
-            init(keyManagers, null, null)
-        }.socketFactory
+    }
+
+    fun clear() {
+        val keyStore = androidKeyStore()
+        if (keyStore.containsAlias(KEY_ALIAS)) keyStore.deleteEntry(KEY_ALIAS)
     }
 
     private fun generateKeyPair() {
@@ -182,8 +184,12 @@ class TvClientCertificateStore {
 object RoomFrameHttps {
     fun open(url: URL): HttpsURLConnection =
         (url.openConnection() as HttpsURLConnection).also { connection ->
-            TvClientCertificateStore().sslSocketFactoryOrNull()?.let {
-                connection.sslSocketFactory = it
+            val keyManagers = TvClientCertificateStore().keyManagersOrNull()
+            val trustManagers = RoomFrameServerTrust().trustManagersOrNull()
+            if (keyManagers != null || trustManagers != null) {
+                connection.sslSocketFactory = SSLContext.getInstance("TLS").apply {
+                    init(keyManagers, trustManagers, null)
+                }.socketFactory
             }
         }
 }

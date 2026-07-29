@@ -197,6 +197,18 @@ else
   bad "autorité HTTPS locale absente (normal avant le premier démarrage)"
 fi
 
+SERVER_CA_PUBLIC="$DATA_DIR/pki/server-ca/ca.crt"
+if [[
+  -f "$CA_PATH"
+  && -f "$SERVER_CA_PUBLIC"
+  && ! -L "$SERVER_CA_PUBLIC"
+  && "$(stat -c '%a:%u:%g' "$SERVER_CA_PUBLIC" 2>/dev/null)" == "644:0:0"
+]] && cmp -s "$CA_PATH" "$SERVER_CA_PUBLIC"; then
+  ok "CA HTTPS publique disponible pour l’appairage chiffré des TV"
+else
+  bad "copie publique de la CA HTTPS absente ou désynchronisée"
+fi
+
 TV_CA_CERTIFICATE="$DATA_DIR/pki/tv-client-ca/ca.crt"
 TV_CA_PRIVATE_KEY="$DATA_DIR/pki/tv-client-ca/private/ca.key"
 if [[

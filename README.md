@@ -16,8 +16,9 @@ sur chaque instance après l’installation.
 > client natif rend la scène sans WebView et contrôle les APK distribués par
 > vagues. Un poller non privilégié peut aussi importer automatiquement une
 > release GitHub signée. Les TV génèrent aussi une clé TLS non exportable,
-> reçoivent un certificat individuel via un courtier root isolé et utilisent
-> ensuite mTLS en plus de leur clé rotative. Device Owner,
+> appairent la CA HTTPS de l’instance sans envoyer leur secret sur une
+> connexion non vérifiée, reçoivent un certificat individuel via un courtier
+> root isolé et utilisent ensuite mTLS en plus de leur clé rotative. Device Owner,
 > installation silencieuse, HDMI, veille/réveil, Cast et AirPlay restent à
 > valider.
 
@@ -121,8 +122,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
   prudente pour les logos sur fond clair uniforme ;
 - enrôlement TV à clé temporaire, clé TLS RSA non exportable dans Android
-  Keystore, certificat client individuel, mTLS, rotation automatique à deux
-  phases, renouvellement, révocation et réenrôlement administrés ;
+  Keystore, appairage chiffré de la CA HTTPS, certificat client individuel,
+  mTLS, rotation automatique à deux phases, renouvellement, révocation et
+  réenrôlement administrés ;
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
@@ -169,6 +171,7 @@ sudo roomframe-trust-update-key --key-id release-main \
   --sha256 EMPREINTE_SHA256
 sudo roomframe-trust-update-key --revoke --key-id release-main \
   --sha256 EMPREINTE_SHA256
+sudo roomframe-sync-server-ca
 sudo systemctl status roomframe-tv-certificate-broker.timer
 ```
 
@@ -236,8 +239,9 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse
   doivent encore être validés sur la TV réelle ;
 - les certificats clients individuels et le mTLS sont implémentés et testés
-  hors matériel ; leur activation avec Android Keystore doit encore être
-  observée sur la Philips réelle ;
+  hors matériel, ainsi que l’appairage chiffré de la CA HTTPS par l’APK
+  release ; leur activation avec Android Keystore doit encore être observée
+  sur la Philips réelle ;
 - HDMI, Cast, AirPlay, puissance et retour automatique sont des contrats
   d’adaptateurs, pas des capacités Philips annoncées comme fonctionnelles ;
 - PhairPlay n’est pas intégré avant validation de la version Android, de l’ABI

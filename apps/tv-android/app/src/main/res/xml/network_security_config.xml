@@ -5,5 +5,5 @@
     <debug-overrides>
         <trust-anchors><certificates src="user" /></trust-anchors>
     </debug-overrides>
-    <!-- La CA locale ou le pin est injecté pendant l’enrôlement dans la version production. -->
+    <!-- La CA d’instance est appairée puis épinglée par l’application pendant l’enrôlement. -->
 </network-security-config>

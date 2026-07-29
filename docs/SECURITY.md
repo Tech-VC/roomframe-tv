@@ -12,9 +12,10 @@
 - collecte de télémétrie technique limitée, sans contenu vu ni appareil
   personnel.
 
-WebAuthn et la découverte locale authentifiée restent des étapes à venir. Les
-certificats individuels TV et le mTLS sont implémentés ; leur fonctionnement
-avec le firmware Philips reste à observer sur le matériel réel.
+WebAuthn et la découverte locale authentifiée restent des étapes à venir.
+L’appairage de la CA HTTPS, les certificats individuels TV et le mTLS sont
+implémentés ; leur fonctionnement avec le firmware Philips reste à observer
+sur le matériel réel.
 
 ## Secrets de l’instance
 
@@ -130,6 +131,20 @@ La clé d’enrôlement expire après 30 minutes et ne peut pas synchroniser. El
 est échangée atomiquement contre une clé d’appareil remise une fois. Seul son
 SHA-256 est stocké.
 
+Avant cet échange, le serveur chiffre sa CA HTTPS publique avec AES-256-GCM.
+La clé AES est dérivée par HKDF-SHA256 depuis la clé d’enrôlement aléatoire et
+un sel propre au ticket. La TV récupère ce blob sans envoyer la clé, le
+déchiffre localement, puis vérifie que la chaîne TLS réellement rencontrée
+aboutit à cette CA et que le nom ou l’IP correspond à l’URL saisie. Elle épingle
+ensuite la CA dans son stockage applicatif avant la première requête contenant
+la clé d’enrôlement. Un relais qui substitue son certificat peut relayer le
+blob, mais il ne peut ni le modifier ni faire valider sa propre chaîne.
+
+La copie publique montée dans l’API est
+`/var/lib/roomframe/pki/server-ca/ca.crt`. Elle est synchronisée depuis les
+données Caddy par une commande root ; aucune clé privée Caddy n’est montée
+dans l’API. Le blob est effacé atomiquement dès que le ticket est consommé.
+
 Les téléchargements d’une TV sont limités aux assets de sa scène. Les
 métriques et événements acceptent des champs et types fermés, des tailles
 bornées et une rétention de 90 jours par défaut.
@@ -169,6 +184,7 @@ statut fermé de la programmation et la révision de synchronisation.
 Limites avant production :
 
 - découverte locale authentifiée non implémentée ;
+- appairage CA Android non encore observé sur le firmware Philips ;
 - activation Android Keystore/mTLS non encore observée sur la Philips ;
 - pas encore de CRL distribuée à Caddy ; la révocation est autoritative dans
   l’API après la validation cryptographique du handshake.

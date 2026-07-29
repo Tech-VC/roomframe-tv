@@ -87,10 +87,13 @@ ROOMFRAME_TEST_DB_PORT
 ROOMFRAME_TEST_DB_NAME
 ROOMFRAME_TEST_DB_USER
 ROOMFRAME_TEST_DB_PASSWORD
+ROOMFRAME_TEST_SERVER_CA_FILE
 ```
 
 Le test refuse de réinitialiser une base dont le nom n’indique pas clairement
-qu’elle est réservée aux tests.
+qu’elle est réservée aux tests. `ROOMFRAME_TEST_SERVER_CA_FILE` pointe vers un
+certificat de CA public de test valide ; `scripts/test.sh` en génère un
+automatiquement et ne conserve pas sa clé privée.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
 23 tests UI, soit 46 tests sur un clone frais. Les workflows GitHub de
@@ -105,7 +108,9 @@ donc ce même ensemble. Les scénarios comprennent notamment :
 - bibliothèque de scènes, révision, conflit, publication, affectation ciblée
   et manifeste de synchronisation ;
 - enrôlement temporaire, rotation TV en deux phases, confirmation idempotente,
-  révocation et réenrôlement protégés par permission/CSRF ;
+  révocation et réenrôlement protégés par permission/CSRF, ainsi que
+  chiffrement/déchiffrement croisé Node/Kotlin de la CA HTTPS et refus d’une
+  enveloppe altérée ;
 - isolation des assets d’une TV ;
 - seed appliqué une seule fois et migrations rejouables ;
 - récupération liée au bon compte, consommation unique et refus du rejeu ;
@@ -254,7 +259,8 @@ Le launcher compile un accueil natif sans WebView et contient :
 - `HttpExperienceSyncClient`, le parseur strict des documents et le renderer
   logique 1920 × 1080 ;
 - l’enrôlement HTTPS, la clé TLS RSA non exportable, le certificat client
-  individuel et le stockage chiffré de la clé TV dans Android Keystore ;
+  individuel, l’appairage/épinglage de la CA HTTPS et le stockage chiffré de
+  la clé TV dans Android Keystore ;
 - `HttpAppUpdateCoordinator`, le contrôle de l’APK et l’adaptateur
   `PackageInstaller` conditionné à Device Owner ;
 - les contrats HDMI, Cast, AirPlay et puissance ;
@@ -266,13 +272,15 @@ dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
 client HTTPS, de la distribution APK et des métriques techniques minimales est
 maintenant codée et testée hors matériel. Le provisionnement Device Owner,
-l’installation silencieuse réelle, la rotation et le mTLS 0.3.3 restent à
+l’installation silencieuse réelle, l’appairage CA, la rotation et le mTLS
+0.3.4 restent à
 valider sur la TV.
 Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
 peut être déduit des adaptateurs `unsupported` ou des tests JVM.
 
-La candidate courante est `0.3.3` / `versionCode 6`. Elle inclut le cache,
-la synchronisation, la distribution APK, la rotation de credential et le mTLS ; elle
+La candidate courante est `0.3.4` / `versionCode 7`. Elle inclut le cache,
+la synchronisation, la distribution APK, l’appairage chiffré de la CA,
+la rotation de credential et le mTLS ; elle
 n’est pas considérée installée tant que la TV n’a pas été reconnectée et
 contrôlée. La candidate intermédiaire `0.3.1` / code 4 a seulement été
 construite hors matériel.

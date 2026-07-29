@@ -79,6 +79,44 @@ jobs:
               "$test_root/data/pki/tv-client-ca/private/ca.key"
           )"
           test "$tv_ca_before" = "$tv_ca_after"
+          openssl genpkey \
+            -algorithm RSA \
+            -pkeyopt rsa_keygen_bits:2048 \
+            -out "$test_root/caddy-test-ca.key"
+          openssl req \
+            -x509 \
+            -new \
+            -key "$test_root/caddy-test-ca.key" \
+            -sha256 \
+            -days 30 \
+            -subj "/CN=RoomFrame CI HTTPS CA" \
+            -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -out "$test_root/caddy-test-ca.crt"
+          sudo env \
+            ROOMFRAME_RUNTIME_CONFIG="$test_root/config/runtime.conf" \
+            ROOMFRAME_CADDY_CA_FILE="$test_root/caddy-test-ca.crt" \
+            ./scripts/roomframe-sync-server-ca.sh
+          test "$(
+            sudo sha256sum "$test_root/data/pki/server-ca/ca.crt" | awk '{print $1}'
+          )" = "$(
+            sha256sum "$test_root/caddy-test-ca.crt" | awk '{print $1}'
+          )"
+          test "$(sudo stat -c '%a:%u:%g' "$test_root/data/pki/server-ca/ca.crt")" = "644:0:0"
+          server_ca_before="$(
+            sudo sha256sum "$test_root/data/pki/server-ca/ca.crt"
+          )"
+          sudo env \
+            ROOMFRAME_INSTALL_DIR="$test_root/install" \
+            ROOMFRAME_CONFIG_DIR="$test_root/config" \
+            ROOMFRAME_DATA_DIR="$test_root/data" \
+            ROOMFRAME_SKIP_COMMAND_LINKS=1 \
+            ROOMFRAME_SKIP_SYSTEMD_UNITS=1 \
+            ./install.sh --source "$PWD" --host roomframe.example.test --no-start
+          test "$server_ca_before" = "$(
+            sudo sha256sum "$test_root/data/pki/server-ca/ca.crt"
+          )"
+          test "$(sudo stat -c '%a:%u:%g' "$test_root/data/pki/server-ca/ca.crt")" = "644:0:0"
           sudo test -f "$test_root/config/runtime.conf"
           sudo test -f "$test_root/data/seed/default-experience/manifest.json"
           sudo test ! -e "$test_root/install/AGENTS.md"
