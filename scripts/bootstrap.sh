@@ -12,6 +12,8 @@ TV_CA_CERTIFICATE="$TV_CA_DIR/ca.crt"
 TV_CA_PRIVATE_KEY="$TV_CA_PRIVATE_DIR/ca.key"
 SERVER_CA_PUBLIC_DIR="$DATA_DIR/pki/server-ca"
 SERVER_CA_PUBLIC_CERTIFICATE="$SERVER_CA_PUBLIC_DIR/ca.crt"
+BACKUP_AGE_IDENTITY="$SECRETS_DIR/backup_age_identity"
+BACKUP_KEYRING="$DATA_DIR/backup-keyring"
 RUNTIME_UID="${ROOMFRAME_RUNTIME_UID:-}"
 RUNTIME_GID="${ROOMFRAME_RUNTIME_GID:-}"
 
@@ -56,6 +58,7 @@ managed_paths=(
   "$DATA_DIR/processing"
   "$DATA_DIR/releases"
   "$DATA_DIR/backups"
+  "$BACKUP_KEYRING"
   "$DATA_DIR/pki"
   "$DATA_DIR/pki/update-trust"
   "$TV_CA_DIR"
@@ -83,6 +86,7 @@ mkdir -p \
   "$DATA_DIR/processing" \
   "$DATA_DIR/releases" \
   "$DATA_DIR/backups" \
+  "$BACKUP_KEYRING" \
   "$DATA_DIR/pki/update-trust" \
   "$TV_CA_PRIVATE_DIR" \
   "$SERVER_CA_PUBLIC_DIR" \
@@ -103,6 +107,7 @@ chmod 0750 \
   "$DATA_DIR/releases" \
   "$SEED_DIR"
 chmod 0770 "$DATA_DIR/backups"
+chmod 0700 "$BACKUP_KEYRING"
 chmod 0700 "$DATA_DIR/pki"
 chmod 0755 "$DATA_DIR/pki/update-trust"
 
@@ -140,6 +145,53 @@ create_secret_once postgres_runtime_password 48
 create_secret_once bootstrap_token 32
 create_secret_once session_secret 48
 create_secret_once totp_encryption_key 32
+
+command -v age-keygen >/dev/null 2>&1 \
+  || fail "age-keygen est requis pour protéger les sauvegardes"
+if [[ -e "$BACKUP_AGE_IDENTITY" ]]; then
+  [[
+    -f "$BACKUP_AGE_IDENTITY"
+    && -s "$BACKUP_AGE_IDENTITY"
+    && ! -L "$BACKUP_AGE_IDENTITY"
+  ]] || fail "l'identité age de sauvegarde existante est invalide"
+else
+  backup_identity_stage="$(mktemp -d "$SECRETS_DIR/.backup-age.XXXXXX")"
+  if ! age-keygen -o "$backup_identity_stage/identity" >/dev/null 2>&1; then
+    rmdir "$backup_identity_stage" 2>/dev/null || true
+    fail "génération de l'identité age de sauvegarde impossible"
+  fi
+  chmod 0400 "$backup_identity_stage/identity"
+  chown root:root "$backup_identity_stage/identity"
+  mv -n "$backup_identity_stage/identity" "$BACKUP_AGE_IDENTITY"
+  if [[ -e "$backup_identity_stage/identity" ]]; then
+    rm -f "$backup_identity_stage/identity"
+  fi
+  rmdir "$backup_identity_stage"
+fi
+chmod 0400 "$BACKUP_AGE_IDENTITY"
+chown root:root "$BACKUP_AGE_IDENTITY"
+backup_age_recipient="$(age-keygen -y "$BACKUP_AGE_IDENTITY" 2>/dev/null)"
+[[ "$backup_age_recipient" =~ ^age1[0-9a-z]+$ ]] \
+  || fail "l'identité age de sauvegarde ne produit pas de destinataire X25519 valide"
+backup_age_recipient_sha="$(
+  printf '%s' "$backup_age_recipient" | sha256sum | awk '{print $1}'
+)"
+backup_keyring_identity="$BACKUP_KEYRING/$backup_age_recipient_sha.agekey"
+if [[ -e "$backup_keyring_identity" ]]; then
+  [[
+    -f "$backup_keyring_identity"
+    && -s "$backup_keyring_identity"
+    && ! -L "$backup_keyring_identity"
+  ]] || fail "l'identité age historique est invalide"
+  keyring_recipient="$(age-keygen -y "$backup_keyring_identity" 2>/dev/null)"
+  [[ "$keyring_recipient" == "$backup_age_recipient" ]] \
+    || fail "collision dans le trousseau des sauvegardes"
+else
+  install -m 0400 -o root -g root \
+    "$BACKUP_AGE_IDENTITY" "$backup_keyring_identity"
+fi
+chmod 0400 "$backup_keyring_identity"
+chown root:root "$backup_keyring_identity"
 
 if [[ -e "$TV_CA_PRIVATE_KEY" || -e "$TV_CA_CERTIFICATE" ]]; then
   [[
@@ -219,10 +271,14 @@ chown -R "${RUNTIME_UID}:${RUNTIME_GID}" \
   "$DATA_DIR/media" \
   "$DATA_DIR/processing" \
   "$DATA_DIR/releases"
-chown -R root:root "$DATA_DIR/app" "$DATA_DIR/backups"
+chown -R root:root "$DATA_DIR/app" "$DATA_DIR/backups" "$BACKUP_KEYRING"
 chown -R "root:${RUNTIME_GID}" "$DATA_DIR/app/recovery" "$SEED_DIR"
 chmod 0750 "$DATA_DIR/app" "$DATA_DIR/app/recovery"
 chmod 0700 "$DATA_DIR/backups"
+chmod 0700 "$BACKUP_KEYRING"
+find "$BACKUP_KEYRING" -maxdepth 1 -type f -name '*.agekey' \
+  -exec chown root:root {} + \
+  -exec chmod 0400 {} +
 chown -R root:root "$DATA_DIR/pki"
 chmod -R g+rX "$SEED_DIR"
 chmod -R u+rwX,go-rwx "$DATA_DIR/pki"

@@ -97,8 +97,9 @@ automatiquement et ne conserve pas sa clé privée.
 
 La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
 27 tests UI, soit 50 tests sur un clone frais. Les workflows GitHub de
-validation et de release appellent tous deux `./scripts/test.sh` et couvrent
-donc ce même ensemble. Les scénarios comprennent notamment :
+validation et de release appellent `./scripts/test.sh`, puis deux tests root
+dédiés au format `age`, à la rétention, au trousseau historique et à la
+restauration PostgreSQL isolée. Les scénarios comprennent notamment :
 
 - bootstrap concurrent : une réussite, un conflit ;
 - Argon2id, chiffrement TOTP et vecteurs RFC 6238 ;
@@ -156,6 +157,7 @@ sudo ./install.sh --host roomframe.example.local
 sudo /opt/roomframe/scripts/roomframe-diagnose.sh
 sudo /opt/roomframe/scripts/roomframe-backup.sh
 sudo /opt/roomframe/scripts/roomframe-verify-backup.sh --latest
+sudo /opt/roomframe/scripts/roomframe-backup-key.sh --show-recipient
 backup_id="$(find /var/lib/roomframe/backups -mindepth 1 -maxdepth 1 \
   -type d -name '????????T??????Z' -printf '%f\n' | sort | tail -n 1)"
 sudo /opt/roomframe/scripts/roomframe-restore.sh \
@@ -169,7 +171,12 @@ sudo roomframe-apply-update \
 La seconde exécution doit conserver les secrets, la base, les médias, la PKI,
 le seed figé et toute personnalisation. Le test de restauration doit être
 réservé au CT jetable : il crée un point de retour, restaure la sauvegarde
-choisie, redémarre les cinq services et vérifie HTTPS.
+choisie, redémarre les cinq services et vérifie HTTPS. Il doit aussi confirmer
+qu’aucun `postgres.dump`, `configuration.tar.gz` ou
+`persistent-data.tar.gz` en clair n’existe dans le répertoire final, qu’un
+octet altéré dans un `.age` est refusé et que les deux timers restent actifs
+après une seconde installation. Une restauration entre deux identités
+différentes doit conserver le point de sécurité via `backup-keyring`.
 Le test `apply-update` doit utiliser une clé de développement éphémère, une
 release strictement supérieure et le CT jetable. Il doit confirmer la
 préconstruction, le point de retour, la bascule, les cinq services, l’audit et

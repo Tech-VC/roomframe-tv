@@ -16,6 +16,8 @@ local.properties
 */*.pem
 *.key
 */*.key
+*.agekey
+*/*.agekey
 *.crt
 */*.crt
 *.p12

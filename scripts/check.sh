@@ -39,6 +39,66 @@ if bash scripts/roomframe-restore.sh --latest >/dev/null 2>&1; then
   exit 1
 fi
 
+backup_help="$(bash scripts/roomframe-backup.sh --help)"
+grep -Fq 'sauvegarde age chiffrée' <<<"$backup_help" || {
+  echo "La commande de sauvegarde doit annoncer le chiffrement age." >&2
+  exit 1
+}
+grep -Fq -- '--scheduled daily|weekly' <<<"$backup_help" || {
+  echo "Le cycle de sauvegarde planifié quotidien/hebdomadaire est absent." >&2
+  exit 1
+}
+backup_key_help="$(bash scripts/roomframe-backup-key.sh --help)"
+grep -Fq "refuse d'écraser" <<<"$backup_key_help" || {
+  echo "L'export de l'identité de sauvegarde doit refuser tout écrasement." >&2
+  exit 1
+}
+grep -Fq 'formatVersion": 2' scripts/roomframe-backup.sh || {
+  echo "Les nouvelles sauvegardes doivent utiliser le format chiffré version 2." >&2
+  exit 1
+}
+grep -Fq 'ROOMFRAME_BACKUP_PATH=' scripts/roomframe-backup.sh || {
+  echo "La sauvegarde doit publier un chemin stable pour les moteurs root." >&2
+  exit 1
+}
+for backup_caller in \
+  install.sh \
+  scripts/roomframe-apply-update.sh \
+  scripts/roomframe-restore.sh; do
+  grep -Fq 'ROOMFRAME_BACKUP_PATH=' "$backup_caller" || {
+    echo "Le consommateur de sauvegarde doit lire le chemin machine: $backup_caller" >&2
+    exit 1
+  }
+done
+for backup_consumer in \
+  scripts/roomframe-verify-backup.sh \
+  scripts/roomframe-restore.sh; do
+  grep -Fq 'age --decrypt' "$backup_consumer" || {
+    echo "La vérification et la restauration doivent matérialiser les sauvegardes age." >&2
+    exit 1
+  }
+done
+for backup_unit in \
+  infra/systemd/roomframe-backup-daily.service \
+  infra/systemd/roomframe-backup-daily.timer \
+  infra/systemd/roomframe-backup-weekly.service \
+  infra/systemd/roomframe-backup-weekly.timer; do
+  [[ -f "$backup_unit" ]] || {
+    echo "Unité de sauvegarde absente: $backup_unit" >&2
+    exit 1
+  }
+done
+grep -Fqx 'ExecStart=/usr/local/sbin/roomframe-backup --scheduled daily' \
+  infra/systemd/roomframe-backup-daily.service || {
+  echo "Le service quotidien doit exclure les médias via sa classe dédiée." >&2
+  exit 1
+}
+grep -Fqx 'ExecStart=/usr/local/sbin/roomframe-backup --scheduled weekly' \
+  infra/systemd/roomframe-backup-weekly.service || {
+  echo "Le service hebdomadaire complet est absent." >&2
+  exit 1
+}
+
 apply_help="$(bash scripts/roomframe-apply-update.sh --help)"
 grep -Fq "n'est jamais appelée directement par l'API web" <<<"$apply_help" || {
   echo "L'aide d'application doit documenter sa frontière root/API." >&2

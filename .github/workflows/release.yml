@@ -19,9 +19,12 @@ jobs:
       - name: Install validation tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ripgrep
+          sudo apt-get install --yes age ripgrep
       - name: Check and test the tagged sources
-        run: ./scripts/test.sh
+        run: |
+          ./scripts/test.sh
+          sudo ./scripts/test-backup-encryption.sh
+          sudo ./scripts/test-backup-verify-e2e.sh
 
   package:
     needs: verify

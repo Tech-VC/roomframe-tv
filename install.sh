@@ -316,13 +316,21 @@ SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
   || fail "Unité systemd du courtier de certificats TV absente."
 [[ -f "$SOURCE_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" ]] \
   || fail "Timer systemd du courtier de certificats TV absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-daily.service" ]] \
+  || fail "Unité systemd de sauvegarde quotidienne absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-daily.timer" ]] \
+  || fail "Timer systemd de sauvegarde quotidienne absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-weekly.service" ]] \
+  || fail "Unité systemd de sauvegarde hebdomadaire absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-weekly.timer" ]] \
+  || fail "Timer systemd de sauvegarde hebdomadaire absent."
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
 [[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
   || fail "Liste d’exclusion des sources introuvable."
 
 install_dependencies() {
   local need_apt=0 command_name
-  for command_name in curl openssl python3 tar ip sha256sum flock; do
+  for command_name in curl openssl python3 tar ip sha256sum flock age age-keygen; do
     command -v "$command_name" >/dev/null 2>&1 || need_apt=1
   done
   command -v docker >/dev/null 2>&1 || need_apt=1
@@ -332,7 +340,7 @@ install_dependencies() {
     log "Installation des dépendances système manquantes…"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils util-linux docker.io
+    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils util-linux age docker.io
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
@@ -504,6 +512,28 @@ if [[ ! "$UPDATE_POLL_OVERRIDE" =~ ^[0-9]+$ ]] \
   fail "La fréquence d'updates doit être comprise entre 15 et 10080 minutes."
 fi
 
+BACKUP_DAILY_KEEP="${ROOMFRAME_BACKUP_DAILY_KEEP:-}"
+if [[ -z "$BACKUP_DAILY_KEEP" && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_BACKUP_DAILY_KEEP=' "$previous_runtime"; then
+  BACKUP_DAILY_KEEP="$(runtime_value "$previous_runtime" ROOMFRAME_BACKUP_DAILY_KEEP)"
+fi
+BACKUP_DAILY_KEEP="${BACKUP_DAILY_KEEP:-14}"
+if [[ ! "$BACKUP_DAILY_KEEP" =~ ^[0-9]+$ ]] \
+  || ((10#$BACKUP_DAILY_KEEP < 2 || 10#$BACKUP_DAILY_KEEP > 90)); then
+  fail "La rétention quotidienne doit être comprise entre 2 et 90 sauvegardes."
+fi
+
+BACKUP_WEEKLY_KEEP="${ROOMFRAME_BACKUP_WEEKLY_KEEP:-}"
+if [[ -z "$BACKUP_WEEKLY_KEEP" && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_BACKUP_WEEKLY_KEEP=' "$previous_runtime"; then
+  BACKUP_WEEKLY_KEEP="$(runtime_value "$previous_runtime" ROOMFRAME_BACKUP_WEEKLY_KEEP)"
+fi
+BACKUP_WEEKLY_KEEP="${BACKUP_WEEKLY_KEEP:-4}"
+if [[ ! "$BACKUP_WEEKLY_KEEP" =~ ^[0-9]+$ ]] \
+  || ((10#$BACKUP_WEEKLY_KEEP < 2 || 10#$BACKUP_WEEKLY_KEEP > 26)); then
+  fail "La rétention hebdomadaire doit être comprise entre 2 et 26 sauvegardes."
+fi
+
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
   previous_backup="$INSTALL_DIR/scripts/roomframe-backup.sh"
@@ -526,10 +556,26 @@ if [[ -d "$DATA_DIR/postgres" ]] \
       "$previous_verify" "$preverified_real"
   else
     log "Sauvegarde pré-migration de l'instance existante…"
+    backup_output="$(
+      ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
+      ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
+      ROOMFRAME_MAINTENANCE_LOCK_HELD=1 \
+        "$previous_backup"
+    )"
+    printf '%s\n' "$backup_output"
+    pre_migration_backup="$(
+      sed -n \
+        -e 's/^ROOMFRAME_BACKUP_PATH=//p' \
+        -e 's/^Sauvegarde chiffrée terminée: //p' \
+        -e 's/^Sauvegarde terminée: //p' \
+        <<<"$backup_output" | tail -n 1
+    )"
+    [[ -n "$pre_migration_backup" && -d "$pre_migration_backup" ]] \
+      || fail "La sauvegarde pré-migration n'a pas produit de chemin exploitable."
+    log "Vérification isolée du point de retour pré-migration…"
     ROOMFRAME_CONFIG_DIR="$CONFIG_DIR" \
     ROOMFRAME_RUNTIME_CONFIG="$previous_runtime" \
-    ROOMFRAME_MAINTENANCE_LOCK_HELD=1 \
-      "$previous_backup"
+      "$previous_verify" "$pre_migration_backup"
   fi
 fi
 
@@ -580,6 +626,8 @@ ROOMFRAME_RUNTIME_GID=${RUNTIME_GID}
 ROOMFRAME_UPDATE_GITHUB_REPOSITORY=${UPDATE_REPOSITORY_OVERRIDE}
 ROOMFRAME_UPDATE_GITHUB_CHANNEL=${UPDATE_CHANNEL_OVERRIDE}
 ROOMFRAME_UPDATE_POLL_MINUTES=${UPDATE_POLL_OVERRIDE}
+ROOMFRAME_BACKUP_DAILY_KEEP=${BACKUP_DAILY_KEEP}
+ROOMFRAME_BACKUP_WEEKLY_KEEP=${BACKUP_WEEKLY_KEEP}
 RUNTIME
 chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
@@ -656,7 +704,7 @@ chmod 0640 "$CONFIG_DIR/server-state.json"
 
 if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
-    roomframe-verify-backup roomframe-restore roomframe-apply-update \
+    roomframe-backup-key roomframe-verify-backup roomframe-restore roomframe-apply-update \
     roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
     roomframe-trust-update-key roomframe-tv-certificate-broker \
     roomframe-sync-server-ca; do
@@ -685,9 +733,23 @@ if command -v systemctl >/dev/null 2>&1 \
   install -D -m 0644 \
     "$INSTALL_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" \
     /etc/systemd/system/roomframe-tv-certificate-broker.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-daily.service" \
+    /etc/systemd/system/roomframe-backup-daily.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-daily.timer" \
+    /etc/systemd/system/roomframe-backup-daily.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-weekly.service" \
+    /etc/systemd/system/roomframe-backup-weekly.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-backup-weekly.timer" \
+    /etc/systemd/system/roomframe-backup-weekly.timer
   systemctl daemon-reload
   systemctl enable roomframe-update-broker.timer >/dev/null
   systemctl enable roomframe-tv-certificate-broker.timer >/dev/null
+  systemctl enable roomframe-backup-daily.timer >/dev/null
+  systemctl enable roomframe-backup-weekly.timer >/dev/null
 fi
 
 if [[ "$NO_START" -eq 0 ]]; then
@@ -757,6 +819,8 @@ if [[ "$NO_START" -eq 0 ]]; then
     && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
     systemctl start roomframe-update-broker.timer
     systemctl start roomframe-tv-certificate-broker.timer
+    systemctl start roomframe-backup-daily.timer
+    systemctl start roomframe-backup-weekly.timer
   fi
 fi
 
@@ -774,11 +838,13 @@ printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
 printf 'Copie publique CA serveur : %s\n' "$DATA_DIR/pki/server-ca/ca.crt"
 printf 'Autorité cliente TV       : %s\n' "$DATA_DIR/pki/tv-client-ca/ca.crt"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
-printf 'Sauvegarde                 : sudo roomframe-backup\n'
+printf 'Sauvegarde chiffrée        : sudo roomframe-backup\n'
+printf 'Export clé de reprise      : sudo roomframe-backup-key --help\n'
 printf 'Restauration               : sudo roomframe-restore --help\n'
 printf 'Appliquer une release      : sudo roomframe-apply-update --help\n'
 if [[ -d /run/systemd/system ]]; then
   printf "File d'updates serveur     : roomframe-update-broker.timer\n"
+  printf "Sauvegardes planifiées     : quotidienne sans médias · hebdomadaire complète\n"
 fi
 if [[ -n "$UPDATE_REPOSITORY_OVERRIDE" ]]; then
   printf 'Updates GitHub signées     : %s · canal %s · toutes les %s min\n' \

@@ -15,9 +15,12 @@ jobs:
       - name: Install validation tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ripgrep
+          sudo apt-get install --yes age ripgrep
       - name: Check and test RoomFrame
-        run: ./scripts/test.sh
+        run: |
+          ./scripts/test.sh
+          sudo ./scripts/test-backup-encryption.sh
+          sudo ./scripts/test-backup-verify-e2e.sh
       - name: Smoke-test installer idempotence
         run: |
           test_root="$(mktemp -d)"
@@ -73,6 +76,11 @@ jobs:
               -printf '%f:%i:%Y:%s\n' | sort
           )"
           test "$before" = "$after"
+          test "$(sudo stat -c '%a:%u:%g' "$test_root/config/secrets/backup_age_identity")" = "400:0:0"
+          test "$(
+            sudo find "$test_root/data/backup-keyring" \
+              -mindepth 1 -maxdepth 1 -type f -name '*.agekey' | wc -l
+          )" -eq 1
           tv_ca_after="$(
             sudo sha256sum \
               "$test_root/data/pki/tv-client-ca/ca.crt" \
@@ -164,7 +172,7 @@ jobs:
           forbidden_paths="$(
             git ls-files \
               | grep -Ei \
-                '(^|/)(AGENTS\.md|local-branding|local-hardware|node_modules|\.env[^/]*)(/|$)|\.(pem|key|crt|p12|jks|keystore|rfupdate|apk|aab)$' \
+                '(^|/)(AGENTS\.md|local-branding|local-hardware|node_modules|\.env[^/]*)(/|$)|\.(pem|key|agekey|crt|p12|jks|keystore|rfupdate|apk|aab)$' \
               || true
           )"
           if [[ -n "$forbidden_paths" ]]; then

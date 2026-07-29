@@ -16,7 +16,8 @@ dans ce jalon. Si PostgreSQL existe :
 
 1. l’installateur vérifie la présence de l’ancien runtime et de la commande de
    sauvegarde ;
-2. il exécute `roomframe-backup` avant de recopier le code ;
+2. il exécute `roomframe-backup` avant de recopier le code, puis restaure le
+   dump dans un PostgreSQL isolé pour vérifier réellement le point de retour ;
 3. il conserve les secrets et le seed existants ;
 4. il reconstruit et redémarre la pile ;
 5. le conteneur one-shot `migrate` applique les nouvelles migrations additives
@@ -213,8 +214,23 @@ sudo roomframe-backup
 sudo roomframe-verify-backup --latest
 ```
 
-La seconde commande contrôle l’enveloppe puis restaure réellement le dump dans
-un PostgreSQL temporaire sans réseau.
+Les nouveaux points utilisent le format 2 : dump, configuration et données
+persistantes sont chiffrés en flux dans trois fichiers `.age`. La clé privée
+n’est jamais placée dans le dépôt de code ni dans le répertoire final de la
+sauvegarde. La seconde commande contrôle l’enveloppe, authentifie le
+chiffrement, inspecte les archives puis restaure réellement le dump dans un
+PostgreSQL temporaire sans réseau. Les sauvegardes historiques au format 1
+restent vérifiables pour permettre une mise à niveau non destructive.
+
+Une reprise après perte totale du serveur exige d’avoir exporté l’identité
+root-only sur un support hors ligne :
+
+```bash
+sudo roomframe-backup-key --export-identity \
+  /chemin/hors-ligne/roomframe-backup.agekey
+```
+
+La destination ne doit pas exister et n’est jamais écrasée.
 
 Une restauration complète de la même version est disponible avec un
 identifiant répété explicitement :

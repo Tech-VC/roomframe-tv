@@ -5,18 +5,24 @@ CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 RUNTIME_CONFIG="${ROOMFRAME_RUNTIME_CONFIG:-$CONFIG_DIR/runtime.conf}"
 POSTGRES_IMAGE="${ROOMFRAME_POSTGRES_IMAGE:-postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
 BACKUP_DIRECTORY=""
+IDENTITY_OVERRIDE=""
 USE_LATEST=0
 VERIFY_CONTAINER=""
+MATERIALIZED=""
 
 usage() {
   cat <<'USAGE'
 Usage:
-  sudo roomframe-verify-backup --latest
+  sudo roomframe-verify-backup --latest [--identity /chemin/identite.agekey]
   sudo roomframe-verify-backup /var/lib/roomframe/backups/20260727T213916Z
 
-Vérifie les checksums, les métadonnées et la sûreté des archives, puis restaure
-le dump PostgreSQL dans un conteneur Docker isolé sans port ni accès réseau.
-La base RoomFrame installée n'est jamais modifiée.
+Vérifie les checksums, les métadonnées, le chiffrement et la sûreté des
+archives, puis restaure le dump PostgreSQL dans un conteneur Docker isolé sans
+port ni accès réseau. La base RoomFrame installée n'est jamais modifiée.
+
+Les sauvegardes historiques en clair (format 1) restent vérifiables. Les
+nouvelles sauvegardes (format 2) exigent l'identité age de l'instance ou une
+copie hors ligne fournie explicitement avec --identity.
 USAGE
 }
 
@@ -25,9 +31,20 @@ fail() {
   exit 1
 }
 
+remove_tree() {
+  local path="$1" allowed_parent="$2"
+  [[ -n "$path" && -d "$path" && ! -L "$path" ]] || return 0
+  [[ "$(dirname "$path")" == "$allowed_parent" ]] || return 1
+  find "$path" -xdev -depth -mindepth 1 -delete
+  rmdir "$path"
+}
+
 cleanup() {
   if [[ -n "$VERIFY_CONTAINER" ]]; then
     docker rm --force "$VERIFY_CONTAINER" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$MATERIALIZED" && -d "$MATERIALIZED" ]]; then
+    remove_tree "$MATERIALIZED" "$BACKUP_ROOT" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -39,6 +56,12 @@ while (($#)); do
         || fail "choisissez soit --latest, soit un répertoire explicite"
       USE_LATEST=1
       shift
+      ;;
+    --identity)
+      [[ $# -ge 2 && -z "$IDENTITY_OVERRIDE" ]] \
+        || fail "chemin d'identité manquant ou dupliqué"
+      IDENTITY_OVERRIDE="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -65,7 +88,9 @@ source "$RUNTIME_CONFIG"
 set +a
 
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
+CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 BACKUP_ROOT="$DATA_DIR/backups"
+IDENTITY_FILE="${IDENTITY_OVERRIDE:-${ROOMFRAME_BACKUP_IDENTITY_FILE:-$CONFIG_DIR/secrets/backup_age_identity}}"
 [[ -d "$BACKUP_ROOT" && ! -L "$BACKUP_ROOT" ]] \
   || fail "répertoire de sauvegardes invalide: $BACKUP_ROOT"
 
@@ -87,26 +112,105 @@ BACKUP_ROOT_REAL="$(realpath -e "$BACKUP_ROOT")"
 BACKUP_REAL="$(realpath -e "$BACKUP_DIRECTORY")"
 [[ "$(dirname "$BACKUP_REAL")" == "$BACKUP_ROOT_REAL" ]] \
   || fail "la sauvegarde doit être un enfant direct de $BACKUP_ROOT_REAL"
-[[ "$(basename "$BACKUP_REAL")" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
+BACKUP_ID="$(basename "$BACKUP_REAL")"
+[[ "$BACKUP_ID" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
   || fail "nom de sauvegarde invalide"
 
-EXPECTED_FILES=(
-  configuration.tar.gz
-  metadata.json
-  persistent-data.tar.gz
-  postgres.dump
-  SHA256SUMS
-)
-for filename in "${EXPECTED_FILES[@]}"; do
+for filename in metadata.json SHA256SUMS; do
   path="$BACKUP_REAL/$filename"
-  [[ -f "$path" && ! -L "$path" ]] || fail "fichier requis absent ou symbolique: $filename"
+  [[ -f "$path" && ! -L "$path" ]] \
+    || fail "fichier requis absent ou symbolique: $filename"
 done
+
+FORMAT_VERSION="$(
+  python3 - "$BACKUP_REAL/metadata.json" <<'PY'
+import datetime
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+metadata = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+common = {
+    "formatVersion",
+    "createdAt",
+    "softwareVersion",
+    "includesMedia",
+    "containsSensitiveConfiguration",
+    "postgresFormat",
+}
+version = metadata.get("formatVersion")
+if version == 1:
+    if set(metadata) != common:
+        raise SystemExit("clés metadata.json historiques invalides")
+elif version == 2:
+    if set(metadata) != common | {"backupClass", "encryption"}:
+        raise SystemExit("clés metadata.json chiffrées invalides")
+    if metadata["backupClass"] not in {
+        "manual",
+        "scheduled-daily",
+        "scheduled-weekly",
+    }:
+        raise SystemExit("classe de sauvegarde invalide")
+    encryption = metadata["encryption"]
+    if not isinstance(encryption, dict) or set(encryption) != {
+        "format",
+        "recipient",
+        "recipientSha256",
+    }:
+        raise SystemExit("métadonnées de chiffrement invalides")
+    recipient = encryption["recipient"]
+    if (
+        encryption["format"] != "age"
+        or not isinstance(recipient, str)
+        or not re.fullmatch(r"age1[0-9a-z]+", recipient)
+        or encryption["recipientSha256"]
+        != hashlib.sha256(recipient.encode()).hexdigest()
+    ):
+        raise SystemExit("destinataire age invalide")
+else:
+    raise SystemExit("format de sauvegarde incompatible")
+
+if metadata["postgresFormat"] != "custom":
+    raise SystemExit("format PostgreSQL incompatible")
+if not isinstance(metadata["softwareVersion"], str) or not metadata["softwareVersion"]:
+    raise SystemExit("version logicielle absente")
+if not isinstance(metadata["includesMedia"], bool):
+    raise SystemExit("indicateur includesMedia invalide")
+if metadata["containsSensitiveConfiguration"] is not True:
+    raise SystemExit("indicateur de sensibilité invalide")
+created_at = metadata["createdAt"]
+if not isinstance(created_at, str):
+    raise SystemExit("date de sauvegarde invalide")
+datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+print(version)
+PY
+)" || fail "métadonnées invalides"
+printf '%s\n' "[OK] Métadonnées"
+
+if [[ "$FORMAT_VERSION" == "1" ]]; then
+  EXPECTED_FILES=(
+    configuration.tar.gz
+    metadata.json
+    persistent-data.tar.gz
+    postgres.dump
+    SHA256SUMS
+  )
+else
+  EXPECTED_FILES=(
+    configuration.tar.gz.age
+    metadata.json
+    persistent-data.tar.gz.age
+    postgres.dump.age
+    SHA256SUMS
+  )
+fi
 
 unexpected="$(
   find "$BACKUP_REAL" -mindepth 1 -maxdepth 1 ! -type f -print -quit
 )"
 [[ -z "$unexpected" ]] || fail "entrée non régulière dans la sauvegarde"
-
 actual_files="$(
   find "$BACKUP_REAL" -mindepth 1 -maxdepth 1 -type f -exec basename {} \; | sort
 )"
@@ -123,21 +227,28 @@ for filename in "${EXPECTED_FILES[@]}"; do
     || fail "le fichier $filename doit être en mode 0600"
 done
 
-python3 - "$BACKUP_REAL/SHA256SUMS" <<'PY'
+python3 - "$BACKUP_REAL/SHA256SUMS" "$FORMAT_VERSION" <<'PY'
 import pathlib
 import re
 import sys
 
-path = pathlib.Path(sys.argv[1])
-expected = {
-    "./configuration.tar.gz",
-    "./metadata.json",
-    "./persistent-data.tar.gz",
-    "./postgres.dump",
-}
+if sys.argv[2] == "1":
+    expected = {
+        "./configuration.tar.gz",
+        "./metadata.json",
+        "./persistent-data.tar.gz",
+        "./postgres.dump",
+    }
+else:
+    expected = {
+        "./configuration.tar.gz.age",
+        "./metadata.json",
+        "./persistent-data.tar.gz.age",
+        "./postgres.dump.age",
+    }
 seen = set()
 pattern = re.compile(r"^([0-9a-f]{64})  (\./[A-Za-z0-9._-]+)$")
-for line in path.read_text(encoding="utf-8").splitlines():
+for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
     match = pattern.fullmatch(line)
     if not match:
         raise SystemExit("format SHA256SUMS invalide")
@@ -155,39 +266,61 @@ PY
 )
 printf '%s\n' "[OK] Checksums"
 
-python3 - "$BACKUP_REAL/metadata.json" <<'PY'
-import datetime
+PAYLOAD_ROOT="$BACKUP_REAL"
+if [[ "$FORMAT_VERSION" == "2" ]]; then
+  command -v age >/dev/null 2>&1 || fail "age est introuvable"
+  command -v age-keygen >/dev/null 2>&1 || fail "age-keygen est introuvable"
+  metadata_recipient="$(
+    python3 - "$BACKUP_REAL/metadata.json" <<'PY'
 import json
 import pathlib
 import sys
-
-path = pathlib.Path(sys.argv[1])
-metadata = json.loads(path.read_text(encoding="utf-8"))
-if set(metadata) != {
-    "formatVersion",
-    "createdAt",
-    "softwareVersion",
-    "includesMedia",
-    "containsSensitiveConfiguration",
-    "postgresFormat",
-}:
-    raise SystemExit("clés metadata.json invalides")
-if metadata["formatVersion"] != 1 or metadata["postgresFormat"] != "custom":
-    raise SystemExit("format de sauvegarde incompatible")
-if not isinstance(metadata["softwareVersion"], str) or not metadata["softwareVersion"]:
-    raise SystemExit("version logicielle absente")
-if not isinstance(metadata["includesMedia"], bool):
-    raise SystemExit("indicateur includesMedia invalide")
-if metadata["containsSensitiveConfiguration"] is not True:
-    raise SystemExit("indicateur de sensibilité invalide")
-created_at = metadata["createdAt"]
-if not isinstance(created_at, str):
-    raise SystemExit("date de sauvegarde invalide")
-datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["encryption"]["recipient"])
 PY
-printf '%s\n' "[OK] Métadonnées"
+  )"
+  metadata_recipient_sha="$(
+    python3 - "$BACKUP_REAL/metadata.json" <<'PY'
+import json
+import pathlib
+import sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text())["encryption"]["recipientSha256"])
+PY
+  )"
+  [[ "$metadata_recipient_sha" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "empreinte du destinataire age invalide"
+  if [[ -z "$IDENTITY_OVERRIDE" ]]; then
+    current_recipient=""
+    if [[ -f "$IDENTITY_FILE" && -s "$IDENTITY_FILE" && ! -L "$IDENTITY_FILE" ]]; then
+      current_recipient="$(age-keygen -y "$IDENTITY_FILE" 2>/dev/null || true)"
+    fi
+    if [[ "$current_recipient" != "$metadata_recipient" ]]; then
+      IDENTITY_FILE="$DATA_DIR/backup-keyring/$metadata_recipient_sha.agekey"
+    fi
+  fi
+  [[ -f "$IDENTITY_FILE" && -s "$IDENTITY_FILE" && ! -L "$IDENTITY_FILE" ]] \
+    || fail "identité age absente ou invalide: $IDENTITY_FILE"
+  identity_stat="$(stat -c '%a:%u' "$IDENTITY_FILE")"
+  [[ "$identity_stat" == "400:0" || "$identity_stat" == "600:0" ]] \
+    || fail "l'identité age doit appartenir à root et être en mode 0400 ou 0600"
+  identity_recipient="$(age-keygen -y "$IDENTITY_FILE" 2>/dev/null)"
+  [[ "$identity_recipient" == "$metadata_recipient" ]] \
+    || fail "l'identité age ne correspond pas à cette sauvegarde"
 
-python3 - "$BACKUP_REAL/configuration.tar.gz" "$BACKUP_REAL/persistent-data.tar.gz" <<'PY'
+  MATERIALIZED="$(mktemp -d "$BACKUP_ROOT/.verify-${BACKUP_ID}.XXXXXX")"
+  chmod 0700 "$MATERIALIZED"
+  for filename in configuration.tar.gz persistent-data.tar.gz postgres.dump; do
+    age --decrypt \
+      --identity "$IDENTITY_FILE" \
+      --output "$MATERIALIZED/$filename" \
+      "$BACKUP_REAL/$filename.age" \
+      >/dev/null
+    chmod 0600 "$MATERIALIZED/$filename"
+  done
+  PAYLOAD_ROOT="$MATERIALIZED"
+  printf '%s\n' "[OK] Chiffrement age authentifié"
+fi
+
+python3 - "$PAYLOAD_ROOT/configuration.tar.gz" "$PAYLOAD_ROOT/persistent-data.tar.gz" <<'PY'
 import pathlib
 import sys
 import tarfile
@@ -224,7 +357,7 @@ VERIFY_CONTAINER="roomframe-backup-verify-$$-$(date +%s)"
 docker run --detach \
   --name "$VERIFY_CONTAINER" \
   --network none \
-  --mount "type=bind,source=$BACKUP_REAL,target=/backup,readonly" \
+  --mount "type=bind,source=$PAYLOAD_ROOT,target=/backup,readonly" \
   --env POSTGRES_HOST_AUTH_METHOD=trust \
   --env POSTGRES_DB=roomframe_restore_test \
   --env POSTGRES_USER=roomframe \
@@ -236,7 +369,12 @@ docker run --detach \
 ready=0
 for _ in $(seq 1 40); do
   if docker exec "$VERIFY_CONTAINER" \
-    pg_isready --username=roomframe --dbname=roomframe_restore_test >/dev/null 2>&1; then
+    psql \
+      --username=roomframe \
+      --dbname=roomframe_restore_test \
+      --tuples-only \
+      --no-align \
+      --command 'SELECT 1' >/dev/null 2>&1; then
     ready=1
     break
   fi
@@ -286,6 +424,7 @@ printf '%s\n' "[OK] Dump restauré dans PostgreSQL isolé"
 
 cleanup
 VERIFY_CONTAINER=""
+MATERIALIZED=""
 trap - EXIT
 
 printf 'Sauvegarde restaurable vérifiée: %s\n' "$BACKUP_REAL"

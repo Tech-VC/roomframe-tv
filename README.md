@@ -152,8 +152,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   contenu consulté ni identifiant d’appareil personnel ;
 - accueil Android natif, cache atomique, synchronisation HTTPS, enrôlement et
   contrôle de l’APK avant `PackageInstaller` ;
-- diagnostic, sauvegarde cohérente avant migration et restauration complète
-  avec point de retour automatique.
+- diagnostic, sauvegarde `age` chiffrée avant migration, cycles quotidien et
+  hebdomadaire vérifiés, et restauration complète avec point de retour
+  automatique.
 
 ## Exploitation
 
@@ -165,6 +166,8 @@ sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup --without-media
+sudo roomframe-backup-key --export-identity \
+  /chemin/hors-ligne/roomframe-backup.agekey
 sudo roomframe-verify-backup --latest
 sudo roomframe-restore \
   /var/lib/roomframe/backups/20260101T120000Z \
@@ -179,7 +182,17 @@ sudo roomframe-trust-update-key --revoke --key-id release-main \
   --sha256 EMPREINTE_SHA256
 sudo roomframe-sync-server-ca
 sudo systemctl status roomframe-tv-certificate-broker.timer
+sudo systemctl status roomframe-backup-daily.timer
+sudo systemctl status roomframe-backup-weekly.timer
 ```
+
+Les nouvelles sauvegardes ne déposent jamais le dump, la configuration ou la
+PKI en clair : chaque payload est chiffré en flux vers l’identité `age`
+root-only de l’instance. L’identité doit être exportée une fois hors ligne pour
+permettre une reprise après perte totale du serveur. La planification conserve
+par défaut 14 sauvegardes quotidiennes sans médias et 4 sauvegardes
+hebdomadaires complètes ; elle ne supprime jamais un point manuel ou
+pré-migration.
 
 Les données sont séparées du code :
 
@@ -192,7 +205,8 @@ Les données sont séparées du code :
 /var/lib/roomframe/processing/      file de traitement
 /var/lib/roomframe/pki/             PKI locale, dont clés privées root-only
 /var/lib/roomframe/releases/        mises à jour vérifiées
-/var/lib/roomframe/backups/         sauvegardes
+/var/lib/roomframe/backups/         sauvegardes age chiffrées
+/var/lib/roomframe/backup-keyring/  anciennes identités de reprise root-only
 /var/lib/roomframe/seed/            expérience initiale figée
 ```
 
@@ -216,8 +230,10 @@ puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur d
 test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
 runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
 27 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 50 tests. Les workflows GitHub de
-validation et de release utilisent cette même commande. Les scénarios couvrent
+23 tests API, contrôle de syntaxe serveur inclus, soit 50 tests. Les workflows
+GitHub de validation et de release ajoutent deux scénarios root dédiés au
+chiffrement, à la rétention, au trousseau et à la restauration PostgreSQL
+isolée d’une sauvegarde. Les scénarios couvrent
 notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 WebAuthn avec signatures réelles, CSRF, les révisions, l’enrôlement TV, le seed
 unique, la récupération locale,

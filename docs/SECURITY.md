@@ -27,10 +27,13 @@ L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 - `postgres_runtime_password` ;
 - `bootstrap_token` ;
 - `session_secret` ;
-- `totp_encryption_key`.
+- `totp_encryption_key` ;
+- `backup_age_identity`.
 
 Le répertoire est `root:root` en mode `0700`. Les fichiers sont réguliers, non
-vides, `root:root` en mode `0444`. Sur l’hôte, aucun compte non-root ne peut les
+vides et `root:root`. Les secrets montés dans les conteneurs sont en mode
+`0444` ; l’identité age, jamais montée, est en mode `0400`. Sur l’hôte, aucun
+compte non-root ne peut les
 lire puisqu’il ne peut pas traverser le répertoire `0700`. Docker monte ensuite
 individuellement et en lecture seule uniquement les secrets autorisés pour
 chaque conteneur ; ce mode permet à l’API exécutée sans privilèges de lire son
@@ -338,17 +341,31 @@ pour rester compatible avec TLS 1.2 et TLS 1.3.
 
 ## Sauvegardes
 
-`roomframe-backup` produit un dump PostgreSQL et des archives avec
-`SHA256SUMS`. Une sauvegarde contient la configuration et la PKI : elle doit
-être protégée comme un secret, déplacée vers un stockage sûr et chiffrée selon
-la politique de l’organisation.
+`roomframe-backup` chiffre en flux avec `age` le dump PostgreSQL, l’archive de
+configuration/PKI et l’archive des données, puis lie les trois payloads et les
+métadonnées publiques par `SHA256SUMS`. Les nouveaux formats ne conservent donc
+aucune copie finale du dump, des secrets ou de la PKI en clair.
+
+L’identité X25519 est générée une seule fois, root-only en mode `0400`, hors du
+dépôt. Le trousseau local indexé par l’empreinte du destinataire conserve les
+identités antérieures sans les inclure dans les données restaurées. Il protège
+le point de retour lorsqu’une restauration remplace la configuration active.
+Il ne remplace pas la reprise après désastre : `roomframe-backup-key
+--export-identity` doit déposer une copie privée `0600` sur un support hors
+ligne contrôlé, sans jamais écraser une destination.
 
 `roomframe-verify-backup --latest`, exécutable uniquement par root, refuse les
-liens, entrées inattendues, permissions trop ouvertes, archives dangereuses et
-checksums invalides. Le dump est réellement restauré dans un conteneur
-PostgreSQL éphémère avec `--network none`. Un rôle runtime sans login y est
-créé uniquement pour restaurer les politiques RLS référencées par le dump ;
-aucune donnée de production n’est écrite ou remplacée.
+liens, entrées inattendues, permissions trop ouvertes, identité ne
+correspondant pas au destinataire, payload altéré, archive dangereuse et
+checksum invalide. Les fichiers sont déchiffrés dans un staging root-only
+éphémère. Le dump est réellement restauré dans un conteneur PostgreSQL avec
+`--network none`. Un rôle runtime sans login y est créé uniquement pour
+restaurer les politiques RLS référencées par le dump ; aucune donnée de
+production n’est écrite ou remplacée.
+
+Les timers quotidien et hebdomadaire ne prunent qu’après vérification réussie
+du nouveau point. La rétention est bornée par classe et ignore tout point
+manuel, pré-migration ou de sécurité.
 
 `roomframe-restore` partage le verrou de maintenance avec l’installateur et les
 sauvegardes. Il exige un enfant direct du répertoire de sauvegardes et une

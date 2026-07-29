@@ -84,6 +84,13 @@ TV ── ticket chiffré sans secret sortant ───────────�
 - code, configuration, secrets, PKI, base, médias, releases et sauvegardes sont
   séparés.
 
+Les nouveaux points de sauvegarde chiffrent en flux trois payloads `age` :
+PostgreSQL, configuration/PKI et données. L’identité X25519 active reste sous
+`/etc/roomframe/secrets` en mode `0400`. Son empreinte indexe aussi une copie
+dans `/var/lib/roomframe/backup-keyring`, trousseau root-only volontairement
+exclu des données restaurées. Un retour vers une ancienne configuration ne
+rend donc pas le point de sécurité récent illisible.
+
 Les modèles persistants couvrent l’instance, les
 rôles/utilisateurs/sessions/passkeys, défis WebAuthn et invitations
 administrateur à usage unique,

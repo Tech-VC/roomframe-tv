@@ -1,0 +1,22 @@
+[Unit]
+Description=RoomFrame encrypted weekly full backup
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/roomframe-backup --scheduled weekly
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

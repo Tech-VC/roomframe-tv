@@ -5,9 +5,11 @@ CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 RUNTIME_CONFIG="${ROOMFRAME_RUNTIME_CONFIG:-$CONFIG_DIR/runtime.conf}"
 BACKUP_DIRECTORY=""
 CONFIRMATION=""
+IDENTITY_OVERRIDE=""
 CONFIG_STAGE=""
 DATA_STAGE=""
 DATA_ROLLBACK=""
+RESTORE_MATERIALIZED=""
 SAFETY_BACKUP=""
 RESTORE_ID=""
 DATABASE_TEMP=""
@@ -22,7 +24,8 @@ usage() {
 Usage:
   sudo roomframe-restore \
     /var/lib/roomframe/backups/20260101T120000Z \
-    --confirm 20260101T120000Z
+    --confirm 20260101T120000Z \
+    [--identity /chemin/identite.agekey]
 
 Restaure une sauvegarde complète explicitement désignée. La commande :
   1. vérifie la sauvegarde dans un PostgreSQL isolé ;
@@ -82,6 +85,9 @@ cleanup_staging() {
   fi
   if [[ -n "$DATA_ROLLBACK" ]]; then
     remove_tree "$DATA_ROLLBACK" "$data_parent" 2>/dev/null || true
+  fi
+  if [[ -n "$RESTORE_MATERIALIZED" ]]; then
+    remove_tree "$RESTORE_MATERIALIZED" "$data_parent" 2>/dev/null || true
   fi
 }
 
@@ -248,6 +254,14 @@ while (($#)); do
       CONFIRMATION="$2"
       shift 2
       ;;
+    --identity)
+      [[ $# -ge 2 && -z "$IDENTITY_OVERRIDE" ]] || {
+        printf '%s\n' "Chemin d'identité manquant ou dupliqué." >&2
+        exit 2
+      }
+      IDENTITY_OVERRIDE="$2"
+      shift 2
+      ;;
     --latest)
       printf '%s\n' "--latest est volontairement interdit pour une restauration." >&2
       exit 2
@@ -285,11 +299,13 @@ source "$RUNTIME_CONFIG"
 set +a
 
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
+CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 INSTALL_DIR="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}"
 COMPOSE_COMMAND="${ROOMFRAME_COMPOSE_COMMAND:-$INSTALL_DIR/scripts/roomframe-compose.sh}"
 BACKUP_COMMAND="${ROOMFRAME_BACKUP_COMMAND:-$INSTALL_DIR/scripts/roomframe-backup.sh}"
 VERIFY_COMMAND="${ROOMFRAME_VERIFY_BACKUP_COMMAND:-$INSTALL_DIR/scripts/roomframe-verify-backup.sh}"
 BACKUP_ROOT="$DATA_DIR/backups"
+IDENTITY_FILE="${IDENTITY_OVERRIDE:-${ROOMFRAME_BACKUP_IDENTITY_FILE:-$CONFIG_DIR/secrets/backup_age_identity}}"
 
 validate_managed_path ROOMFRAME_CONFIG_DIR "$CONFIG_DIR"
 validate_managed_path ROOMFRAME_DATA_DIR "$DATA_DIR"
@@ -317,8 +333,68 @@ RESTORE_ID="$(basename "$BACKUP_REAL")"
 [[ "$CONFIRMATION" == "$RESTORE_ID" ]] \
   || fail "--confirm doit reprendre exactement l'identifiant $RESTORE_ID"
 
+INCOMING_FORMAT="$(
+  python3 - "$BACKUP_REAL/metadata.json" <<'PY'
+import json
+import pathlib
+import sys
+metadata = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(metadata.get("formatVersion", ""))
+if metadata.get("formatVersion") == 2:
+    print(metadata.get("encryption", {}).get("recipient", ""))
+    print(metadata.get("encryption", {}).get("recipientSha256", ""))
+PY
+)"
+if [[ "$(sed -n '1p' <<<"$INCOMING_FORMAT")" == "2" && -z "$IDENTITY_OVERRIDE" ]]; then
+  command -v age-keygen >/dev/null 2>&1 || fail "age-keygen est introuvable"
+  incoming_recipient="$(sed -n '2p' <<<"$INCOMING_FORMAT")"
+  incoming_recipient_sha="$(sed -n '3p' <<<"$INCOMING_FORMAT")"
+  [[
+    "$incoming_recipient" =~ ^age1[0-9a-z]+$
+    && "$incoming_recipient_sha" =~ ^[0-9a-f]{64}$
+  ]] || fail "métadonnées age invalides"
+  current_recipient=""
+  if [[ -f "$IDENTITY_FILE" && -s "$IDENTITY_FILE" && ! -L "$IDENTITY_FILE" ]]; then
+    current_recipient="$(age-keygen -y "$IDENTITY_FILE" 2>/dev/null || true)"
+  fi
+  if [[ "$current_recipient" != "$incoming_recipient" ]]; then
+    IDENTITY_FILE="$DATA_DIR/backup-keyring/$incoming_recipient_sha.agekey"
+  fi
+fi
+
 printf '%s\n' "Vérification isolée de la sauvegarde $RESTORE_ID…"
-"$VERIFY_COMMAND" "$BACKUP_REAL"
+"$VERIFY_COMMAND" "$BACKUP_REAL" --identity "$IDENTITY_FILE"
+
+BACKUP_CONTENT="$BACKUP_REAL"
+FORMAT_VERSION="$(
+  python3 - "$BACKUP_REAL/metadata.json" <<'PY'
+import json
+import pathlib
+import sys
+print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["formatVersion"])
+PY
+)"
+if [[ "$FORMAT_VERSION" == "2" ]]; then
+  command -v age >/dev/null 2>&1 || fail "age est introuvable"
+  [[ -f "$IDENTITY_FILE" && -s "$IDENTITY_FILE" && ! -L "$IDENTITY_FILE" ]] \
+    || fail "identité age absente ou invalide"
+  identity_stat="$(stat -c '%a:%u' "$IDENTITY_FILE")"
+  [[ "$identity_stat" == "400:0" || "$identity_stat" == "600:0" ]] \
+    || fail "l'identité age doit appartenir à root et être en mode 0400 ou 0600"
+  RESTORE_MATERIALIZED="$(mktemp -d "$DATA_DIR/.restore-materialized.XXXXXX")"
+  chmod 0700 "$RESTORE_MATERIALIZED"
+  for filename in configuration.tar.gz persistent-data.tar.gz postgres.dump; do
+    age --decrypt \
+      --identity "$IDENTITY_FILE" \
+      --output "$RESTORE_MATERIALIZED/$filename" \
+      "$BACKUP_REAL/$filename.age" \
+      >/dev/null
+    chmod 0600 "$RESTORE_MATERIALIZED/$filename"
+  done
+  BACKUP_CONTENT="$RESTORE_MATERIALIZED"
+elif [[ "$FORMAT_VERSION" != "1" ]]; then
+  fail "format de sauvegarde incompatible"
+fi
 
 CURRENT_VERSION="${ROOMFRAME_VERSION:-unknown}"
 python3 - "$BACKUP_REAL/metadata.json" "$CURRENT_VERSION" <<'PY'
@@ -344,8 +420,8 @@ DATA_ROLLBACK="$(mktemp -d "$DATA_DIR/.restore-rollback.XXXXXX")"
 chmod 0700 "$CONFIG_STAGE" "$DATA_STAGE" "$DATA_ROLLBACK"
 
 python3 - \
-  "$BACKUP_REAL/configuration.tar.gz" \
-  "$BACKUP_REAL/persistent-data.tar.gz" \
+  "$BACKUP_CONTENT/configuration.tar.gz" \
+  "$BACKUP_CONTENT/persistent-data.tar.gz" \
   "$CONFIG_BASENAME" <<'PY'
 import pathlib
 import sys
@@ -388,9 +464,9 @@ if "media" not in seen_data_roots:
     raise SystemExit("répertoire media absent de la sauvegarde complète")
 PY
 
-tar --no-same-owner -xzf "$BACKUP_REAL/configuration.tar.gz" -C "$CONFIG_STAGE"
+tar --no-same-owner -xzf "$BACKUP_CONTENT/configuration.tar.gz" -C "$CONFIG_STAGE"
 mkdir -p "$DATA_STAGE/candidate"
-tar --no-same-owner -xzf "$BACKUP_REAL/persistent-data.tar.gz" -C "$DATA_STAGE/candidate"
+tar --no-same-owner -xzf "$BACKUP_CONTENT/persistent-data.tar.gz" -C "$DATA_STAGE/candidate"
 
 RESTORED_CONFIG="$CONFIG_STAGE/$CONFIG_BASENAME"
 [[ -d "$RESTORED_CONFIG" && ! -L "$RESTORED_CONFIG" ]] \
@@ -438,7 +514,11 @@ backup_output="$(
 )"
 printf '%s\n' "$backup_output"
 SAFETY_BACKUP="$(
-  sed -n 's/^Sauvegarde terminée: //p' <<<"$backup_output" | tail -n 1
+  sed -n \
+    -e 's/^ROOMFRAME_BACKUP_PATH=//p' \
+    -e 's/^Sauvegarde chiffrée terminée: //p' \
+    -e 's/^Sauvegarde terminée: //p' \
+    <<<"$backup_output" | tail -n 1
 )"
 [[ -n "$SAFETY_BACKUP" && -d "$SAFETY_BACKUP" ]] \
   || fail "la sauvegarde de sécurité n'a pas produit de chemin exploitable"
@@ -490,7 +570,7 @@ wait_for_postgres || fail "PostgreSQL n'est pas devenu disponible"
     --no-privileges \
     --username=roomframe \
     --dbname="$DATABASE_TEMP" \
-    <"$BACKUP_REAL/postgres.dump" >/dev/null
+    <"$BACKUP_CONTENT/postgres.dump" >/dev/null
 
 database_check="$(
   "$COMPOSE_COMMAND" exec -T postgres \

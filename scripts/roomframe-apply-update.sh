@@ -486,7 +486,11 @@ backup_output="$(
 )"
 printf '%s\n' "$backup_output"
 SAFETY_BACKUP="$(
-  sed -n 's/^Sauvegarde terminée: //p' <<<"$backup_output" | tail -n 1
+  sed -n \
+    -e 's/^ROOMFRAME_BACKUP_PATH=//p' \
+    -e 's/^Sauvegarde chiffrée terminée: //p' \
+    -e 's/^Sauvegarde terminée: //p' \
+    <<<"$backup_output" | tail -n 1
 )"
 [[ -n "$SAFETY_BACKUP" && -d "$SAFETY_BACKUP" ]] \
   || fail "la sauvegarde de sécurité n'a pas produit de chemin exploitable"

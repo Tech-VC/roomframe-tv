@@ -42,13 +42,42 @@ else
   bad "protection du répertoire de secrets: ${secrets_directory_mode:-absente} ${secrets_directory_owner:-inconnue}, attendu 700 0:0"
 fi
 
-for directory in app postgres media processing releases backups pki caddy caddy-config seed; do
+for directory in app postgres media processing releases backups backup-keyring pki caddy caddy-config seed; do
   if [[ -d "$DATA_DIR/$directory" ]]; then
     ok "volume persistant $directory"
   else
     bad "volume persistant manquant: $DATA_DIR/$directory"
   fi
 done
+
+backup_identity="$CONFIG_DIR/secrets/backup_age_identity"
+if [[
+  -f "$backup_identity"
+  && -s "$backup_identity"
+  && ! -L "$backup_identity"
+  && "$(stat -c '%a:%u:%g' "$backup_identity" 2>/dev/null)" == "400:0:0"
+]] && command -v age-keygen >/dev/null 2>&1 \
+  && age-keygen -y "$backup_identity" 2>/dev/null | grep -Eq '^age1[0-9a-z]+$'; then
+  ok "identité de sauvegarde age root-only et lisible"
+  backup_recipient="$(age-keygen -y "$backup_identity" 2>/dev/null)"
+  backup_recipient_sha="$(
+    printf '%s' "$backup_recipient" | sha256sum | awk '{print $1}'
+  )"
+  keyring_identity="$DATA_DIR/backup-keyring/$backup_recipient_sha.agekey"
+  if [[
+    -f "$keyring_identity"
+    && -s "$keyring_identity"
+    && ! -L "$keyring_identity"
+    && "$(stat -c '%a:%u:%g' "$keyring_identity" 2>/dev/null)" == "400:0:0"
+    && "$(age-keygen -y "$keyring_identity" 2>/dev/null)" == "$backup_recipient"
+  ]]; then
+    ok "identité active conservée dans le trousseau de reprise"
+  else
+    bad "copie de l'identité active absente du trousseau de reprise"
+  fi
+else
+  bad "identité de sauvegarde age absente, incohérente ou mal protégée"
+fi
 
 for secret_name in postgres_password postgres_migrator_password postgres_runtime_password \
   bootstrap_token session_secret totp_encryption_key; do
@@ -178,6 +207,14 @@ if [[ -d /run/systemd/system ]]; then
   else
     bad "timer du courtier de certificats TV inactif"
   fi
+  for backup_timer in roomframe-backup-daily.timer roomframe-backup-weekly.timer; do
+    if systemctl is-enabled "$backup_timer" >/dev/null 2>&1 \
+      && systemctl is-active "$backup_timer" >/dev/null 2>&1; then
+      ok "timer de sauvegarde actif: $backup_timer"
+    else
+      bad "timer de sauvegarde inactif: $backup_timer"
+    fi
+  done
 fi
 
 if [[ -n "${ROOMFRAME_PRIMARY_HOST:-}" && -n "${ROOMFRAME_PUBLIC_URL:-}" ]]; then

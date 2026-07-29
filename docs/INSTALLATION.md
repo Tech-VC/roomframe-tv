@@ -137,7 +137,8 @@ créé avant l’ajout de cette politique.
 /var/lib/roomframe/pki/tv-client-ca/ CA cliente TV persistante root-only
 /var/lib/roomframe/pki/server-ca/    copie publique CA HTTPS pour appairage TV
 /var/lib/roomframe/releases/        mises à jour vérifiées
-/var/lib/roomframe/backups/         sauvegardes
+/var/lib/roomframe/backups/         sauvegardes age chiffrées
+/var/lib/roomframe/backup-keyring/  anciennes identités de reprise root-only
 /var/lib/roomframe/pki/             confiance et clés publiques
 /var/lib/roomframe/caddy/           données et autorité HTTPS locale
 /var/lib/roomframe/caddy-config/    état Caddy
@@ -145,7 +146,8 @@ créé avant l’ajout de cette politique.
 ```
 
 Les secrets PostgreSQL administrateur, migrateur et runtime, ainsi que les
-secrets bootstrap, session et chiffrement TOTP, sont créés uniquement
+secrets bootstrap, session, chiffrement TOTP et l’identité de sauvegarde, sont
+créés uniquement
 lorsqu’ils sont absents. Une seconde exécution conserve les fichiers existants ;
 aucun secret n’est régénéré silencieusement. Une installation antérieure reçoit
 les deux nouveaux secrets PostgreSQL sans modifier son secret administrateur.
@@ -200,9 +202,10 @@ le conteneur API.
 
 Le seed est copié seulement si son répertoire est vide. L’API l’applique dans
 la base seulement lorsqu’aucune instance n’existe. Si PostgreSQL contient déjà
-des données, `install.sh` exige la commande de sauvegarde de l’installation
-existante et réalise une sauvegarde complète avant la recopie du code. Une
-mise à jour sans sauvegarde exploitable est refusée.
+des données, `install.sh` exige les commandes de sauvegarde et de vérification
+de l’installation existante. Il réalise une sauvegarde complète puis restaure
+son dump dans un PostgreSQL isolé avant la recopie du code. Une mise à jour
+sans point de retour réellement vérifié est refusée.
 
 La copie de code est additive : elle remplace les fichiers livrés, sans
 supprimer un fichier présent uniquement dans `/opt/roomframe`. Cette stratégie
@@ -234,6 +237,9 @@ sudo roomframe-compose ps
 sudo roomframe-compose logs --tail=200 api worker update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
+sudo roomframe-backup-key --show-recipient
+sudo roomframe-backup-key --export-identity \
+  /chemin/hors-ligne/roomframe-backup.agekey
 sudo roomframe-verify-backup --latest
 sudo roomframe-restore \
   /var/lib/roomframe/backups/20260101T120000Z \
@@ -243,6 +249,8 @@ sudo roomframe-apply-update \
   --confirm 0.3.1
 sudo systemctl status roomframe-update-broker.timer
 sudo systemctl status roomframe-tv-certificate-broker.timer
+sudo systemctl status roomframe-backup-daily.timer
+sudo systemctl status roomframe-backup-weekly.timer
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -256,22 +264,52 @@ Compose charge uniquement `/etc/roomframe/runtime.conf` et monte les secrets
 comme fichiers Docker sous `/run/secrets`.
 
 Une sauvegarde met brièvement Caddy, l’API, le worker et le poller d’updates en
-pause, produit un dump PostgreSQL au format custom, archive la configuration et
-les données persistantes, puis écrit les SHA-256. Pour exclure les médias
-volumineux :
+pause. Le dump PostgreSQL au format custom, la configuration/PKI et les données
+persistantes sont envoyés directement dans `age` : aucune copie finale de ces
+payloads n’est déposée en clair. Le répertoire contient les trois fichiers
+`.age`, des métadonnées publiques bornées et leurs SHA-256. Pour exclure les
+médias volumineux :
 
 ```bash
 sudo roomframe-backup --without-media
 ```
 
-Une sauvegarde contient de la configuration sensible et de la PKI. Elle reste
-root-only et doit être déplacée vers un stockage protégé.
+L’identité X25519 est générée une fois dans
+`/etc/roomframe/secrets/backup_age_identity`, en mode `0400`, et n’est jamais
+régénérée silencieusement. Sa clé publique peut être affichée sans risque.
+Pour permettre une reprise après perte totale du CT, exporter une fois
+l’identité privée vers un support hors ligne :
+
+```bash
+sudo roomframe-backup-key --export-identity \
+  /media/support-hors-ligne/roomframe-backup.agekey
+```
+
+La commande refuse d’écraser un fichier existant. Cette copie privée doit
+rester en mode `0600`, hors dépôt et hors stockage public. Un trousseau local
+root-only conserve aussi les anciennes identités quand une restauration
+remplace la configuration ; il est exclu des données restaurées afin que le
+point de retour créé juste avant la bascule reste déchiffrable.
+
+Deux timers sont activés par l’installation :
+
+- chaque nuit, une sauvegarde chiffrée sans médias, vérifiée puis conservée
+  parmi les 14 plus récentes ;
+- chaque dimanche, une sauvegarde chiffrée complète, vérifiée puis conservée
+  parmi les 4 plus récentes.
+
+Les limites `ROOMFRAME_BACKUP_DAILY_KEEP` (2 à 90) et
+`ROOMFRAME_BACKUP_WEEKLY_KEEP` (2 à 26) vivent dans `runtime.conf`. La
+rétention ne considère que sa propre classe planifiée et ne supprime jamais
+une sauvegarde manuelle, pré-migration ou de sécurité.
 
 `roomframe-verify-backup --latest` vérifie ensuite la liste et les permissions
-des fichiers, les SHA-256, les métadonnées, la sûreté des archives et restaure
-le dump dans un PostgreSQL 17 temporaire sans réseau ni port publié. Cette
-validation ne modifie jamais la base installée. Un chemin explicite vers un
-enfant direct de `/var/lib/roomframe/backups` peut remplacer `--latest`.
+des fichiers, les SHA-256, l’identité `age`, le déchiffrement authentifié, les
+métadonnées et la sûreté des archives, puis restaure le dump dans un PostgreSQL
+17 temporaire sans réseau ni port publié. Les fichiers déchiffrés vivent dans
+un staging root-only supprimé à la fin. Cette validation ne modifie jamais la
+base installée. Un chemin explicite vers un enfant direct de
+`/var/lib/roomframe/backups` peut remplacer `--latest`.
 
 ## Restauration complète
 
@@ -283,6 +321,15 @@ backup_id=20260101T120000Z
 sudo roomframe-restore \
   "/var/lib/roomframe/backups/$backup_id" \
   --confirm "$backup_id"
+```
+
+Après perte du serveur, une identité exportée peut être fournie explicitement :
+
+```bash
+sudo roomframe-restore \
+  "/var/lib/roomframe/backups/$backup_id" \
+  --confirm "$backup_id" \
+  --identity /media/support-hors-ligne/roomframe-backup.agekey
 ```
 
 Avant d’arrêter la pile, la commande vérifie la sauvegarde dans un PostgreSQL
