@@ -253,7 +253,8 @@ Le launcher compile un accueil natif sans WebView et contient :
   bascule les pointeurs atomiquement et conserve la révision précédente ;
 - `HttpExperienceSyncClient`, le parseur strict des documents et le renderer
   logique 1920 × 1080 ;
-- l’enrôlement HTTPS et le stockage chiffré de la clé TV dans Android Keystore ;
+- l’enrôlement HTTPS, la clé TLS RSA non exportable, le certificat client
+  individuel et le stockage chiffré de la clé TV dans Android Keystore ;
 - `HttpAppUpdateCoordinator`, le contrôle de l’APK et l’adaptateur
   `PackageInstaller` conditionné à Device Owner ;
 - les contrats HDMI, Cast, AirPlay et puissance ;
@@ -265,13 +266,13 @@ dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
 client HTTPS, de la distribution APK et des métriques techniques minimales est
 maintenant codée et testée hors matériel. Le provisionnement Device Owner,
-l’installation silencieuse réelle, la rotation 0.3.2 et la PKI individuelle
-restent à valider.
+l’installation silencieuse réelle, la rotation et le mTLS 0.3.3 restent à
+valider sur la TV.
 Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
 peut être déduit des adaptateurs `unsupported` ou des tests JVM.
 
-La candidate courante est `0.3.2` / `versionCode 5`. Elle inclut le cache,
-la synchronisation, la distribution APK et la rotation de credential ; elle
+La candidate courante est `0.3.3` / `versionCode 6`. Elle inclut le cache,
+la synchronisation, la distribution APK, la rotation de credential et le mTLS ; elle
 n’est pas considérée installée tant que la TV n’a pas été reconnectée et
 contrôlée. La candidate intermédiaire `0.3.1` / code 4 a seulement été
 construite hors matériel.

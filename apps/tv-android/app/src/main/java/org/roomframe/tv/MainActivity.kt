@@ -32,6 +32,8 @@ import org.roomframe.tv.sync.HttpExperienceSyncClient
 import org.roomframe.tv.sync.HttpTvMetricsClient
 import org.roomframe.tv.sync.SyncResult
 import org.roomframe.tv.sync.TvCredentialRotationClient
+import org.roomframe.tv.sync.TvCertificateProvisioningClient
+import org.roomframe.tv.sync.TvCertificateProvisioningResult
 import org.roomframe.tv.sync.TvMetricSnapshot
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
@@ -116,6 +118,20 @@ class MainActivity : Activity() {
             var reportedRevision = revisionNumber(activeRevisionId)
             var syncErrorCode: String? = null
             try {
+                recordCertificateState(
+                    when (
+                        val certificate = TvCertificateProvisioningClient()
+                            .synchronize(credentials)
+                    ) {
+                        TvCertificateProvisioningResult.NotRequested -> "legacy"
+                        is TvCertificateProvisioningResult.Pending ->
+                            "pending:${certificate.status}"
+                        is TvCertificateProvisioningResult.Active ->
+                            "active:${certificate.fingerprintSha256.take(12)}"
+                        is TvCertificateProvisioningResult.Failed ->
+                            "failed:${certificate.reason}"
+                    },
+                )
                 when (
                     val result = HttpExperienceSyncClient(
                         credentials = credentials,
@@ -216,6 +232,13 @@ class MainActivity : Activity() {
         getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
             .edit()
             .putString("last_credential_rotation", value.take(180))
+            .apply()
+    }
+
+    private fun recordCertificateState(value: String) {
+        getSharedPreferences("roomframe-runtime", MODE_PRIVATE)
+            .edit()
+            .putString("last_certificate_state", value.take(180))
             .apply()
     }
 

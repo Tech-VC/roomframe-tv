@@ -36,6 +36,11 @@ Caddy présente le certificat de cette IPv4 comme certificat SNI par défaut :
 l’URL de secours fonctionne aussi avec les clients TLS qui n’envoient pas de
 nom de serveur pour une adresse IP.
 
+La même origine accepte les navigateurs sans certificat client et vérifie les
+certificats individuels lorsqu’une TV en présente un. L’API les rend
+obligatoires uniquement après leur activation pour l’identité TV concernée ;
+aucun second port ou hôte mTLS n’est nécessaire.
+
 ## Cas particulier de `.local`
 
 `.local` est réservé à mDNS dans de nombreux clients, alors que certains

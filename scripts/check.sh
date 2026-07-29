@@ -93,6 +93,34 @@ grep -Fqx 'ProtectHome=true' "$broker_unit" || {
   exit 1
 }
 
+tv_certificate_broker_help="$(bash scripts/roomframe-tv-certificate-broker.sh --help)"
+grep -Fq "L'API n'accède jamais à la clé privée" <<<"$tv_certificate_broker_help" || {
+  echo "Le courtier de certificats doit documenter sa frontière root/API." >&2
+  exit 1
+}
+grep -Fq 'mode verify_if_given' infra/Caddyfile || {
+  echo "Caddy doit vérifier les certificats TV présentés sans bloquer l'administration." >&2
+  exit 1
+}
+grep -Fq 'header_up -X-RoomFrame-TLS-Client-Fingerprint' infra/Caddyfile || {
+  echo "Caddy doit supprimer toute empreinte TLS fournie par le client." >&2
+  exit 1
+}
+grep -Fq 'header_up X-RoomFrame-TLS-Client-Fingerprint {tls_client_fingerprint}' \
+  infra/Caddyfile || {
+  echo "Caddy doit transmettre uniquement l'empreinte TLS qu'il a vérifiée." >&2
+  exit 1
+}
+if rg --fixed-strings --line-number \
+  'tv-client-ca/private' compose.yaml services/api infra/Caddyfile; then
+  echo "La clé privée de la CA TV ne doit être montée dans aucun conteneur." >&2
+  exit 1
+fi
+grep -Fq 'tvCertificateProofPayload' services/api/src/studio-routes.mjs || {
+  echo "La preuve de possession de la clé privée TV est absente." >&2
+  exit 1
+}
+
 while IFS= read -r -d '' document; do
   python3 -m json.tool "$document" >/dev/null
 done < <(find contracts defaults examples -type f -name '*.json' -print0)

@@ -9,7 +9,15 @@
 }
 
 __ROOMFRAME_SITE_ADDRESSES__ {
-  tls internal
+  tls internal {
+    # L'administration partage cette origine avec les TV. Le certificat client
+    # est donc vérifié lorsqu'il est présenté, puis exigé par l'API uniquement
+    # pour les identités TV qui ont terminé leur activation.
+    client_auth {
+      mode verify_if_given
+      trust_pool file /etc/roomframe/tv-client-ca.crt
+    }
+  }
   encode zstd gzip
 
   header {
@@ -25,12 +33,22 @@ __ROOMFRAME_SITE_ADDRESSES__ {
   }
 
   handle /health {
-    reverse_proxy api:8080
+    reverse_proxy api:8080 {
+      header_up -X-RoomFrame-TLS-Client-Fingerprint
+      header_up -X-RoomFrame-TLS-Client-Verified
+    }
   }
 
   redir /api /api/ 308
   handle /api/* {
-    reverse_proxy api:8080
+    reverse_proxy api:8080 {
+      # Les valeurs reçues du LAN sont toujours supprimées. Seul Caddy peut
+      # attester qu'un certificat a passé la validation de la CA locale.
+      header_up -X-RoomFrame-TLS-Client-Fingerprint
+      header_up -X-RoomFrame-TLS-Client-Verified
+      header_up X-RoomFrame-TLS-Client-Fingerprint {tls_client_fingerprint}
+      header_up X-RoomFrame-TLS-Client-Verified 1
+    }
   }
 
   redir /simulator /simulator/ 308

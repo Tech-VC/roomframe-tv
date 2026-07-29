@@ -12,8 +12,9 @@
 - collecte de télémétrie technique limitée, sans contenu vu ni appareil
   personnel.
 
-WebAuthn, les certificats individuels TV et le mTLS font partie de
-l’architecture cible, mais ne sont pas encore implémentés dans ce jalon.
+WebAuthn et la découverte locale authentifiée restent des étapes à venir. Les
+certificats individuels TV et le mTLS sont implémentés ; leur fonctionnement
+avec le firmware Philips reste à observer sur le matériel réel.
 
 ## Secrets de l’instance
 
@@ -133,6 +134,31 @@ Les téléchargements d’une TV sont limités aux assets de sa scène. Les
 métriques et événements acceptent des champs et types fermés, des tailles
 bornées et une rétention de 90 jours par défaut.
 
+Lors de l’enrôlement, l’APK génère une clé RSA 2048 bits dans Android Keystore.
+La clé privée n’est pas exportable. La TV envoie seulement sa clé publique SPKI
+et une signature de la clé d’enrôlement et de son UUID. L’API vérifie cette
+preuve de possession puis crée une demande en base.
+
+Le courtier `roomframe-tv-certificate-broker` est un processus systemd root
+sans port entrant. Il prend une demande à la fois, utilise la CA persistante
+sous `/var/lib/roomframe/pki/tv-client-ca/`, émet un certificat de 90 jours
+avec EKU `clientAuth` et SAN `urn:roomframe:tv:<UUID>`, puis remet uniquement
+le certificat public à PostgreSQL. La clé privée de la CA n’est montée dans
+aucun conteneur. L’API, le worker et Caddy ne peuvent pas la lire.
+
+Caddy utilise `verify_if_given` car le navigateur d’administration et les TV
+partagent volontairement la même origine TLS. Il supprime tout en-tête
+d’empreinte reçu du LAN et transmet seulement l’empreinte SHA-256 d’un
+certificat réellement vérifié contre la CA TV. L’API exige ensuite que cette
+empreinte appartienne à l’UUID et à la clé rotative présentés. Après activation
+par la TV, une requête sans le certificat individuel est refusée.
+
+Le renouvellement commence 30 jours avant l’expiration et conserve l’ancien
+certificat actif jusqu’à la confirmation du nouveau. La révocation
+administrative invalide l’identité dans l’API même si le certificat peut
+encore terminer une négociation TLS avec la CA : aucune autorisation ni donnée
+TV n’est accordée après ce handshake.
+
 Les programmations de scènes n’acceptent qu’un UUID de scène déjà publiée, une
 cible existante et des timestamps ISO bornés. Elles n’embarquent ni commande,
 ni HTML, ni script. Les cibles groupe/TV exigent `fleet:write` en plus de
@@ -142,9 +168,10 @@ statut fermé de la programmation et la révision de synchronisation.
 
 Limites avant production :
 
-- pas encore de certificat client individuel ni mTLS ;
 - découverte locale authentifiée non implémentée ;
-- gestion du renouvellement PKI à ajouter.
+- activation Android Keystore/mTLS non encore observée sur la Philips ;
+- pas encore de CRL distribuée à Caddy ; la révocation est autoritative dans
+  l’API après la validation cryptographique du handshake.
 
 Les clés bearer actuelles ont néanmoins un cycle complet : génération locale
 aléatoire, stockage chiffré Android, rotation automatique tous les 30 jours,
@@ -187,11 +214,10 @@ Compose. L’image API est construite depuis une image Node elle aussi verrouill
 par digest et des dépendances npm issues du lockfile. Un changement amont ne
 peut donc pas remplacer silencieusement ces bases sous le même tag.
 
-Dans `0.3.0`, le rôle PostgreSQL `roomframe` créé par l’image assure aussi les
-migrations. La base n’est pas exposée au LAN, mais la séparation
-propriétaire/migrateur/runtime reste un durcissement nécessaire. Les
-migrations automatiques au démarrage doivent rester précédées de la sauvegarde
-effectuée par l’installateur lors d’une mise à niveau existante.
+Le rôle PostgreSQL historique `roomframe` reste limité aux opérations locales
+root et à l’initialisation du cluster. Les migrations applicatives utilisent
+désormais exclusivement le rôle one-shot `roomframe_migrator`, après la
+sauvegarde effectuée par l’installateur lors d’une mise à niveau existante.
 
 ## Médias et updates
 
@@ -243,8 +269,9 @@ non exportable de l’Android Keystore. L’origine HTTPS, l’identifiant de la
 et le rôle actif/en attente sont liés comme données authentifiées. Le lecteur
 reste compatible avec les credentials 0.3.0/0.3.1, puis les réécrit dans la
 nouvelle enveloppe lors de la première rotation. Cette protection locale et la
-rotation ne remplacent pas encore les certificats individuels et le mTLS
-prévus avant production.
+rotation sont complétées par une seconde clé RSA non exportable, distincte de
+l’enveloppe AES. Elle porte le certificat mTLS et autorise PKCS#1 et RSA-PSS
+pour rester compatible avec TLS 1.2 et TLS 1.3.
 
 ## Sauvegardes
 

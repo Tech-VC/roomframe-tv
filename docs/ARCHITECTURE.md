@@ -42,6 +42,12 @@ Administration ── demande SQL sans privilège ── PostgreSQL
 Timer systemd root ── courtier local ───────────┘
        │
        └── revalidation Ed25519 + sauvegarde + bascule du code
+
+TV ── clé publique + preuve ── API ── demande SQL
+                                     │
+Courtier certificat root ────────────┘
+       │
+       └── CA root-only ── certificat public individuel ── TV/mTLS
 ```
 
 - Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
@@ -77,7 +83,7 @@ les groupes/TV, les scènes et révisions, les médias et jobs, les messages, le
 sources, les horaires, les métriques, les événements, les releases, les
 déploiements TV, les demandes d’application serveur, leur politique
 automatique opt-in, les programmations de scènes, les générations de
-credential TV et l’audit.
+credential TV, les demandes/certificats clients individuels et l’audit.
 
 ## Une seule origine HTTPS
 
@@ -125,6 +131,13 @@ embarquée en secours, puis synchronise l’origine HTTPS en arrière-plan. Il
 vérifie le manifeste canonique, chaque document et chaque média, active le
 staging par renommage atomique et revient au pointeur précédent si l’actif est
 corrompu. Les identifiants TV sont chiffrés via Android Keystore.
+
+La TV génère en plus une clé RSA non exportable et prouve sa possession pendant
+l’enrôlement. L’API ne signe rien elle-même : un courtier systemd root sans port
+entrant utilise la CA privée persistante, qui n’est montée dans aucun
+conteneur. Caddy vérifie le certificat lorsqu’il est présenté et transmet son
+empreinte via des en-têtes qu’il réécrit lui-même. L’API rend cette empreinte
+obligatoire après l’activation et la lie à la clé rotative et à l’UUID TV.
 
 Le client possède au plus une clé active et une clé de rotation en attente,
 chiffrées avec des données authentifiées distinctes. Il prépare localement la

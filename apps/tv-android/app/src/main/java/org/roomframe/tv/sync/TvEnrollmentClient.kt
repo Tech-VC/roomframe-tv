@@ -12,7 +12,11 @@ class TvEnrollmentClient {
         val normalizedUrl = DeviceCredentialStore.validateServerUrl(serverUrl)
         val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
         DeviceCredentialStore.validateDeviceKey(enrollmentKey)
-        val connection = (URL("$normalizedUrl/api/v1/tv/enroll").openConnection() as HttpsURLConnection).apply {
+        val certificateProof = TvClientCertificateStore().enrollmentProof(
+            normalizedId,
+            enrollmentKey,
+        )
+        val connection = RoomFrameHttps.open(URL("$normalizedUrl/api/v1/tv/enroll")).apply {
             connectTimeout = 8_000
             readTimeout = 15_000
             instanceFollowRedirects = false
@@ -26,6 +30,13 @@ class TvEnrollmentClient {
             val requestBody = JSONObject()
                 .put("deviceId", normalizedId)
                 .put("enrollmentKey", enrollmentKey)
+                .put(
+                    "certificateRequest",
+                    JSONObject()
+                        .put("algorithm", "RS256")
+                        .put("publicKeySpki", certificateProof.publicKeySpki)
+                        .put("proofSignature", certificateProof.proofSignature),
+                )
                 .toString()
                 .toByteArray(StandardCharsets.UTF_8)
             connection.setFixedLengthStreamingMode(requestBody.size)

@@ -23,6 +23,7 @@ import { processOneMediaJob } from '../src/media-worker.mjs';
 import { importReleaseBundle } from '../src/release-importer.mjs';
 import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
+import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 
 const databaseHost = process.env.ROOMFRAME_TEST_DB_HOST;
@@ -67,6 +68,12 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
 }, async (t) => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'roomframe-integration-'));
   t.after(() => rm(temporary, { recursive: true, force: true }));
+  const tvClientCaFile = path.join(temporary, 'tv-client-ca.crt');
+  await writeFile(
+    tvClientCaFile,
+    `-----BEGIN CERTIFICATE-----\n${'A'.repeat(600)}\n-----END CERTIFICATE-----\n`,
+    { mode: 0o600 },
+  );
   const bootstrapToken = token();
   const config = await loadConfig({
     port: 0,
@@ -86,6 +93,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     releasesDir: path.join(temporary, 'releases'),
     backupsDir: path.join(temporary, 'backups'),
     updateTrustDir: path.join(temporary, 'trust'),
+    tvClientCaFile,
     updateGithubRepository: 'example/roomframe',
     updateGithubChannel: 'stable',
     updatePollMinutes: 360,
@@ -826,6 +834,276 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(deviceSync.statusCode, 200);
+
+  const certificateEnrollment = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tvs/enrollment',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      displayName: 'TV certificat',
+      roomName: 'Salle certificat',
+    },
+  });
+  assert.equal(certificateEnrollment.statusCode, 201, certificateEnrollment.body);
+  const certificatePendingDevice = certificateEnrollment.json();
+  const certificateKeyPair = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicExponent: 0x10001,
+  });
+  const publicKeySpki = certificateKeyPair.publicKey.export({
+    format: 'der',
+    type: 'spki',
+  });
+  const proofSignature = crypto.sign(
+    'RSA-SHA256',
+    tvCertificateProofPayload(
+      certificatePendingDevice.id,
+      certificatePendingDevice.enrollmentKey,
+    ),
+    certificateKeyPair.privateKey,
+  );
+  const invalidCertificateProof = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enroll',
+    payload: {
+      deviceId: certificatePendingDevice.id,
+      enrollmentKey: certificatePendingDevice.enrollmentKey,
+      certificateRequest: {
+        algorithm: 'RS256',
+        publicKeySpki: publicKeySpki.toString('base64url'),
+        proofSignature: crypto.sign(
+          'RSA-SHA256',
+          Buffer.from('preuve-rejouee-ou-modifiee'),
+          certificateKeyPair.privateKey,
+        ).toString('base64url'),
+      },
+    },
+  });
+  assert.equal(invalidCertificateProof.statusCode, 401);
+  const certificateClaim = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enroll',
+    payload: {
+      deviceId: certificatePendingDevice.id,
+      enrollmentKey: certificatePendingDevice.enrollmentKey,
+      certificateRequest: {
+        algorithm: 'RS256',
+        publicKeySpki: publicKeySpki.toString('base64url'),
+        proofSignature: proofSignature.toString('base64url'),
+      },
+    },
+  });
+  assert.equal(certificateClaim.statusCode, 201, certificateClaim.body);
+  assert.equal(
+    certificateClaim.json().credentialMode,
+    'device-key-and-client-certificate',
+  );
+  assert.equal(certificateClaim.json().certificateStatus, 'pending');
+  const certificateDeviceCredentials = certificateClaim.json();
+  const certificateHeaders = {
+    'x-roomframe-device-id': certificatePendingDevice.id,
+    'x-roomframe-device-key': certificateDeviceCredentials.deviceKey,
+  };
+  const certificatePending = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/certificate',
+    headers: certificateHeaders,
+  });
+  assert.equal(certificatePending.statusCode, 200, certificatePending.body);
+  assert.equal(certificatePending.json().status, 'pending');
+
+  const certificateFingerprint = crypto
+    .createHash('sha256')
+    .update('roomframe-integration-client-certificate')
+    .digest('hex');
+  const certificateSerial = 'AABBCCDDEEFF00112233445566778899';
+  const certificatePem = (
+    `-----BEGIN CERTIFICATE-----\n${'B'.repeat(600)}\n-----END CERTIFICATE-----\n`
+  );
+  const renewedRequestUpdate = await pool.query(
+    `UPDATE tv_certificate_requests
+     SET status = 'issued',
+         certificate_pem = $2,
+         certificate_fingerprint_sha256 = $3,
+         certificate_serial = $4,
+         issued_at = now(),
+         expires_at = now() + interval '90 days',
+         updated_at = now()
+     WHERE id = $1`,
+    [
+      certificateDeviceCredentials.certificateRequestId,
+      certificatePem,
+      certificateFingerprint,
+      certificateSerial,
+    ],
+  );
+  await pool.query(
+    `UPDATE screens
+     SET client_certificate_pending_fingerprint = $2,
+         client_certificate_pending_serial = $3,
+         client_certificate_pending_issued_at = now(),
+         client_certificate_pending_expires_at = now() + interval '90 days',
+         client_certificate_pending_required_at = now() + interval '24 hours'
+     WHERE id = $1`,
+    [certificatePendingDevice.id, certificateFingerprint, certificateSerial],
+  );
+  const certificateIssued = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/certificate',
+    headers: certificateHeaders,
+  });
+  assert.equal(certificateIssued.statusCode, 200, certificateIssued.body);
+  assert.equal(certificateIssued.json().status, 'issued');
+  assert.equal(certificateIssued.json().certificatePem, certificatePem);
+  assert.equal(certificateIssued.json().fingerprintSha256, certificateFingerprint);
+  const activationWithoutCertificate = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: certificateHeaders,
+    payload: {},
+  });
+  assert.equal(activationWithoutCertificate.statusCode, 401);
+  const activationHeaders = {
+    ...certificateHeaders,
+    'x-roomframe-tls-client-verified': '1',
+    'x-roomframe-tls-client-fingerprint': certificateFingerprint,
+  };
+  const certificateActivation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: activationHeaders,
+    payload: {},
+  });
+  assert.equal(certificateActivation.statusCode, 200, certificateActivation.body);
+  assert.equal(certificateActivation.json().activated, true);
+  assert.equal(certificateActivation.json().idempotent, false);
+  const certificateRequired = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: certificateHeaders,
+  });
+  assert.equal(certificateRequired.statusCode, 401);
+  const certificateAuthenticated = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: activationHeaders,
+  });
+  assert.equal(certificateAuthenticated.statusCode, 200, certificateAuthenticated.body);
+  const wrongCertificate = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: {
+      ...certificateHeaders,
+      'x-roomframe-tls-client-verified': '1',
+      'x-roomframe-tls-client-fingerprint': '0'.repeat(64),
+    },
+  });
+  assert.equal(wrongCertificate.statusCode, 401);
+  await pool.query(
+    `UPDATE screens
+     SET client_certificate_expires_at = now() + interval '29 days'
+     WHERE id = $1`,
+    [certificatePendingDevice.id],
+  );
+  const certificateRenewal = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/renew',
+    headers: activationHeaders,
+    payload: {},
+  });
+  assert.equal(certificateRenewal.statusCode, 201, certificateRenewal.body);
+  assert.equal(certificateRenewal.json().status, 'pending');
+  const renewedFingerprint = crypto
+    .createHash('sha256')
+    .update('roomframe-integration-renewed-client-certificate')
+    .digest('hex');
+  const renewedSerial = 'BBCCDDEEFF0011223344556677889900';
+  const renewedCertificatePem = (
+    `-----BEGIN CERTIFICATE-----\n${'C'.repeat(600)}\n-----END CERTIFICATE-----\n`
+  );
+  const certificateRenewalRequestUpdate = await pool.query(
+    `UPDATE tv_certificate_requests
+     SET status = 'issued',
+         certificate_pem = $2,
+         certificate_fingerprint_sha256 = $3,
+         certificate_serial = $4,
+         issued_at = now(),
+         expires_at = now() + interval '90 days',
+         updated_at = now()
+     WHERE id = $1`,
+    [
+      certificateRenewal.json().requestId,
+      renewedCertificatePem,
+      renewedFingerprint,
+      renewedSerial,
+    ],
+  );
+  assert.equal(certificateRenewalRequestUpdate.rowCount, 1);
+  const renewedRequestState = await pool.query(
+    `SELECT id, status
+     FROM tv_certificate_requests
+     WHERE screen_id = $1
+     ORDER BY updated_at DESC, requested_at DESC, id DESC`,
+    [certificatePendingDevice.id],
+  );
+  assert.equal(renewedRequestState.rows[0].id, certificateRenewal.json().requestId);
+  assert.equal(renewedRequestState.rows[0].status, 'issued');
+  await pool.query(
+    `UPDATE screens
+     SET client_certificate_pending_fingerprint = $2,
+         client_certificate_pending_serial = $3,
+         client_certificate_pending_issued_at = now(),
+         client_certificate_pending_expires_at = now() + interval '90 days',
+         client_certificate_pending_required_at = now() + interval '24 hours'
+     WHERE id = $1`,
+    [certificatePendingDevice.id, renewedFingerprint, renewedSerial],
+  );
+  const renewedCertificateIssued = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/certificate',
+    headers: activationHeaders,
+  });
+  assert.equal(
+    renewedCertificateIssued.statusCode,
+    200,
+    renewedCertificateIssued.body,
+  );
+  assert.equal(renewedCertificateIssued.json().status, 'issued');
+  assert.equal(
+    renewedCertificateIssued.json().fingerprintSha256,
+    renewedFingerprint,
+  );
+  const renewedHeaders = {
+    ...certificateHeaders,
+    'x-roomframe-tls-client-verified': '1',
+    'x-roomframe-tls-client-fingerprint': renewedFingerprint,
+  };
+  const renewedActivation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: renewedHeaders,
+    payload: {},
+  });
+  assert.equal(renewedActivation.statusCode, 200, renewedActivation.body);
+  assert.equal(renewedActivation.json().idempotent, false);
+  const retiredCertificate = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: activationHeaders,
+  });
+  assert.equal(retiredCertificate.statusCode, 401);
+  const renewedCertificateAuthenticated = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: renewedHeaders,
+  });
+  assert.equal(
+    renewedCertificateAuthenticated.statusCode,
+    200,
+    renewedCertificateAuthenticated.body,
+  );
+  await pool.query('DELETE FROM screens WHERE id = $1', [certificatePendingDevice.id]);
+
   const rotatedDeviceKey = token();
   const preparedRotation = await app.inject({
     method: 'POST',

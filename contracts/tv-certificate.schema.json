@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/tv-certificate.schema.json",
+  "title": "RoomFrame TV client certificate request",
+  "type": "object",
+  "required": ["algorithm", "publicKeySpki", "proofSignature"],
+  "properties": {
+    "algorithm": {
+      "const": "RS256"
+    },
+    "publicKeySpki": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{342,1366}$"
+    },
+    "proofSignature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{342,1366}$"
+    }
+  },
+  "additionalProperties": false
+}

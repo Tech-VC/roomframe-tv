@@ -134,6 +134,7 @@ créé avant l’ajout de cette politique.
 /var/lib/roomframe/postgres/        PostgreSQL
 /var/lib/roomframe/media/           originaux privés et variantes
 /var/lib/roomframe/processing/      uploads temporaires et file locale
+/var/lib/roomframe/pki/tv-client-ca/ CA cliente TV persistante root-only
 /var/lib/roomframe/releases/        mises à jour vérifiées
 /var/lib/roomframe/backups/         sauvegardes
 /var/lib/roomframe/pki/             confiance et clés publiques
@@ -227,6 +228,7 @@ sudo roomframe-apply-update \
   --release-id 00000000-0000-4000-8000-000000000000 \
   --confirm 0.3.1
 sudo systemctl status roomframe-update-broker.timer
+sudo systemctl status roomframe-tv-certificate-broker.timer
 sudo roomframe-trust-update-key --key-id release-main \
   --public-key /chemin/release-main.pem \
   --sha256 EMPREINTE_SHA256
@@ -401,3 +403,17 @@ Cette racine doit être distribuée par un canal administré aux navigateurs et
 épinglée ou installée lors de l’enrôlement des TV. Ne contournez pas les
 avertissements TLS pour l’usage normal. L’API n’est pas publiée directement :
 Caddy expose uniquement `443/tcp`.
+
+Une autorité distincte destinée aux certificats clients TV est créée une seule
+fois pendant le bootstrap :
+
+```text
+/var/lib/roomframe/pki/tv-client-ca/ca.crt
+/var/lib/roomframe/pki/tv-client-ca/private/ca.key
+```
+
+Le certificat public est `0644`; la clé privée est `0600 root:root` et n’est
+montée dans aucun conteneur. `roomframe-tv-certificate-broker.timer` traite les
+demandes d’émission toutes les dix secondes. Une réinstallation conserve la
+CA ; si la paire est incomplète, l’installateur refuse de la régénérer
+silencieusement.

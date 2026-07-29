@@ -149,6 +149,9 @@ héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 POST /api/v1/tv/enroll
 POST /api/v1/tv/credentials/rotate
 POST /api/v1/tv/credentials/confirm
+GET  /api/v1/tv/certificate
+POST /api/v1/tv/certificate/activate
+POST /api/v1/tv/certificate/renew
 GET  /api/v1/tv/sync
 POST /api/v1/tv/metrics
 POST /api/v1/tv/events
@@ -159,7 +162,10 @@ GET  /api/v1/default-assets/*
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
 `POST /api/v1/tvs/enrollment`. La TV échange cette clé temporaire une seule
 fois sur `POST /api/v1/tv/enroll`; l’API lui remet alors une nouvelle clé
-d’appareil. Une TV encore en attente ne peut pas synchroniser.
+d’appareil. Une TV encore en attente ne peut pas synchroniser. Le client
+Android joint aussi une clé publique RSA SPKI et une preuve `RS256` suivant
+`contracts/tv-certificate.schema.json`. La clé privée correspondante reste
+non exportable dans Android Keystore.
 
 La réponse d’enrôlement fournit aussi la génération de credential et sa date
 de rotation. La clé brute n’est jamais conservée par l’API : PostgreSQL ne
@@ -172,6 +178,15 @@ Les appels d’un appareil actif utilisent :
 x-roomframe-device-id: <UUID de la TV>
 x-roomframe-device-key: <clé remise une fois>
 ```
+
+Le courtier root émet ensuite le certificat individuel de manière asynchrone.
+La TV interroge `GET /tv/certificate`, vérifie la chaîne, l’EKU, le SAN, la clé
+publique et l’empreinte avant de remplacer la chaîne de son alias Keystore.
+Elle appelle alors `/tv/certificate/activate` en présentant le certificat.
+Après cette activation, Caddy vérifie le certificat et l’API exige son
+empreinte en plus des deux en-têtes ci-dessus. Le renouvellement démarre à
+30 jours de l’expiration et promeut la nouvelle empreinte seulement après sa
+confirmation mTLS.
 
 La rotation est volontairement en deux phases afin de résister à une réponse
 HTTP perdue. Les deux requêtes sont fermées par
@@ -213,9 +228,9 @@ actualise aussi la présence de la TV. `GET /studio` expose uniquement sa
 dernière mesure et un résumé parc ; l’historique brut reste côté base pour le
 diagnostic et la future politique de rétention.
 
-La clé d’appareil rotative reste une étape intermédiaire avant la PKI
-individuelle. Les certificats clients et le mTLS doivent encore être finalisés
-avant production.
+La clé d’appareil rotative reste une seconde preuve et facilite une transition
+réseau sûre. Elle ne remplace pas le certificat individuel : les deux doivent
+correspondre à la même TV après activation.
 
 ## Releases
 

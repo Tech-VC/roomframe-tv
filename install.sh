@@ -312,6 +312,10 @@ SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
   || fail "Unité systemd du courtier d'updates absente."
 [[ -f "$SOURCE_DIR/infra/systemd/roomframe-update-broker.timer" ]] \
   || fail "Timer systemd du courtier d'updates absent."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-tv-certificate-broker.service" ]] \
+  || fail "Unité systemd du courtier de certificats TV absente."
+[[ -f "$SOURCE_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" ]] \
+  || fail "Timer systemd du courtier de certificats TV absent."
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
 [[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
   || fail "Liste d’exclusion des sources introuvable."
@@ -654,7 +658,7 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
   for command_name in roomframe-compose roomframe-diagnose roomframe-backup \
     roomframe-verify-backup roomframe-restore roomframe-apply-update \
     roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
-    roomframe-trust-update-key; do
+    roomframe-trust-update-key roomframe-tv-certificate-broker; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -674,8 +678,15 @@ if command -v systemctl >/dev/null 2>&1 \
   install -D -m 0644 \
     "$INSTALL_DIR/infra/systemd/roomframe-update-broker.timer" \
     /etc/systemd/system/roomframe-update-broker.timer
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-tv-certificate-broker.service" \
+    /etc/systemd/system/roomframe-tv-certificate-broker.service
+  install -D -m 0644 \
+    "$INSTALL_DIR/infra/systemd/roomframe-tv-certificate-broker.timer" \
+    /etc/systemd/system/roomframe-tv-certificate-broker.timer
   systemctl daemon-reload
   systemctl enable roomframe-update-broker.timer >/dev/null
+  systemctl enable roomframe-tv-certificate-broker.timer >/dev/null
 fi
 
 if [[ "$NO_START" -eq 0 ]]; then
@@ -741,6 +752,7 @@ if [[ "$NO_START" -eq 0 ]]; then
   if [[ -d /run/systemd/system ]] \
     && [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" != "1" ]]; then
     systemctl start roomframe-update-broker.timer
+    systemctl start roomframe-tv-certificate-broker.timer
   fi
 fi
 
@@ -755,6 +767,7 @@ printf 'API locale TV             : %s\n' "$API_URL"
 printf 'URL de secours par IP     : %s\n' "$FALLBACK_URL"
 printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
+printf 'Autorité cliente TV       : %s\n' "$DATA_DIR/pki/tv-client-ca/ca.crt"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde                 : sudo roomframe-backup\n'
 printf 'Restauration               : sudo roomframe-restore --help\n'

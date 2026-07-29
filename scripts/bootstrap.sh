@@ -6,6 +6,10 @@ CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 SOURCE_DEFAULTS="${ROOMFRAME_DEFAULTS_DIR:-./defaults/experience}"
 SECRETS_DIR="$CONFIG_DIR/secrets"
 SEED_DIR="$DATA_DIR/seed/default-experience"
+TV_CA_DIR="$DATA_DIR/pki/tv-client-ca"
+TV_CA_PRIVATE_DIR="$TV_CA_DIR/private"
+TV_CA_CERTIFICATE="$TV_CA_DIR/ca.crt"
+TV_CA_PRIVATE_KEY="$TV_CA_PRIVATE_DIR/ca.key"
 RUNTIME_UID="${ROOMFRAME_RUNTIME_UID:-}"
 RUNTIME_GID="${ROOMFRAME_RUNTIME_GID:-}"
 
@@ -52,6 +56,8 @@ managed_paths=(
   "$DATA_DIR/backups"
   "$DATA_DIR/pki"
   "$DATA_DIR/pki/update-trust"
+  "$TV_CA_DIR"
+  "$TV_CA_PRIVATE_DIR"
   "$DATA_DIR/caddy"
   "$DATA_DIR/caddy-config"
   "$DATA_DIR/seed"
@@ -71,6 +77,7 @@ mkdir -p \
   "$DATA_DIR/releases" \
   "$DATA_DIR/backups" \
   "$DATA_DIR/pki/update-trust" \
+  "$TV_CA_PRIVATE_DIR" \
   "$DATA_DIR/caddy" \
   "$DATA_DIR/caddy-config" \
   "$SEED_DIR" \
@@ -126,6 +133,63 @@ create_secret_once bootstrap_token 32
 create_secret_once session_secret 48
 create_secret_once totp_encryption_key 32
 
+if [[ -e "$TV_CA_PRIVATE_KEY" || -e "$TV_CA_CERTIFICATE" ]]; then
+  [[
+    -f "$TV_CA_PRIVATE_KEY"
+    && -s "$TV_CA_PRIVATE_KEY"
+    && ! -L "$TV_CA_PRIVATE_KEY"
+    && -f "$TV_CA_CERTIFICATE"
+    && -s "$TV_CA_CERTIFICATE"
+    && ! -L "$TV_CA_CERTIFICATE"
+  ]] || fail "la CA client TV persistante est incomplète; régénération automatique refusée"
+else
+  ca_key_temporary="$(mktemp "$TV_CA_PRIVATE_DIR/.ca-key.XXXXXX")"
+  ca_certificate_temporary="$(mktemp "$TV_CA_DIR/.ca-certificate.XXXXXX")"
+  if ! openssl genpkey \
+    -algorithm RSA \
+    -pkeyopt rsa_keygen_bits:3072 \
+    -out "$ca_key_temporary" >/dev/null 2>&1 \
+    || ! openssl req \
+      -x509 \
+      -new \
+      -key "$ca_key_temporary" \
+      -sha256 \
+      -days 3650 \
+      -subj "/CN=RoomFrame TV Client CA" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" \
+      -out "$ca_certificate_temporary"
+  then
+    rm -f "$ca_key_temporary" "$ca_certificate_temporary"
+    fail "génération de la CA client TV impossible"
+  fi
+  chmod 0600 "$ca_key_temporary"
+  chmod 0644 "$ca_certificate_temporary"
+  chown root:root "$ca_key_temporary" "$ca_certificate_temporary"
+  mv -n "$ca_key_temporary" "$TV_CA_PRIVATE_KEY"
+  mv -n "$ca_certificate_temporary" "$TV_CA_CERTIFICATE"
+  if [[ -e "$ca_key_temporary" || -e "$ca_certificate_temporary" ]]; then
+    rm -f "$ca_key_temporary" "$ca_certificate_temporary"
+    fail "conflit pendant la création de la CA client TV"
+  fi
+fi
+
+ca_key_public_sha="$(
+  openssl pkey -in "$TV_CA_PRIVATE_KEY" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 -r \
+    | awk '{print $1}'
+)"
+ca_certificate_public_sha="$(
+  openssl x509 -in "$TV_CA_CERTIFICATE" -pubkey -noout 2>/dev/null \
+    | openssl pkey -pubin -outform DER 2>/dev/null \
+    | openssl dgst -sha256 -r \
+    | awk '{print $1}'
+)"
+[[ -n "$ca_key_public_sha" && "$ca_key_public_sha" == "$ca_certificate_public_sha" ]] \
+  || fail "la clé privée et le certificat de la CA client TV ne correspondent pas"
+openssl verify -CAfile "$TV_CA_CERTIFICATE" "$TV_CA_CERTIFICATE" >/dev/null \
+  || fail "le certificat de CA client TV est invalide"
+
 if [[ ! -f "$SEED_DIR/manifest.json" ]]; then
   if find "$SEED_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
     fail "le répertoire de seed n'est pas vide mais ne contient pas de manifeste"
@@ -156,5 +220,10 @@ chmod -R g+rX "$SEED_DIR"
 chmod -R u+rwX,go-rwx "$DATA_DIR/pki"
 chown -R "root:${RUNTIME_GID}" "$DATA_DIR/pki/update-trust"
 chmod -R u+rwX,g+rX,o-rwx "$DATA_DIR/pki/update-trust"
+chown -R root:root "$TV_CA_DIR"
+chmod 0755 "$TV_CA_DIR"
+chmod 0700 "$TV_CA_PRIVATE_DIR"
+chmod 0600 "$TV_CA_PRIVATE_KEY"
+chmod 0644 "$TV_CA_CERTIFICATE"
 
 printf '%s\n' "Bootstrap persistant prêt; secrets existants et seed existant conservés."

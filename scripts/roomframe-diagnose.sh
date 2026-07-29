@@ -172,6 +172,12 @@ if [[ -d /run/systemd/system ]]; then
   else
     bad "timer du courtier de mises à jour inactif"
   fi
+  if systemctl is-enabled roomframe-tv-certificate-broker.timer >/dev/null 2>&1 \
+    && systemctl is-active roomframe-tv-certificate-broker.timer >/dev/null 2>&1; then
+    ok "timer du courtier de certificats TV actif"
+  else
+    bad "timer du courtier de certificats TV inactif"
+  fi
 fi
 
 if [[ -n "${ROOMFRAME_PRIMARY_HOST:-}" && -n "${ROOMFRAME_PUBLIC_URL:-}" ]]; then
@@ -189,6 +195,21 @@ if [[ -f "$CA_PATH" ]]; then
   ok "autorité HTTPS locale présente"
 else
   bad "autorité HTTPS locale absente (normal avant le premier démarrage)"
+fi
+
+TV_CA_CERTIFICATE="$DATA_DIR/pki/tv-client-ca/ca.crt"
+TV_CA_PRIVATE_KEY="$DATA_DIR/pki/tv-client-ca/private/ca.key"
+if [[
+  -f "$TV_CA_CERTIFICATE"
+  && -s "$TV_CA_CERTIFICATE"
+  && "$(stat -c '%a:%u:%g' "$TV_CA_CERTIFICATE" 2>/dev/null)" == "644:0:0"
+  && -f "$TV_CA_PRIVATE_KEY"
+  && -s "$TV_CA_PRIVATE_KEY"
+  && "$(stat -c '%a:%u:%g' "$TV_CA_PRIVATE_KEY" 2>/dev/null)" == "600:0:0"
+]] && openssl verify -CAfile "$TV_CA_CERTIFICATE" "$TV_CA_CERTIFICATE" >/dev/null 2>&1; then
+  ok "CA cliente TV persistante, publique et clé privée root-only"
+else
+  bad "CA cliente TV absente, incohérente ou mal protégée"
 fi
 
 if ((failures > 0)); then

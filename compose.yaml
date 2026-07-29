@@ -16,6 +16,7 @@ x-api-environment: &api-environment
   ROOMFRAME_DEFAULT_BUNDLE_DIR: /defaults/experience
   ROOMFRAME_SERVER_STATE_FILE: /run/roomframe/server-state.json
   ROOMFRAME_UPDATE_TRUST_DIR: /run/roomframe/update-trust
+  ROOMFRAME_TV_CLIENT_CA_FILE: /run/roomframe/tv-client-ca.crt
   ROOMFRAME_UPDATE_GITHUB_REPOSITORY: ${ROOMFRAME_UPDATE_GITHUB_REPOSITORY:-}
   ROOMFRAME_UPDATE_GITHUB_CHANNEL: ${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-stable}
   ROOMFRAME_UPDATE_POLL_MINUTES: ${ROOMFRAME_UPDATE_POLL_MINUTES:-360}
@@ -51,6 +52,7 @@ services:
       - ./prototype/tv:/srv/simulator:ro
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy:/data
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy-config:/config
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/tv-client-ca/ca.crt:/etc/roomframe/tv-client-ca.crt:ro
     depends_on:
       api:
         condition: service_healthy
@@ -79,6 +81,7 @@ services:
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/seed/default-experience:/defaults/experience:ro
       - ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/server-state.json:/run/roomframe/server-state.json:ro
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/update-trust:/run/roomframe/update-trust:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/tv-client-ca/ca.crt:/run/roomframe/tv-client-ca.crt:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
     depends_on:

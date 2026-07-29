@@ -15,8 +15,9 @@ sur chaque instance après l’installation.
 > et le client Android conservent la dernière révision valide hors ligne ; le
 > client natif rend la scène sans WebView et contrôle les APK distribués par
 > vagues. Un poller non privilégié peut aussi importer automatiquement une
-> release GitHub signée. Les clés TV tournent par un protocole à deux phases
-> et peuvent être révoquées ou réenrôlées depuis la régie. Device Owner,
+> release GitHub signée. Les TV génèrent aussi une clé TLS non exportable,
+> reçoivent un certificat individuel via un courtier root isolé et utilisent
+> ensuite mTLS en plus de leur clé rotative. Device Owner,
 > installation silencieuse, HDMI, veille/réveil, Cast et AirPlay restent à
 > valider.
 
@@ -119,8 +120,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
   prudente pour les logos sur fond clair uniforme ;
-- enrôlement TV à clé temporaire puis identité chiffrée dans Android Keystore,
-  rotation automatique à deux phases, révocation et réenrôlement administrés ;
+- enrôlement TV à clé temporaire, clé TLS RSA non exportable dans Android
+  Keystore, certificat client individuel, mTLS, rotation automatique à deux
+  phases, renouvellement, révocation et réenrôlement administrés ;
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
@@ -167,6 +169,7 @@ sudo roomframe-trust-update-key --key-id release-main \
   --sha256 EMPREINTE_SHA256
 sudo roomframe-trust-update-key --revoke --key-id release-main \
   --sha256 EMPREINTE_SHA256
+sudo systemctl status roomframe-tv-certificate-broker.timer
 ```
 
 Les données sont séparées du code :
@@ -178,7 +181,7 @@ Les données sont séparées du code :
 /var/lib/roomframe/postgres/        base PostgreSQL
 /var/lib/roomframe/media/           originaux privés et variantes
 /var/lib/roomframe/processing/      file de traitement
-/var/lib/roomframe/pki/             confiance locale et clés publiques
+/var/lib/roomframe/pki/             PKI locale, dont clés privées root-only
 /var/lib/roomframe/releases/        mises à jour vérifiées
 /var/lib/roomframe/backups/         sauvegardes
 /var/lib/roomframe/seed/            expérience initiale figée
@@ -232,8 +235,9 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   synchronise en HTTPS, conserve la révision précédente et contrôle les APK
   avant `PackageInstaller` ; le Device Owner et l’installation silencieuse
   doivent encore être validés sur la TV réelle ;
-- la rotation et la révocation des clés TV sont actives ; les certificats
-  clients individuels et le mTLS restent à finaliser avant production ;
+- les certificats clients individuels et le mTLS sont implémentés et testés
+  hors matériel ; leur activation avec Android Keystore doit encore être
+  observée sur la Philips réelle ;
 - HDMI, Cast, AirPlay, puissance et retour automatique sont des contrats
   d’adaptateurs, pas des capacités Philips annoncées comme fonctionnelles ;
 - PhairPlay n’est pas intégré avant validation de la version Android, de l’ABI

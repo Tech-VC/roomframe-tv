@@ -29,6 +29,7 @@ test_container=""
 verify_container=""
 test_secret_directory=""
 test_temporary_base=""
+certificate_test_directory=""
 cleanup() {
   if [[ -n "$verify_container" ]]; then
     docker stop "$verify_container" >/dev/null 2>&1 || true
@@ -42,6 +43,10 @@ cleanup() {
   fi
   if [[ -n "$test_temporary_base" && -d "$test_temporary_base" ]]; then
     rmdir "$test_temporary_base" 2>/dev/null || true
+  fi
+  if [[ -n "$certificate_test_directory" && -d "$certificate_test_directory" ]]; then
+    find "$certificate_test_directory" -depth -mindepth 1 -delete 2>/dev/null || true
+    rmdir "$certificate_test_directory" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -190,6 +195,51 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
   export ROOMFRAME_TEST_DB_MIGRATOR_USER=roomframe_migrator
   export ROOMFRAME_TEST_DB_MIGRATOR_PASSWORD=""
 fi
+
+certificate_test_directory="$(mktemp -d /tmp/roomframe-certificate-test.XXXXXX)"
+openssl genpkey \
+  -algorithm RSA \
+  -pkeyopt rsa_keygen_bits:3072 \
+  -out "$certificate_test_directory/ca.key" \
+  >/dev/null 2>&1
+openssl req \
+  -x509 \
+  -new \
+  -key "$certificate_test_directory/ca.key" \
+  -sha256 \
+  -days 30 \
+  -subj "/CN=RoomFrame Test Client CA" \
+  -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign" \
+  -out "$certificate_test_directory/ca.crt"
+openssl genpkey \
+  -algorithm RSA \
+  -pkeyopt rsa_keygen_bits:2048 \
+  -out "$certificate_test_directory/tv.key" \
+  >/dev/null 2>&1
+openssl pkey \
+  -in "$certificate_test_directory/tv.key" \
+  -pubout \
+  -outform DER \
+  -out "$certificate_test_directory/tv.der"
+certificate_metadata="$(
+  "$ROOT/scripts/issue-tv-certificate.sh" \
+    --public-key-der "$certificate_test_directory/tv.der" \
+    --ca-certificate "$certificate_test_directory/ca.crt" \
+    --ca-private-key "$certificate_test_directory/ca.key" \
+    --screen-id 11111111-1111-4111-8111-111111111111 \
+    --serial AABBCCDDEEFF00112233445566778899 \
+    --output "$certificate_test_directory/tv.crt"
+)"
+[[ "$certificate_metadata" =~ ^[a-f0-9]{64}$'\t'AABBCCDDEEFF00112233445566778899$'\t' ]] || {
+  echo "Métadonnées du certificat client TV invalides." >&2
+  exit 1
+}
+openssl verify \
+  -CAfile "$certificate_test_directory/ca.crt" \
+  -purpose sslclient \
+  "$certificate_test_directory/tv.crt" \
+  >/dev/null
 
 "$NODE_BIN" --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 (

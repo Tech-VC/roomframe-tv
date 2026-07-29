@@ -53,6 +53,13 @@ jobs:
               -mindepth 1 -maxdepth 1 -type f \
               -printf '%f:%i:%Y:%s\n' | sort
           )"
+          tv_ca_before="$(
+            sudo sha256sum \
+              "$test_root/data/pki/tv-client-ca/ca.crt" \
+              "$test_root/data/pki/tv-client-ca/private/ca.key"
+          )"
+          test "$(sudo stat -c '%a:%u:%g' "$test_root/data/pki/tv-client-ca/ca.crt")" = "644:0:0"
+          test "$(sudo stat -c '%a:%u:%g' "$test_root/data/pki/tv-client-ca/private/ca.key")" = "600:0:0"
           sudo env \
             ROOMFRAME_INSTALL_DIR="$test_root/install" \
             ROOMFRAME_CONFIG_DIR="$test_root/config" \
@@ -66,6 +73,12 @@ jobs:
               -printf '%f:%i:%Y:%s\n' | sort
           )"
           test "$before" = "$after"
+          tv_ca_after="$(
+            sudo sha256sum \
+              "$test_root/data/pki/tv-client-ca/ca.crt" \
+              "$test_root/data/pki/tv-client-ca/private/ca.key"
+          )"
+          test "$tv_ca_before" = "$tv_ca_after"
           sudo test -f "$test_root/config/runtime.conf"
           sudo test -f "$test_root/data/seed/default-experience/manifest.json"
           sudo test ! -e "$test_root/install/AGENTS.md"

@@ -173,7 +173,7 @@ class HttpExperienceSyncClient(
                 resolved.host == base.host &&
                 resolved.port == base.port,
         ) { "Origine de synchronisation invalide" }
-        return (URL(resolved.toString()).openConnection() as HttpsURLConnection).apply {
+        return RoomFrameHttps.open(URL(resolved.toString())).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             instanceFollowRedirects = false

@@ -243,12 +243,13 @@ provisionne pas Device Owner et ne valide pas encore l’installation silencieus
 depuis l’administration. Une clé de release durable, conservée hors dépôt,
 devra remplacer la clé debug avant tout vrai canal de mise à jour.
 
-La candidate courante `0.3.2` (`versionCode` 5) ajoute le renderer alimenté par
+La candidate courante `0.3.3` (`versionCode` 6) ajoute le renderer alimenté par
 le cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
-mesures techniques et la rotation de credential en deux phases. Elle doit
-servir à la montée de version depuis le code 3, mais n’est pas encore installée
-ni validée sur cette Philips. La candidate intermédiaire `0.3.1` / code 4 a
-uniquement été construite hors matériel.
+mesures techniques, la rotation de credential en deux phases et le certificat
+client mTLS individuel. Elle doit servir à la montée de version depuis le code
+3, mais n’est pas encore installée ni validée sur cette Philips. Les candidates
+intermédiaires `0.3.1` / code 4 et `0.3.2` / code 5 ont uniquement été
+construites hors matériel.
 
 ## HDMI et sources
 

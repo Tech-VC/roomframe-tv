@@ -95,6 +95,9 @@ export const loadConfig = async (overrides = {}) => {
     updateTrustDir: overrides.updateTrustDir
       ?? process.env.ROOMFRAME_UPDATE_TRUST_DIR
       ?? '/run/roomframe/update-trust',
+    tvClientCaFile: overrides.tvClientCaFile
+      ?? process.env.ROOMFRAME_TV_CLIENT_CA_FILE
+      ?? '/run/roomframe/tv-client-ca.crt',
     updateGithubRepository: normalizeGithubRepository(
       overrides.updateGithubRepository
       ?? process.env.ROOMFRAME_UPDATE_GITHUB_REPOSITORY,

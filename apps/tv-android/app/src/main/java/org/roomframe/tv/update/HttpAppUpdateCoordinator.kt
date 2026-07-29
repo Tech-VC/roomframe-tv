@@ -19,6 +19,7 @@ import org.roomframe.tv.adapters.AppUpdateAdapter
 import org.roomframe.tv.adapters.CapabilityState
 import org.roomframe.tv.sync.DeviceCredentialStore
 import org.roomframe.tv.sync.DeviceCredentials
+import org.roomframe.tv.sync.RoomFrameHttps
 
 /**
  * Télécharge et contrôle un APK depuis l'origine RoomFrame avant de le remettre
@@ -258,7 +259,7 @@ class HttpAppUpdateCoordinator(
                 resolved.host == base.host &&
                 resolved.port == base.port,
         ) { "Origine de mise à jour invalide" }
-        return (URL(resolved.toString()).openConnection() as HttpsURLConnection).apply {
+        return RoomFrameHttps.open(URL(resolved.toString())).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             instanceFollowRedirects = false

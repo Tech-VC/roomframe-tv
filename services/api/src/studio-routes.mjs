@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { lstat, mkdir, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -40,6 +40,8 @@ const serverUpdateAutomaticConfirmation = 'ACTIVER LES MISES A JOUR AUTOMATIQUES
 const tvRevokeConfirmation = 'REVOQUER LA TV';
 const tvReenrollmentConfirmation = 'REINITIALISER L ENROLEMENT';
 const tvCredentialPendingLifetimeMs = 24 * 60 * 60 * 1000;
+const tvCertificateRenewalWindowMs = 30 * 24 * 60 * 60 * 1000;
+const clientCertificateFingerprintPattern = /^[a-f0-9]{64}$/;
 
 const cleanText = (value, field, maximum, minimum = 1) => {
   const text = String(value ?? '').trim();
@@ -66,6 +68,71 @@ const deviceKeyValue = (value, field = 'device_key') => {
 const credentialGeneration = (value, field = 'credential_generation') => (
   integerInRange(value, field, 1, Number.MAX_SAFE_INTEGER)
 );
+
+const canonicalBase64Url = (value, field) => {
+  const text = String(value ?? '');
+  let decoded;
+  try {
+    decoded = Buffer.from(text, 'base64url');
+  } catch {
+    decoded = Buffer.alloc(0);
+  }
+  if (!text || decoded.toString('base64url') !== text) {
+    throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
+  }
+  return decoded;
+};
+
+export const tvCertificateProofPayload = (deviceId, enrollmentKey) => (
+  Buffer.from(
+    `roomframe-tv-enrollment-v1\n${deviceId}\n${enrollmentKey}`,
+    'utf8',
+  )
+);
+
+const verifyTvCertificateRequest = ({
+  validators,
+  request,
+  deviceId,
+  enrollmentKey,
+}) => {
+  validators.assertTvCertificate(request);
+  const publicKeySpki = canonicalBase64Url(request.publicKeySpki, 'public_key_spki');
+  const proofSignature = canonicalBase64Url(request.proofSignature, 'proof_signature');
+  let publicKey;
+  try {
+    publicKey = crypto.createPublicKey({
+      key: publicKeySpki,
+      format: 'der',
+      type: 'spki',
+    });
+  } catch {
+    throw Object.assign(new Error('invalid_public_key_spki'), { statusCode: 400 });
+  }
+  const details = publicKey.asymmetricKeyDetails ?? {};
+  if (
+    publicKey.asymmetricKeyType !== 'rsa'
+    || !Number.isSafeInteger(details.modulusLength)
+    || details.modulusLength < 2048
+    || details.modulusLength > 4096
+    || details.publicExponent !== 65_537n
+  ) {
+    throw Object.assign(new Error('unsupported_tv_certificate_key'), { statusCode: 400 });
+  }
+  const validProof = crypto.verify(
+    'RSA-SHA256',
+    tvCertificateProofPayload(deviceId, enrollmentKey),
+    publicKey,
+    proofSignature,
+  );
+  if (!validProof) {
+    throw Object.assign(new Error('invalid_tv_certificate_proof'), { statusCode: 401 });
+  }
+  return {
+    publicKeySpki,
+    publicKeySha256: sha256(publicKeySpki),
+  };
+};
 
 const brandColor = (value, field) => {
   const color = String(value ?? '').trim().toLowerCase();
@@ -370,10 +437,38 @@ const tvCredentialHeaders = (request) => {
   };
 };
 
-const activeTvFromRequest = async (connection, request, { lock = false } = {}) => {
+const clientCertificateFingerprint = (request) => {
+  if (request.headers['x-roomframe-tls-client-verified'] !== '1') return null;
+  const fingerprint = String(
+    request.headers['x-roomframe-tls-client-fingerprint'] ?? '',
+  ).replaceAll(':', '').toLowerCase();
+  return clientCertificateFingerprintPattern.test(fingerprint) ? fingerprint : null;
+};
+
+const activeTvFromRequest = async (
+  connection,
+  request,
+  {
+    lock = false,
+    certificateOptional = false,
+    acceptPendingCertificate = false,
+  } = {},
+) => {
   const credentials = tvCredentialHeaders(request);
   const result = await connection.query(
-    `SELECT *
+    `SELECT
+       screens.*,
+       (
+         client_certificate_fingerprint IS NOT NULL
+         AND client_certificate_required_at IS NOT NULL
+         AND client_certificate_required_at <= now()
+       ) AS client_certificate_is_required,
+       (
+         client_certificate_fingerprint IS NULL
+         AND client_certificate_pending_fingerprint IS NOT NULL
+         AND client_certificate_pending_required_at IS NOT NULL
+         AND client_certificate_pending_required_at <= now()
+       ) AS client_certificate_pending_is_required
      FROM screens
      WHERE id = $1
        AND device_key = $2
@@ -384,7 +479,51 @@ const activeTvFromRequest = async (connection, request, { lock = false } = {}) =
   if (!result.rows[0]) {
     throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
   }
-  return { screen: result.rows[0], credentials };
+  const screen = result.rows[0];
+  const presentedFingerprint = clientCertificateFingerprint(request);
+  const matchesActiveCertificate = (
+    presentedFingerprint
+    && screen.client_certificate_fingerprint
+    && timingSafeTextEqual(
+      presentedFingerprint,
+      screen.client_certificate_fingerprint,
+    )
+  );
+  const matchesPendingCertificate = (
+    acceptPendingCertificate
+    && presentedFingerprint
+    && screen.client_certificate_pending_fingerprint
+    && timingSafeTextEqual(
+      presentedFingerprint,
+      screen.client_certificate_pending_fingerprint,
+    )
+  );
+  if (
+    presentedFingerprint
+    && !matchesActiveCertificate
+    && !matchesPendingCertificate
+  ) {
+    throw Object.assign(new Error('invalid_tv_client_certificate'), { statusCode: 401 });
+  }
+  const certificateIsRequired = (
+    !certificateOptional
+    && screen.client_certificate_is_required
+  );
+  const pendingCertificateIsRequired = (
+    !certificateOptional
+    && screen.client_certificate_pending_is_required
+  );
+  if (
+    (certificateIsRequired && !matchesActiveCertificate)
+    || (pendingCertificateIsRequired && !matchesPendingCertificate)
+  ) {
+    throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+  }
+  return {
+    screen,
+    credentials,
+    clientCertificateFingerprint: presentedFingerprint,
+  };
 };
 
 const resolveScreen = async ({
@@ -1343,7 +1482,14 @@ export const registerStudioRoutes = ({
       `SELECT id, display_name, room_name, group_id, enrollment_state, agent_version,
               home_version, active_revision, capabilities, source_state, last_seen_at,
               enrollment_expires_at, device_key_rotated_at, credential_generation,
-              device_key_pending_expires_at, credentials_revoked_at
+              device_key_pending_expires_at, credentials_revoked_at,
+              client_certificate_fingerprint, client_certificate_serial,
+              client_certificate_issued_at, client_certificate_expires_at,
+              client_certificate_required_at, client_certificate_activated_at,
+              client_certificate_revoked_at,
+              client_certificate_pending_fingerprint,
+              client_certificate_pending_expires_at,
+              client_certificate_pending_required_at
        FROM screens ORDER BY display_name`,
     );
     return { tvs: result.rows };
@@ -1389,6 +1535,14 @@ export const registerStudioRoutes = ({
     if (!deviceId || enrollmentKey.length < 20 || enrollmentKey.length > 200) {
       throw Object.assign(new Error('invalid_enrollment_credentials'), { statusCode: 401 });
     }
+    const certificateRequest = request.body?.certificateRequest
+      ? verifyTvCertificateRequest({
+        validators,
+        request: request.body.certificateRequest,
+        deviceId,
+        enrollmentKey,
+      })
+      : null;
     const deviceKey = randomToken(32);
     const enrolled = await withTransaction(pool, async (client) => {
       const pending = await client.query(
@@ -1423,7 +1577,36 @@ export const registerStudioRoutes = ({
         targetId: deviceId,
         remoteAddress: request.ip,
       });
-      return updated.rows[0];
+      let certificateRequestId = null;
+      if (certificateRequest) {
+        certificateRequestId = crypto.randomUUID();
+        await client.query(
+          `INSERT INTO tv_certificate_requests (
+             id, screen_id, public_key_spki, public_key_sha256
+           ) VALUES ($1, $2, $3, $4)`,
+          [
+            certificateRequestId,
+            deviceId,
+            certificateRequest.publicKeySpki,
+            certificateRequest.publicKeySha256,
+          ],
+        );
+        await appendAudit(client, {
+          actorType: 'tv',
+          action: 'tv.certificate.requested',
+          targetType: 'tv',
+          targetId: deviceId,
+          remoteAddress: request.ip,
+          details: {
+            requestId: certificateRequestId,
+            publicKeySha256: certificateRequest.publicKeySha256,
+          },
+        });
+      }
+      return {
+        ...updated.rows[0],
+        certificateRequestId,
+      };
     });
     return reply.code(201).send({
       device: enrolled,
@@ -1432,8 +1615,213 @@ export const registerStudioRoutes = ({
       credentialRotatedAt: enrolled.device_key_rotated_at,
       apiUrl: config.apiUrl,
       credentialDelivery: 'one-time',
+      credentialMode: enrolled.certificateRequestId
+        ? 'device-key-and-client-certificate'
+        : 'device-key-legacy',
+      certificateRequestId: enrolled.certificateRequestId,
+      certificateStatus: enrolled.certificateRequestId ? 'pending' : 'not-requested',
+      certificateDelivery: enrolled.certificateRequestId ? 'poll' : null,
     });
   });
+
+  app.get('/api/v1/tv/certificate', {
+    config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
+  }, async (request) => {
+    const { screen } = await activeTvFromRequest(pool, request, {
+      certificateOptional: true,
+      acceptPendingCertificate: true,
+    });
+    const result = await pool.query(
+      `SELECT id, status, certificate_pem, certificate_fingerprint_sha256,
+              certificate_serial, issued_at, expires_at, last_error_code
+       FROM tv_certificate_requests
+       WHERE screen_id = $1
+       ORDER BY updated_at DESC, requested_at DESC, id DESC
+       LIMIT 1`,
+      [screen.id],
+    );
+    const certificateRequest = result.rows[0];
+    if (!certificateRequest) return { status: 'not-requested' };
+    if (certificateRequest.status !== 'issued') {
+      return {
+        requestId: certificateRequest.id,
+        status: certificateRequest.status,
+        ...(certificateRequest.status === 'failed'
+          ? { error: certificateRequest.last_error_code ?? 'certificate_issuance_failed' }
+          : {}),
+      };
+    }
+    const caCertificatePem = await readFile(config.tvClientCaFile, 'utf8');
+    return {
+      requestId: certificateRequest.id,
+      status: 'issued',
+      certificatePem: certificateRequest.certificate_pem,
+      caCertificatePem,
+      fingerprintSha256: certificateRequest.certificate_fingerprint_sha256,
+      serial: certificateRequest.certificate_serial,
+      issuedAt: certificateRequest.issued_at,
+      expiresAt: certificateRequest.expires_at,
+      activationRequired: !screen.client_certificate_activated_at,
+    };
+  });
+
+  app.post('/api/v1/tv/certificate/activate', {
+    config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
+  }, async (request) => withTransaction(pool, async (client) => {
+    const authenticatedTv = await activeTvFromRequest(client, request, {
+      lock: true,
+      certificateOptional: true,
+      acceptPendingCertificate: true,
+    });
+    if (!authenticatedTv.clientCertificateFingerprint) {
+      throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+    }
+    const promotesPending = (
+      authenticatedTv.screen.client_certificate_pending_fingerprint
+      && timingSafeTextEqual(
+        authenticatedTv.clientCertificateFingerprint,
+        authenticatedTv.screen.client_certificate_pending_fingerprint,
+      )
+    );
+    const activated = await client.query(
+      `UPDATE screens
+       SET client_certificate_fingerprint = CASE
+             WHEN $2 THEN client_certificate_pending_fingerprint
+             ELSE client_certificate_fingerprint
+           END,
+           client_certificate_serial = CASE
+             WHEN $2 THEN client_certificate_pending_serial
+             ELSE client_certificate_serial
+           END,
+           client_certificate_issued_at = CASE
+             WHEN $2 THEN client_certificate_pending_issued_at
+             ELSE client_certificate_issued_at
+           END,
+           client_certificate_expires_at = CASE
+             WHEN $2 THEN client_certificate_pending_expires_at
+             ELSE client_certificate_expires_at
+           END,
+           client_certificate_pending_fingerprint = CASE WHEN $2 THEN NULL
+             ELSE client_certificate_pending_fingerprint END,
+           client_certificate_pending_serial = CASE WHEN $2 THEN NULL
+             ELSE client_certificate_pending_serial END,
+           client_certificate_pending_issued_at = CASE WHEN $2 THEN NULL
+             ELSE client_certificate_pending_issued_at END,
+           client_certificate_pending_expires_at = CASE WHEN $2 THEN NULL
+             ELSE client_certificate_pending_expires_at END,
+           client_certificate_pending_required_at = CASE WHEN $2 THEN NULL
+             ELSE client_certificate_pending_required_at END,
+           client_certificate_activated_at = now(),
+           client_certificate_required_at = now(),
+           updated_at = now()
+       WHERE id = $1
+       RETURNING client_certificate_activated_at,
+                 client_certificate_required_at,
+                 client_certificate_expires_at`,
+      [authenticatedTv.screen.id, promotesPending],
+    );
+    if (promotesPending || !authenticatedTv.screen.client_certificate_activated_at) {
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: 'tv.certificate.activated',
+        targetType: 'tv',
+        targetId: authenticatedTv.screen.id,
+        remoteAddress: request.ip,
+        details: {
+          fingerprintSha256: authenticatedTv.clientCertificateFingerprint,
+          renewed: Boolean(
+            promotesPending
+            && authenticatedTv.screen.client_certificate_fingerprint
+          ),
+        },
+      });
+    }
+    return {
+      activated: true,
+      activatedAt: activated.rows[0].client_certificate_activated_at,
+      requiredAt: activated.rows[0].client_certificate_required_at,
+      expiresAt: activated.rows[0].client_certificate_expires_at,
+      idempotent: (
+        !promotesPending
+        && Boolean(authenticatedTv.screen.client_certificate_activated_at)
+      ),
+    };
+  }));
+
+  app.post('/api/v1/tv/certificate/renew', {
+    config: { rateLimit: { max: 10, timeWindow: '1 hour' } },
+  }, async (request, reply) => withTransaction(pool, async (client) => {
+    const { screen } = await activeTvFromRequest(client, request, { lock: true });
+    if (
+      !screen.client_certificate_expires_at
+      || new Date(screen.client_certificate_expires_at).getTime() - Date.now()
+        > tvCertificateRenewalWindowMs
+    ) {
+      throw Object.assign(new Error('tv_certificate_renewal_not_due'), {
+        statusCode: 409,
+      });
+    }
+    if (screen.client_certificate_pending_fingerprint) {
+      throw Object.assign(new Error('tv_certificate_activation_pending'), {
+        statusCode: 409,
+      });
+    }
+    const existing = await client.query(
+      `SELECT id, status
+       FROM tv_certificate_requests
+       WHERE screen_id = $1 AND status IN ('pending', 'issuing')
+       ORDER BY requested_at DESC
+       LIMIT 1`,
+      [screen.id],
+    );
+    if (existing.rows[0]) {
+      return {
+        requestId: existing.rows[0].id,
+        status: existing.rows[0].status,
+        idempotent: true,
+      };
+    }
+    const current = await client.query(
+      `SELECT public_key_spki, public_key_sha256
+       FROM tv_certificate_requests
+       WHERE screen_id = $1
+         AND status = 'issued'
+         AND certificate_fingerprint_sha256 = $2
+       ORDER BY issued_at DESC
+       LIMIT 1`,
+      [screen.id, screen.client_certificate_fingerprint],
+    );
+    if (!current.rows[0]) {
+      throw Object.assign(new Error('tv_certificate_public_key_missing'), {
+        statusCode: 409,
+      });
+    }
+    const requestId = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO tv_certificate_requests (
+         id, screen_id, public_key_spki, public_key_sha256
+       ) VALUES ($1, $2, $3, $4)`,
+      [
+        requestId,
+        screen.id,
+        current.rows[0].public_key_spki,
+        current.rows[0].public_key_sha256,
+      ],
+    );
+    await appendAudit(client, {
+      actorType: 'tv',
+      action: 'tv.certificate.renewal_requested',
+      targetType: 'tv',
+      targetId: screen.id,
+      remoteAddress: request.ip,
+      details: { requestId },
+    });
+    return reply.code(201).send({
+      requestId,
+      status: 'pending',
+      idempotent: false,
+    });
+  }));
 
   app.post('/api/v1/tv/credentials/rotate', {
     config: { rateLimit: { max: 20, timeWindow: '1 hour' } },
@@ -1588,6 +1976,12 @@ export const registerStudioRoutes = ({
              enrollment_expires_at = NULL,
              credential_generation = credential_generation + 1,
              credentials_revoked_at = now(),
+             client_certificate_revoked_at = now(),
+             client_certificate_pending_fingerprint = NULL,
+             client_certificate_pending_serial = NULL,
+             client_certificate_pending_issued_at = NULL,
+             client_certificate_pending_expires_at = NULL,
+             client_certificate_pending_required_at = NULL,
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation,
@@ -1599,6 +1993,12 @@ export const registerStudioRoutes = ({
         previousGeneration: Number(screen.credential_generation),
         credentialGeneration: Number(updated.rows[0].credential_generation),
       });
+      await client.query(
+        `UPDATE tv_certificate_requests
+         SET status = 'revoked', updated_at = now()
+         WHERE screen_id = $1 AND status IN ('pending', 'issuing')`,
+        [tvId],
+      );
       return {
         tv: {
           id: updated.rows[0].id,
@@ -1642,6 +2042,18 @@ export const registerStudioRoutes = ({
              enrollment_expires_at = $3,
              credential_generation = credential_generation + 1,
              credentials_revoked_at = NULL,
+             client_certificate_fingerprint = NULL,
+             client_certificate_serial = NULL,
+             client_certificate_issued_at = NULL,
+             client_certificate_expires_at = NULL,
+             client_certificate_required_at = NULL,
+             client_certificate_activated_at = NULL,
+             client_certificate_revoked_at = now(),
+             client_certificate_pending_fingerprint = NULL,
+             client_certificate_pending_serial = NULL,
+             client_certificate_pending_issued_at = NULL,
+             client_certificate_pending_expires_at = NULL,
+             client_certificate_pending_required_at = NULL,
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation`,
@@ -1653,6 +2065,12 @@ export const registerStudioRoutes = ({
         credentialGeneration: Number(updated.rows[0].credential_generation),
         expiresAt: enrollmentExpiresAt,
       });
+      await client.query(
+        `UPDATE tv_certificate_requests
+         SET status = 'revoked', updated_at = now()
+         WHERE screen_id = $1 AND status IN ('pending', 'issuing')`,
+        [tvId],
+      );
       return {
         id: updated.rows[0].id,
         enrollmentState: updated.rows[0].enrollment_state,

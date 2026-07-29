@@ -96,7 +96,7 @@ class TvCredentialRotationClient(
                 resolved.port == base.port,
         ) { "Origine de rotation invalide" }
         val payload = body.toString().toByteArray(StandardCharsets.UTF_8)
-        val connection = (URL(resolved.toString()).openConnection() as HttpsURLConnection).apply {
+        val connection = RoomFrameHttps.open(URL(resolved.toString())).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             instanceFollowRedirects = false
