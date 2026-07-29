@@ -11,7 +11,11 @@
 - attestations GitHub/Sigstore de provenance SLSA et de SBOM ajoutées aux
   releases publiques, sans les rendre nécessaires aux imports hors ligne ;
 - restauration PostgreSQL de test stabilisée en attendant la fin du serveur
-  d’initialisation temporaire de l’image Docker.
+  d’initialisation temporaire de l’image Docker ;
+- reprise des anciens schémas PostgreSQL rendue atomique et compatible avec
+  les séquences `serial` liées à leurs tables ;
+- fallback HTTPS par IP contrôlé avec la CA locale malgré l’absence de SNI
+  autorisée pour une adresse IP littérale.
 
 ## 0.3.0 — 2026-07-25
 

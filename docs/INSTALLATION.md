@@ -113,7 +113,8 @@ DNS à créer dans la zone interne : roomframe.example.local  A  192.0.2.20
 Le certificat HTTPS de secours contient l’IPv4 détectée. Caddy utilise aussi
 cette IPv4 comme SNI par défaut afin que les clients qui n’envoient aucun nom
 de serveur lors d’un accès direct par IP reçoivent tout de même le bon
-certificat local.
+certificat local. L’installateur contrôle aussi réellement cette URL avec la
+CA locale avant d’annoncer que l’instance est prête.
 
 Les fichiers statiques de l’administration et du simulateur sont servis avec
 `Cache-Control: no-cache` : le navigateur peut les conserver, mais doit les

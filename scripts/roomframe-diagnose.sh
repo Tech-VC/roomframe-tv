@@ -281,6 +281,14 @@ fi
 CA_PATH="$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt"
 if [[ -f "$CA_PATH" ]]; then
   ok "autorité HTTPS locale présente"
+  if [[ -n "${ROOMFRAME_FALLBACK_URL:-}" ]] \
+    && curl -fsS --connect-timeout 3 \
+      --cacert "$CA_PATH" \
+      "${ROOMFRAME_FALLBACK_URL}/health" >/dev/null; then
+    ok "URL HTTPS de secours par IP"
+  else
+    bad "URL HTTPS de secours par IP inaccessible ou non approuvée par la CA locale"
+  fi
 else
   bad "autorité HTTPS locale absente (normal avant le premier démarrage)"
 fi

@@ -218,6 +218,10 @@ grep -Fq 'mode verify_if_given' infra/Caddyfile || {
   echo "Caddy doit vérifier les certificats TV présentés sans bloquer l'administration." >&2
   exit 1
 }
+grep -Fq 'strict_sni_host insecure_off' infra/Caddyfile || {
+  echo "Caddy doit accepter le fallback IP sans SNI malgré client_auth." >&2
+  exit 1
+}
 grep -Fq 'header_up -X-RoomFrame-TLS-Client-Fingerprint' infra/Caddyfile || {
   echo "Caddy doit supprimer toute empreinte TLS fournie par le client." >&2
   exit 1

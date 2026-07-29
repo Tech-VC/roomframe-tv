@@ -6,6 +6,14 @@
   # Les clients TLS n'envoient pas tous un SNI pour une URL contenant une IP.
   # Présenter alors explicitement le certificat de l'IPv4 de secours.
   default_sni __ROOMFRAME_DEFAULT_SNI__
+  servers :443 {
+    # Une adresse IP littérale est interdite dans SNI. Caddy active sinon le
+    # contrôle SNI/Host strict dès que client_auth est présent et répond 421
+    # aux clients IP sans SNI. Les deux alias servent exactement la même
+    # application avec la même politique verify_if_given ; l'API lie ensuite
+    # chaque certificat TV vérifié à son identité, sans autorisation par Host.
+    strict_sni_host insecure_off
+  }
 }
 
 __ROOMFRAME_SITE_ADDRESSES__ {

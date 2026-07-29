@@ -40,7 +40,12 @@ l’enrôlement d’une passkey.
 
 Caddy présente le certificat de cette IPv4 comme certificat SNI par défaut :
 l’URL de secours fonctionne aussi avec les clients TLS qui n’envoient pas de
-nom de serveur pour une adresse IP.
+nom de serveur pour une adresse IP. Le contrôle strict entre SNI et `Host`,
+activé automatiquement par Caddy avec l’authentification cliente, est désactivé
+pour cette origine unique : une IPv4 littérale n’est pas autorisée dans SNI.
+Cela ne crée pas deux politiques de confiance : le FQDN et l’IP servent la même
+application avec le même `verify_if_given`, puis l’API lie l’empreinte du
+certificat effectivement vérifié à l’identité et à la clé rotative de la TV.
 
 La même origine accepte les navigateurs sans certificat client et vérifie les
 certificats individuels lorsqu’une TV en présente un. L’API les rend

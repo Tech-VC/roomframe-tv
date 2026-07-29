@@ -836,6 +836,12 @@ if [[ "$NO_START" -eq 0 ]]; then
   "$INSTALL_DIR/scripts/roomframe-sync-server-ca.sh" >/dev/null \
     || fail "La publication de la CA HTTPS pour l’enrôlement TV a échoué."
 
+  if ! curl -fsS --connect-timeout 3 \
+    --cacert "$DATA_DIR/caddy/caddy/pki/authorities/local/root.crt" \
+    "${FALLBACK_URL}/health" >/dev/null; then
+    fail "L'URL HTTPS de secours par IP ne répond pas avec la CA locale."
+  fi
+
   for background_service in worker update-poller; do
     background_id="$(
       "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q "$background_service" 2>/dev/null || true

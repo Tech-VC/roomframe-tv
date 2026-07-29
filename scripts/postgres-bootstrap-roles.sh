@@ -51,6 +51,8 @@ psql \
   --set=database_name="$database_name" \
   --set ON_ERROR_STOP=1 \
   --quiet <<'SQL'
+BEGIN;
+
 DO $roomframe_roles$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'roomframe_owner') THEN
@@ -136,15 +138,9 @@ BEGIN
     JOIN pg_roles owner_role ON owner_role.oid = relation.relowner
     WHERE namespace.nspname = 'public'
       AND owner_role.rolname = 'roomframe'
-      AND relation.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+      AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
   LOOP
     CASE object.object_kind
-      WHEN 'S' THEN
-        EXECUTE format(
-          'ALTER SEQUENCE %I.%I OWNER TO roomframe_owner',
-          object.schema_name,
-          object.object_name
-        );
       WHEN 'v' THEN
         EXECUTE format(
           'ALTER VIEW %I.%I OWNER TO roomframe_owner',
@@ -170,6 +166,27 @@ BEGIN
           object.object_name
         );
     END CASE;
+  END LOOP;
+
+  -- Une séquence SERIAL/IDENTITY doit changer de propriétaire avec sa table.
+  -- Après les tables, seules les séquences autonomes encore détenues par
+  -- l'ancien rôle restent à transférer.
+  FOR object IN
+    SELECT
+      namespace.nspname AS schema_name,
+      relation.relname AS object_name
+    FROM pg_class relation
+    JOIN pg_namespace namespace ON namespace.oid = relation.relnamespace
+    JOIN pg_roles owner_role ON owner_role.oid = relation.relowner
+    WHERE namespace.nspname = 'public'
+      AND owner_role.rolname = 'roomframe'
+      AND relation.relkind = 'S'
+  LOOP
+    EXECUTE format(
+      'ALTER SEQUENCE %I.%I OWNER TO roomframe_owner',
+      object.schema_name,
+      object.object_name
+    );
   END LOOP;
 
   FOR object IN
@@ -206,6 +223,8 @@ BEGIN
   END IF;
 END
 $roomframe_schema_migrations$;
+
+COMMIT;
 SQL
 
 printf '%s\n' "Rôles PostgreSQL RoomFrame prêts."

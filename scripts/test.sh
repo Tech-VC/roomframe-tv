@@ -125,7 +125,7 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
 
   docker exec "$test_container" \
     psql --username=roomframe --dbname=roomframe_test --set ON_ERROR_STOP=1 \
-      --command 'CREATE TABLE public.legacy_role_upgrade_probe (id integer)' \
+      --command 'CREATE TABLE public.legacy_role_upgrade_probe (id serial PRIMARY KEY)' \
       >/dev/null
   docker exec \
     -e ROOMFRAME_DB_HOST=/var/run/postgresql \
@@ -139,6 +139,15 @@ if [[ -z "${ROOMFRAME_TEST_DB_HOST:-}" ]]; then
         --command "
           SELECT
             pg_get_userbyid(relowner) = 'roomframe_owner'
+            AND (
+              SELECT pg_get_userbyid(sequence.relowner) = 'roomframe_owner'
+              FROM pg_class AS sequence
+              WHERE sequence.oid =
+                pg_get_serial_sequence(
+                  'public.legacy_role_upgrade_probe',
+                  'id'
+                )::regclass
+            )
             AND has_table_privilege(
               'roomframe_runtime',
               'public.legacy_role_upgrade_probe',

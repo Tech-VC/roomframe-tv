@@ -417,7 +417,7 @@ with tarfile.open(archive_path, "r:gz") as archive:
         member.uname = member.gname = ""
         member.mode = 0o755 if member.isdir() or member.mode & 0o111 else 0o644
         members.append(member)
-    archive.extractall(destination, members=members)
+    archive.extractall(destination, members=members, filter="fully_trusted")
 PY
 
 python3 - "$CANDIDATE" "$RELEASE_VERSION" "$RELEASE_REAL" <<'PY'
