@@ -1,9 +1,19 @@
 # RoomFrame TV
 
+[![Validation](https://github.com/Tech-VC/roomframe-tv/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/Tech-VC/roomframe-tv/actions/workflows/validate.yml)
+
 RoomFrame TV est une solution open source et **local-first** pour transformer
 une Google TV ou Android TV en portail d’accueil personnalisable. Le serveur,
 l’administration et les téléviseurs continuent de servir l’expérience locale
 sans dépendre d’un service cloud.
+
+En bref :
+
+- un serveur Debian local avec administration HTTPS ;
+- un Studio visuel pour composer et programmer l’accueil ;
+- une application Android TV native qui démarre depuis son cache hors ligne ;
+- des interfaces prévues pour HDMI, Cast, AirPlay et l’alimentation, sans
+  annoncer de compatibilité matérielle avant validation sur le téléviseur.
 
 Le dépôt public est volontairement neutre. L’organisation, le domaine local,
 les salles, les comptes, les médias, les certificats et les règles sont créés
@@ -28,6 +38,14 @@ sur chaque instance après l’installation.
 Le CT, la VM ou le serveur Debian doit déjà posséder son IPv4, son masque, sa
 passerelle et ses DNS. RoomFrame lit cet état, mais ne modifie jamais le réseau
 de l’hôte.
+
+Installation depuis `main`, en une commande :
+
+```bash
+git clone --depth 1 https://github.com/Tech-VC/roomframe-tv.git roomframe-tv \
+  && cd roomframe-tv \
+  && sudo ./install.sh
+```
 
 Depuis le dépôt public :
 
@@ -70,7 +88,8 @@ Simulateur TV             : https://roomframe.example.local/simulator/
 L’administration sur `/` et l’API sur `/api/` partagent une seule origine
 HTTPS. Caddy est le seul service publié sur le LAN.
 
-Voir [docs/INSTALLATION.md](docs/INSTALLATION.md) et
+Voir le [guide de démarrage rapide](docs/QUICKSTART.md),
+[docs/INSTALLATION.md](docs/INSTALLATION.md) et
 [docs/NETWORKING.md](docs/NETWORKING.md).
 
 ## Première configuration
