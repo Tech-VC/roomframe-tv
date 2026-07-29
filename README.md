@@ -131,6 +131,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   Keystore, appairage chiffré de la CA HTTPS, certificat client individuel,
   mTLS, rotation automatique à deux phases, renouvellement, révocation et
   réenrôlement administrés ;
+- découverte locale DNS-SD `_roomframe._tcp` sans balayage, manifeste HTTPS
+  ECDSA P-256 signé et validation finale de la CA liée au ticket, avec saisie
+  manuelle du FQDN ou de l’IP toujours disponible ;
 - synchronisation par révision avec hashes des documents et médias ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
@@ -181,6 +184,7 @@ sudo roomframe-trust-update-key --key-id release-main \
 sudo roomframe-trust-update-key --revoke --key-id release-main \
   --sha256 EMPREINTE_SHA256
 sudo roomframe-sync-server-ca
+sudo roomframe-refresh-discovery
 sudo systemctl status roomframe-tv-certificate-broker.timer
 sudo systemctl status roomframe-backup-daily.timer
 sudo systemctl status roomframe-backup-weekly.timer
@@ -230,11 +234,11 @@ puis démarre automatiquement un PostgreSQL 17 éphémère lorsqu’un serveur d
 test n’est pas fourni. Il y provisionne les rôles propriétaire, migration et
 runtime, puis vérifie que le runtime ne possède aucun droit DDL. Il exécute
 27 tests Studio/synchronisation TV et
-23 tests API, contrôle de syntaxe serveur inclus, soit 50 tests. Les workflows
-GitHub de validation et de release ajoutent deux scénarios root dédiés au
+24 tests API, contrôle de syntaxe serveur inclus, soit 51 tests. Les workflows
+GitHub de validation et de release ajoutent trois scénarios root dédiés au
 chiffrement, à la rétention, au trousseau et à la restauration PostgreSQL
-isolée d’une sauvegarde. Les scénarios couvrent
-notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
+isolée d’une sauvegarde, ainsi qu’à la découverte locale signée. Les scénarios
+couvrent notamment le bootstrap concurrent, Argon2id/TOTP, les sessions et permissions,
 WebAuthn avec signatures réelles, CSRF, les révisions, l’enrôlement TV, le seed
 unique, la récupération locale,
 les invitations administrateur one-shot, l’activation TOTP sans mot de passe
@@ -267,6 +271,8 @@ Voir [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
   hors matériel, ainsi que l’appairage chiffré de la CA HTTPS par l’APK
   release ; leur activation avec Android Keystore doit encore être observée
   sur la Philips réelle ;
+- DNS-SD, le manifeste ECDSA P-256 et le fallback IP sont implémentés et testés
+  hors matériel ; la réception mDNS sur le firmware Philips reste à observer ;
 - HDMI, Cast, AirPlay, puissance et retour automatique sont des contrats
   d’adaptateurs, pas des capacités Philips annoncées comme fonctionnelles ;
 - PhairPlay n’est pas intégré avant validation de la version Android, de l’ABI

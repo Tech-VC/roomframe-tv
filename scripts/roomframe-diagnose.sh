@@ -26,6 +26,7 @@ source "$RUNTIME_CONFIG"
 set +a
 
 DATA_DIR="${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}"
+CONFIG_DIR="${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}"
 INSTALL_DIR="${ROOMFRAME_INSTALL_DIR:-/opt/roomframe}"
 COMPOSE_COMMAND="${ROOMFRAME_COMPOSE_COMMAND:-$INSTALL_DIR/scripts/roomframe-compose.sh}"
 
@@ -77,6 +78,29 @@ if [[
   fi
 else
   bad "identité de sauvegarde age absente, incohérente ou mal protégée"
+fi
+
+discovery_identity="$CONFIG_DIR/secrets/discovery_signing_key"
+discovery_manifest="$DATA_DIR/pki/discovery/manifest.json"
+discovery_verifier="$INSTALL_DIR/scripts/verify-discovery-manifest.py"
+if [[
+  -f "$discovery_identity"
+  && -s "$discovery_identity"
+  && ! -L "$discovery_identity"
+  && "$(stat -c '%a:%u:%g' "$discovery_identity" 2>/dev/null)" == "400:0:0"
+]] && openssl pkey -in "$discovery_identity" -check -noout >/dev/null 2>&1; then
+  ok "identité de découverte ECDSA root-only"
+else
+  bad "identité de découverte absente, incohérente ou mal protégée"
+fi
+if [[ -x "$discovery_verifier" && -f "$discovery_manifest" ]] \
+  && "$discovery_verifier" \
+    "$discovery_manifest" \
+    --expected-ip "${ROOMFRAME_SERVER_IP:-}" \
+    --expected-host "${ROOMFRAME_PRIMARY_HOST:-}" >/dev/null 2>&1; then
+  ok "manifeste de découverte locale signé et cohérent"
+else
+  bad "manifeste de découverte locale absent ou invalide"
 fi
 
 for secret_name in postgres_password postgres_migrator_password postgres_runtime_password \
@@ -215,6 +239,18 @@ if [[ -d /run/systemd/system ]]; then
       bad "timer de sauvegarde inactif: $backup_timer"
     fi
   done
+  if [[ "${ROOMFRAME_DISCOVERY_AVAHI_ENABLED:-0}" == "1" ]]; then
+    if systemctl is-enabled avahi-daemon >/dev/null 2>&1 \
+      && systemctl is-active avahi-daemon >/dev/null 2>&1 \
+      && [[ -f /etc/avahi/services/roomframe.service ]] \
+      && ! [[ -L /etc/avahi/services/roomframe.service ]]; then
+      ok "annonce locale Avahi _roomframe._tcp active"
+    else
+      bad "annonce locale Avahi activée mais indisponible"
+    fi
+  else
+    note "découverte Avahi désactivée; URL IP et saisie manuelle conservées"
+  fi
 fi
 
 if [[ -n "${ROOMFRAME_PRIMARY_HOST:-}" && -n "${ROOMFRAME_PUBLIC_URL:-}" ]]; then
@@ -224,6 +260,21 @@ if [[ -n "${ROOMFRAME_PRIMARY_HOST:-}" && -n "${ROOMFRAME_PUBLIC_URL:-}" ]]; the
     ok "API HTTPS /health"
   else
     bad "API HTTPS /health inaccessible"
+  fi
+  discovery_http_sha="$(
+    curl -kfsS --connect-timeout 3 \
+      --resolve "${ROOMFRAME_PRIMARY_HOST}:443:127.0.0.1" \
+      "${ROOMFRAME_PUBLIC_URL}/api/v1/discovery" 2>/dev/null \
+      | sha256sum | awk '{print $1}' \
+      || true
+  )"
+  discovery_disk_sha="$(
+    sha256sum "$discovery_manifest" 2>/dev/null | awk '{print $1}' || true
+  )"
+  if [[ -n "$discovery_disk_sha" && "$discovery_http_sha" == "$discovery_disk_sha" ]]; then
+    ok "manifeste de découverte servi sur l'origine HTTPS unique"
+  else
+    bad "manifeste de découverte HTTPS absent ou désynchronisé"
   fi
 fi
 

@@ -202,6 +202,7 @@ héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 ## Enrôlement et synchronisation TV
 
 ```text
+GET  /api/v1/discovery
 GET  /api/v1/tv/trust-bootstrap?deviceId=<UUID>
 POST /api/v1/tv/enroll
 POST /api/v1/tv/credentials/rotate
@@ -215,6 +216,12 @@ POST /api/v1/tv/events
 GET  /api/v1/media/:assetId/:variant
 GET  /api/v1/default-assets/*
 ```
+
+`GET /api/v1/discovery` est servi statiquement par Caddy sur la même origine.
+Son payload suit `contracts/discovery.schema.json` et porte l’origine
+préférée, l’IP de secours, l’empreinte de la CA HTTPS et une signature
+ECDSA P-256. Il ne contient ni secret, ni organisation, ni salle, ni identité
+TV. La signature est vérifiée avant que l’APK ne tente le bootstrap chiffré.
 
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
 `POST /api/v1/tvs/enrollment`. Avant de transmettre la clé temporaire, la TV

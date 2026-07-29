@@ -8,7 +8,13 @@
     <string name="device_admin_label">Agent RoomFrame</string>
     <string name="device_admin_description">Administration locale de la TV dédiée</string>
     <string name="enrollment_title">Enrôler cette TV</string>
-    <string name="enrollment_explanation">Créez un enrôlement dans la régie RoomFrame, puis saisissez ici son serveur HTTPS, son identifiant TV et sa clé à usage unique. La TV vérifie et épingle automatiquement l’autorité HTTPS locale avant d’envoyer la clé.</string>
+    <string name="enrollment_explanation">Créez un enrôlement dans la régie RoomFrame. La recherche locale peut trouver le serveur sans balayage de ports ; vous pouvez toujours saisir son URL HTTPS, l’identifiant TV et la clé à usage unique. La TV vérifie et épingle l’autorité HTTPS avant d’envoyer la clé.</string>
+    <string name="enrollment_discover">Rechercher RoomFrame sur le réseau local</string>
+    <string name="enrollment_discovery_in_progress">Recherche DNS-SD locale et validation du manifeste signé…</string>
+    <string name="enrollment_discovery_empty">Aucun serveur RoomFrame signé trouvé. Utilisez le nom DNS ou l’adresse IP de secours.</string>
+    <string name="enrollment_discovery_found">Serveur signé trouvé : %1$s. Saisissez l’identifiant TV et la clé du ticket.</string>
+    <string name="enrollment_discovery_multiple">%1$d serveurs signés trouvés. Saisissez l’URL du serveur choisi pour éviter toute ambiguïté.</string>
+    <string name="enrollment_discovery_error">Découverte locale impossible : %1$s</string>
     <string name="enrollment_server_url">Serveur HTTPS, par exemple https://roomframe.example.local</string>
     <string name="enrollment_device_id">Identifiant TV</string>
     <string name="enrollment_key">Clé d’enrôlement à usage unique</string>

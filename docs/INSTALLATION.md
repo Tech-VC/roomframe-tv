@@ -481,9 +481,22 @@ L’installateur publie uniquement le certificat public vers :
 ```
 
 La commande idempotente `sudo roomframe-sync-server-ca` refait cette
-synchronisation après un démarrage différé avec `--no-start`. Elle n’expose ni
-la clé racine ni la clé intermédiaire Caddy. `roomframe-diagnose` refuse une
-copie absente, mal protégée ou différente de la CA active.
+synchronisation après un démarrage différé avec `--no-start`, puis régénère
+le manifeste public signé `/api/v1/discovery`. Elle n’expose ni la clé racine
+ni la clé intermédiaire Caddy. `roomframe-diagnose` refuse une copie absente,
+mal protégée ou différente de la CA active.
+
+Par défaut, une installation avec systemd active Avahi et publie uniquement
+`_roomframe._tcp` sur UDP 5353. La clé de signature ECDSA P-256 est créée une
+fois dans `/etc/roomframe/secrets/discovery_signing_key` en `0400` et n’est
+montée dans aucun conteneur. Le manifeste et la clé publique vivent dans
+`/var/lib/roomframe/pki/discovery/`. Pour un réseau où mDNS est interdit :
+
+```bash
+sudo ./install.sh --disable-local-discovery
+```
+
+Le DNS unicast, l’URL IP et la saisie manuelle dans l’APK restent disponibles.
 
 Une autorité distincte destinée aux certificats clients TV est créée une seule
 fois pendant le bootstrap :

@@ -19,6 +19,9 @@ UPDATE_CHANNEL_EXPLICIT=0
 UPDATE_POLL_OVERRIDE="${ROOMFRAME_UPDATE_POLL_MINUTES:-}"
 UPDATE_POLL_EXPLICIT=0
 [[ -z "${ROOMFRAME_UPDATE_POLL_MINUTES+x}" ]] || UPDATE_POLL_EXPLICIT=1
+DISCOVERY_AVAHI_OVERRIDE="${ROOMFRAME_DISCOVERY_AVAHI_ENABLED:-}"
+DISCOVERY_AVAHI_EXPLICIT=0
+[[ -z "${ROOMFRAME_DISCOVERY_AVAHI_ENABLED+x}" ]] || DISCOVERY_AVAHI_EXPLICIT=1
 SOURCE_DIR=""
 NO_START=0
 
@@ -29,7 +32,8 @@ Installation locale de RoomFrame TV
 Usage:
   sudo ./install.sh [--host roomframe.exemple.local] [--source /chemin/du/depot]
                     [--updates-repository owner/repo] [--updates-channel stable|preview]
-                    [--update-poll-minutes 360] [--disable-github-updates] [--no-start]
+                    [--update-poll-minutes 360] [--disable-github-updates]
+                    [--enable-local-discovery|--disable-local-discovery] [--no-start]
 
 Le réseau du serveur Debian/CT doit déjà être configuré. RoomFrame détecte son
 IPv4 et son suffixe DNS, mais ne modifie ni IP, ni masque, ni passerelle, ni DNS.
@@ -69,6 +73,16 @@ while (($#)); do
     --disable-github-updates)
       UPDATE_REPOSITORY_OVERRIDE=""
       UPDATE_REPOSITORY_EXPLICIT=1
+      shift
+      ;;
+    --enable-local-discovery)
+      DISCOVERY_AVAHI_OVERRIDE=1
+      DISCOVERY_AVAHI_EXPLICIT=1
+      shift
+      ;;
+    --disable-local-discovery)
+      DISCOVERY_AVAHI_OVERRIDE=0
+      DISCOVERY_AVAHI_EXPLICIT=1
       shift
       ;;
     --no-start)
@@ -324,9 +338,25 @@ SOURCE_DIR="$(cd -- "$SOURCE_DIR" && pwd)"
   || fail "Unité systemd de sauvegarde hebdomadaire absente."
 [[ -f "$SOURCE_DIR/infra/systemd/roomframe-backup-weekly.timer" ]] \
   || fail "Timer systemd de sauvegarde hebdomadaire absent."
+[[ -f "$SOURCE_DIR/infra/avahi/roomframe.service" ]] \
+  || fail "Modèle de découverte locale Avahi absent."
 [[ -f "$SOURCE_DIR/defaults/experience/manifest.json" ]] || fail "Expérience par défaut incomplète."
 [[ -f "$SOURCE_DIR/scripts/source-excludes.txt" ]] \
   || fail "Liste d’exclusion des sources introuvable."
+
+previous_runtime="$CONFIG_DIR/runtime.conf"
+if [[ "$DISCOVERY_AVAHI_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_DISCOVERY_AVAHI_ENABLED=' "$previous_runtime"; then
+  DISCOVERY_AVAHI_OVERRIDE="$(
+    runtime_value "$previous_runtime" ROOMFRAME_DISCOVERY_AVAHI_ENABLED
+  )"
+fi
+DISCOVERY_AVAHI_OVERRIDE="${DISCOVERY_AVAHI_OVERRIDE:-1}"
+[[ "$DISCOVERY_AVAHI_OVERRIDE" == "0" || "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] \
+  || fail "La découverte locale doit être activée (1) ou désactivée (0)."
+if [[ "${ROOMFRAME_SKIP_SYSTEMD_UNITS:-0}" == "1" || ! -d /run/systemd/system ]]; then
+  DISCOVERY_AVAHI_OVERRIDE=0
+fi
 
 install_dependencies() {
   local need_apt=0 command_name
@@ -334,13 +364,23 @@ install_dependencies() {
     command -v "$command_name" >/dev/null 2>&1 || need_apt=1
   done
   command -v docker >/dev/null 2>&1 || need_apt=1
+  if [[ "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] \
+    && ! command -v avahi-daemon >/dev/null 2>&1; then
+    need_apt=1
+  fi
 
   if [[ "$need_apt" -eq 1 ]]; then
     command -v apt-get >/dev/null 2>&1 || fail "Des dépendances manquent et apt-get est indisponible."
     log "Installation des dépendances système manquantes…"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y ca-certificates curl openssl python3 tar iproute2 coreutils util-linux age docker.io
+    local -a apt_packages
+    apt_packages=(
+      ca-certificates curl openssl python3 tar iproute2 coreutils util-linux age docker.io
+    )
+    [[ "$DISCOVERY_AVAHI_OVERRIDE" == "0" ]] \
+      || apt_packages+=(avahi-daemon)
+    apt-get install -y "${apt_packages[@]}"
   fi
 
   if command -v systemctl >/dev/null 2>&1; then
@@ -470,7 +510,6 @@ elif command -v timedatectl >/dev/null 2>&1; then
 fi
 [[ "$TIMEZONE" =~ ^[A-Za-z0-9_+/-]+$ ]] || TIMEZONE="UTC"
 
-previous_runtime="$CONFIG_DIR/runtime.conf"
 if [[ "$UPDATE_REPOSITORY_EXPLICIT" -eq 0 ]]; then
   if [[ -r "$previous_runtime" ]] \
     && grep -q '^ROOMFRAME_UPDATE_GITHUB_REPOSITORY=' "$previous_runtime"; then
@@ -628,6 +667,7 @@ ROOMFRAME_UPDATE_GITHUB_CHANNEL=${UPDATE_CHANNEL_OVERRIDE}
 ROOMFRAME_UPDATE_POLL_MINUTES=${UPDATE_POLL_OVERRIDE}
 ROOMFRAME_BACKUP_DAILY_KEEP=${BACKUP_DAILY_KEEP}
 ROOMFRAME_BACKUP_WEEKLY_KEEP=${BACKUP_WEEKLY_KEEP}
+ROOMFRAME_DISCOVERY_AVAHI_ENABLED=${DISCOVERY_AVAHI_OVERRIDE}
 RUNTIME
 chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
@@ -707,7 +747,7 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
     roomframe-backup-key roomframe-verify-backup roomframe-restore roomframe-apply-update \
     roomframe-update-broker roomframe-bootstrap-token roomframe-recover-admin \
     roomframe-trust-update-key roomframe-tv-certificate-broker \
-    roomframe-sync-server-ca; do
+    roomframe-sync-server-ca roomframe-refresh-discovery; do
     source_name="$INSTALL_DIR/scripts/${command_name}.sh"
     target_name="/usr/local/sbin/$command_name"
     [[ -x "$source_name" ]] || fail "Commande d'exploitation manquante: $source_name"
@@ -716,6 +756,11 @@ if [[ "${ROOMFRAME_SKIP_COMMAND_LINKS:-0}" != "1" ]]; then
     fi
     ln -sfn "$source_name" "$target_name"
   done
+fi
+
+if [[ -f "$DATA_DIR/pki/server-ca/ca.crt" ]]; then
+  "$INSTALL_DIR/scripts/roomframe-refresh-discovery.sh" >/dev/null \
+    || fail "L'actualisation de la découverte locale signée a échoué."
 fi
 
 if command -v systemctl >/dev/null 2>&1 \
@@ -837,6 +882,8 @@ printf 'Simulateur TV             : %s/simulator/\n' "$PREFERRED_URL"
 printf 'Autorité HTTPS locale     : %s\n' "$CA_PATH"
 printf 'Copie publique CA serveur : %s\n' "$DATA_DIR/pki/server-ca/ca.crt"
 printf 'Autorité cliente TV       : %s\n' "$DATA_DIR/pki/tv-client-ca/ca.crt"
+printf 'Découverte locale signée  : %s\n' \
+  "$([[ "$DISCOVERY_AVAHI_OVERRIDE" == "1" ]] && printf 'Avahi _roomframe._tcp' || printf 'désactivée')"
 printf 'Diagnostic                : sudo roomframe-diagnose\n'
 printf 'Sauvegarde chiffrée        : sudo roomframe-backup\n'
 printf 'Export clé de reprise      : sudo roomframe-backup-key --help\n'

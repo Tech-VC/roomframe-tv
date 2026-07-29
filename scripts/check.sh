@@ -53,6 +53,32 @@ grep -Fq "refuse d'écraser" <<<"$backup_key_help" || {
   echo "L'export de l'identité de sauvegarde doit refuser tout écrasement." >&2
   exit 1
 }
+discovery_help="$(bash scripts/roomframe-refresh-discovery.sh --help)"
+grep -Fq "ne modifie aucune adresse, route" <<<"$discovery_help" || {
+  echo "La découverte locale doit préserver explicitement la configuration réseau." >&2
+  exit 1
+}
+grep -Fq 'ECDSA-P256-SHA256' contracts/discovery.schema.json || {
+  echo "Le contrat de découverte signé compatible Android 12 est absent." >&2
+  exit 1
+}
+grep -Fq '/pki/discovery:/srv/discovery:ro' compose.yaml || {
+  echo "Caddy doit recevoir uniquement le répertoire public de découverte." >&2
+  exit 1
+}
+grep -Fq 'handle /api/v1/discovery' infra/Caddyfile || {
+  echo "Le manifeste de découverte doit rester sur l'origine HTTPS unique." >&2
+  exit 1
+}
+if rg --fixed-strings --line-number \
+  'discovery_signing_key' compose.yaml services/api infra/Caddyfile; then
+  echo "La clé privée de découverte ne doit être montée dans aucun conteneur." >&2
+  exit 1
+fi
+grep -Fq '<type>_roomframe._tcp</type>' infra/avahi/roomframe.service || {
+  echo "L'annonce DNS-SD RoomFrame est absente." >&2
+  exit 1
+}
 grep -Fq 'formatVersion": 2' scripts/roomframe-backup.sh || {
   echo "Les nouvelles sauvegardes doivent utiliser le format chiffré version 2." >&2
   exit 1

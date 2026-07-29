@@ -13,10 +13,12 @@
 - collecte de télémétrie technique limitée, sans contenu vu ni appareil
   personnel.
 
-La découverte locale authentifiée reste une étape à venir. WebAuthn est
-implémenté pour les comptes administrateur ; l’appairage de la CA HTTPS, les
-certificats individuels TV et le mTLS sont également implémentés. Les parcours
-propres à la TV restent à observer sur le firmware Philips réel.
+La découverte locale publie une annonce DNS-SD minimale et un manifeste HTTPS
+signé en ECDSA P-256. Elle ne devient authentifiée qu’avec l’étape suivante :
+la CA chiffrée par le ticket doit correspondre à la chaîne TLS observée et à
+l’empreinte du manifeste avant tout envoi du secret. WebAuthn, les certificats
+individuels TV et le mTLS sont également implémentés. Les parcours propres à la
+TV restent à observer sur le firmware Philips réel.
 
 ## Secrets de l’instance
 
@@ -28,11 +30,13 @@ L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 - `bootstrap_token` ;
 - `session_secret` ;
 - `totp_encryption_key` ;
+- `discovery_signing_key` ;
 - `backup_age_identity`.
 
 Le répertoire est `root:root` en mode `0700`. Les fichiers sont réguliers, non
 vides et `root:root`. Les secrets montés dans les conteneurs sont en mode
-`0444` ; l’identité age, jamais montée, est en mode `0400`. Sur l’hôte, aucun
+`0444` ; les identités age et ECDSA de découverte, jamais montées, sont en mode
+`0400`. Sur l’hôte, aucun
 compte non-root ne peut les
 lire puisqu’il ne peut pas traverser le répertoire `0700`. Docker monte ensuite
 individuellement et en lecture seule uniquement les secrets autorisés pour
@@ -233,7 +237,7 @@ statut fermé de la programmation et la révision de synchronisation.
 
 Limites avant production :
 
-- découverte locale authentifiée non implémentée ;
+- réception DNS-SD et parcours de découverte non encore observés sur la Philips ;
 - appairage CA Android non encore observé sur le firmware Philips ;
 - activation Android Keystore/mTLS non encore observée sur la Philips ;
 - pas encore de CRL distribuée à Caddy ; la révocation est autoritative dans
@@ -256,7 +260,8 @@ synchroniser.
 
 ## Conteneurs et base
 
-- seul Caddy publie `443/tcp` ;
+- seul Caddy publie un port applicatif TCP (`443`) ; Avahi peut publier
+  l’annonce DNS-SD minimale sur `5353/udp` ;
 - PostgreSQL reste sur le réseau Docker interne ;
 - `roomframe_owner` ne peut pas se connecter ; `roomframe_migrator` peut
   prendre ce rôle uniquement dans le conteneur de migration one-shot ;

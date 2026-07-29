@@ -12,6 +12,9 @@ TV_CA_CERTIFICATE="$TV_CA_DIR/ca.crt"
 TV_CA_PRIVATE_KEY="$TV_CA_PRIVATE_DIR/ca.key"
 SERVER_CA_PUBLIC_DIR="$DATA_DIR/pki/server-ca"
 SERVER_CA_PUBLIC_CERTIFICATE="$SERVER_CA_PUBLIC_DIR/ca.crt"
+DISCOVERY_PRIVATE_KEY="$SECRETS_DIR/discovery_signing_key"
+DISCOVERY_PUBLIC_DIR="$DATA_DIR/pki/discovery"
+DISCOVERY_PUBLIC_KEY="$DISCOVERY_PUBLIC_DIR/public.pem"
 BACKUP_AGE_IDENTITY="$SECRETS_DIR/backup_age_identity"
 BACKUP_KEYRING="$DATA_DIR/backup-keyring"
 RUNTIME_UID="${ROOMFRAME_RUNTIME_UID:-}"
@@ -64,6 +67,7 @@ managed_paths=(
   "$TV_CA_DIR"
   "$TV_CA_PRIVATE_DIR"
   "$SERVER_CA_PUBLIC_DIR"
+  "$DISCOVERY_PUBLIC_DIR"
   "$DATA_DIR/caddy"
   "$DATA_DIR/caddy-config"
   "$DATA_DIR/seed"
@@ -90,6 +94,7 @@ mkdir -p \
   "$DATA_DIR/pki/update-trust" \
   "$TV_CA_PRIVATE_DIR" \
   "$SERVER_CA_PUBLIC_DIR" \
+  "$DISCOVERY_PUBLIC_DIR" \
   "$DATA_DIR/caddy" \
   "$DATA_DIR/caddy-config" \
   "$SEED_DIR" \
@@ -145,6 +150,47 @@ create_secret_once postgres_runtime_password 48
 create_secret_once bootstrap_token 32
 create_secret_once session_secret 48
 create_secret_once totp_encryption_key 32
+
+if [[ -e "$DISCOVERY_PRIVATE_KEY" ]]; then
+  [[
+    -f "$DISCOVERY_PRIVATE_KEY"
+    && -s "$DISCOVERY_PRIVATE_KEY"
+    && ! -L "$DISCOVERY_PRIVATE_KEY"
+  ]] || fail "l'identité de découverte existante est invalide"
+else
+  discovery_key_temporary="$(mktemp "$SECRETS_DIR/.discovery-key.XXXXXX")"
+  if ! openssl genpkey \
+    -algorithm EC \
+    -pkeyopt ec_paramgen_curve:P-256 \
+    -out "$discovery_key_temporary" >/dev/null 2>&1; then
+    rm -f "$discovery_key_temporary"
+    fail "génération de l'identité de découverte impossible"
+  fi
+  chmod 0400 "$discovery_key_temporary"
+  chown root:root "$discovery_key_temporary"
+  mv -n "$discovery_key_temporary" "$DISCOVERY_PRIVATE_KEY"
+  if [[ -e "$discovery_key_temporary" ]]; then
+    rm -f "$discovery_key_temporary"
+  fi
+fi
+chmod 0400 "$DISCOVERY_PRIVATE_KEY"
+chown root:root "$DISCOVERY_PRIVATE_KEY"
+openssl pkey -in "$DISCOVERY_PRIVATE_KEY" -check -noout >/dev/null 2>&1 \
+  || fail "l'identité de découverte ECDSA P-256 est illisible"
+grep -Fq 'ASN1 OID: prime256v1' < <(
+  openssl pkey -in "$DISCOVERY_PRIVATE_KEY" -pubout -text_pub -noout 2>/dev/null
+) \
+  || fail "l'identité de découverte doit utiliser ECDSA P-256"
+discovery_public_temporary="$(mktemp "$DISCOVERY_PUBLIC_DIR/.public.XXXXXX")"
+openssl pkey -in "$DISCOVERY_PRIVATE_KEY" -pubout \
+  -out "$discovery_public_temporary" >/dev/null 2>&1 \
+  || {
+    rm -f "$discovery_public_temporary"
+    fail "dérivation de la clé publique de découverte impossible"
+  }
+chmod 0644 "$discovery_public_temporary"
+chown root:root "$discovery_public_temporary"
+mv -f "$discovery_public_temporary" "$DISCOVERY_PUBLIC_KEY"
 
 command -v age-keygen >/dev/null 2>&1 \
   || fail "age-keygen est requis pour protéger les sauvegardes"
@@ -294,6 +340,12 @@ chmod 0755 "$SERVER_CA_PUBLIC_DIR"
 if [[ -f "$SERVER_CA_PUBLIC_CERTIFICATE" ]]; then
   chown root:root "$SERVER_CA_PUBLIC_CERTIFICATE"
   chmod 0644 "$SERVER_CA_PUBLIC_CERTIFICATE"
+fi
+chown root:root "$DISCOVERY_PUBLIC_DIR"
+chmod 0755 "$DISCOVERY_PUBLIC_DIR"
+if [[ -f "$DISCOVERY_PUBLIC_KEY" ]]; then
+  chown root:root "$DISCOVERY_PUBLIC_KEY"
+  chmod 0644 "$DISCOVERY_PUBLIC_KEY"
 fi
 
 printf '%s\n' "Bootstrap persistant prêt; secrets existants et seed existant conservés."

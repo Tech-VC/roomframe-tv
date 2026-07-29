@@ -45,3 +45,29 @@ test('un fuseau horaire inconnu est refusé', async () => {
   schedule.timezone = 'Europe/Does_Not_Exist';
   assert.throws(() => validators.assertSchedule(schedule), /invalid_timezone/);
 });
+
+test('le contrat de découverte borne les origines et la signature', () => {
+  const descriptor = {
+    formatVersion: 1,
+    serviceType: '_roomframe._tcp',
+    path: '/api/v1/discovery',
+    origin: 'https://roomframe.example.local',
+    fallbackOrigin: 'https://192.0.2.24',
+    host: 'roomframe.example.local',
+    ipv4: '192.0.2.24',
+    port: 443,
+    serverCaFingerprintSha256: 'a'.repeat(64),
+    generatedAt: '2026-07-29T12:00:00Z',
+    signing: {
+      algorithm: 'ECDSA-P256-SHA256',
+      publicKeySpki: 'A'.repeat(100),
+      publicKeyFingerprintSha256: 'b'.repeat(64),
+      signature: 'C'.repeat(90),
+    },
+  };
+  assert.equal(validators.assertDiscovery(descriptor), descriptor);
+  assert.throws(
+    () => validators.assertDiscovery({ ...descriptor, origin: 'http://192.0.2.24' }),
+    /contract_validation_failed/,
+  );
+});

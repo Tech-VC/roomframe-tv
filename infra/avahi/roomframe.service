@@ -1,0 +1,12 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">RoomFrame sur %h</name>
+  <service>
+    <type>_roomframe._tcp</type>
+    <port>443</port>
+    <txt-record>version=1</txt-record>
+    <txt-record>path=/api/v1/discovery</txt-record>
+    <txt-record>key=__ROOMFRAME_DISCOVERY_KEY_SHA256__</txt-record>
+  </service>
+</service-group>

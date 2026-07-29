@@ -15,13 +15,18 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import java.util.concurrent.Executors
 import org.roomframe.tv.sync.DeviceCredentialStore
+import org.roomframe.tv.sync.DiscoveryCandidate
+import org.roomframe.tv.sync.RoomFrameDiscovery
 import org.roomframe.tv.sync.TvEnrollmentClient
 
 class EnrollmentActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
+    private lateinit var discovery: RoomFrameDiscovery
+    private var discoveredCandidate: DiscoveryCandidate? = null
     private lateinit var serverUrl: EditText
     private lateinit var deviceId: EditText
     private lateinit var enrollmentKey: EditText
+    private lateinit var discover: Button
     private lateinit var submit: Button
     private lateinit var status: TextView
 
@@ -32,10 +37,12 @@ class EnrollmentActivity : Activity() {
             finish()
             return
         }
+        discovery = RoomFrameDiscovery(this)
         setContentView(buildView())
     }
 
     override fun onDestroy() {
+        if (::discovery.isInitialized) discovery.close()
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -58,6 +65,11 @@ class EnrollmentActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         }, row(top = 12, bottom = 24))
 
+        discover = Button(this).apply {
+            text = getString(R.string.enrollment_discover)
+            setOnClickListener { discoverLocalServer() }
+        }
+        root.addView(discover, row(bottom = 12))
         serverUrl = field(
             hint = getString(R.string.enrollment_server_url),
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
@@ -99,6 +111,60 @@ class EnrollmentActivity : Activity() {
         setBackgroundColor(Color.rgb(34, 49, 60))
     }
 
+    private fun discoverLocalServer() {
+        discover.isEnabled = false
+        status.setTextColor(Color.LTGRAY)
+        status.text = getString(R.string.enrollment_discovery_in_progress)
+        runCatching {
+            discovery.discover { result ->
+                if (isFinishing || isDestroyed) return@discover
+                discover.isEnabled = true
+                result.onSuccess { candidates ->
+                    when (candidates.size) {
+                        0 -> {
+                            discoveredCandidate = null
+                            status.setTextColor(Color.rgb(255, 186, 105))
+                            status.text = getString(R.string.enrollment_discovery_empty)
+                        }
+                        1 -> {
+                            discoveredCandidate = candidates.single()
+                            serverUrl.setText(candidates.single().descriptor.origin)
+                            status.setTextColor(Color.rgb(91, 208, 139))
+                            status.text = getString(
+                                R.string.enrollment_discovery_found,
+                                candidates.single().descriptor.host,
+                            )
+                            deviceId.requestFocus()
+                        }
+                        else -> {
+                            discoveredCandidate = null
+                            status.setTextColor(Color.rgb(255, 186, 105))
+                            status.text = getString(
+                                R.string.enrollment_discovery_multiple,
+                                candidates.size,
+                            )
+                            serverUrl.requestFocus()
+                        }
+                    }
+                }.onFailure { error ->
+                    discoveredCandidate = null
+                    status.setTextColor(Color.rgb(255, 126, 105))
+                    status.text = getString(
+                        R.string.enrollment_discovery_error,
+                        error.message?.take(100) ?: getString(R.string.enrollment_unknown_error),
+                    )
+                }
+            }
+        }.onFailure { error ->
+            discover.isEnabled = true
+            status.setTextColor(Color.rgb(255, 126, 105))
+            status.text = getString(
+                R.string.enrollment_discovery_error,
+                error.message?.take(100) ?: getString(R.string.enrollment_unknown_error),
+            )
+        }
+    }
+
     private fun enroll() {
         submit.isEnabled = false
         status.setTextColor(Color.LTGRAY)
@@ -106,9 +172,27 @@ class EnrollmentActivity : Activity() {
         val url = serverUrl.text.toString()
         val id = deviceId.text.toString()
         val key = enrollmentKey.text.toString()
+        val candidate = discoveredCandidate
+        val usesDiscoveredCandidate = candidate != null && runCatching {
+            DeviceCredentialStore.validateServerUrl(url) == candidate.descriptor.origin
+        }.getOrDefault(false)
+        val enrollmentOrigins = buildList {
+            add(url)
+            if (usesDiscoveredCandidate) {
+                add(requireNotNull(candidate).descriptor.fallbackOrigin)
+            }
+        }
         executor.execute {
             runCatching {
-                val credentials = TvEnrollmentClient().enroll(url, id, key)
+                val credentials = TvEnrollmentClient().enroll(
+                    enrollmentOrigins,
+                    id,
+                    key,
+                    candidate
+                        ?.takeIf { usesDiscoveredCandidate }
+                        ?.descriptor
+                        ?.serverCaFingerprintSha256,
+                )
                 DeviceCredentialStore(this).save(credentials)
             }.onSuccess {
                 runOnUiThread {

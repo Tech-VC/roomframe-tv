@@ -56,7 +56,8 @@ TV ── ticket chiffré sans secret sortant ───────────�
        └── déchiffrement + validation de la chaîne ── pin d’instance
 ```
 
-- Caddy est le seul service exposé sur le LAN, sur `443/tcp` ;
+- Caddy est le seul service applicatif TCP exposé sur le LAN, sur `443/tcp` ;
+  Avahi peut annoncer `_roomframe._tcp` sur le lien local en `5353/udp` ;
 - l’administration et l’API partagent une origine ;
 - PostgreSQL et le worker média restent sur un réseau Docker interne ;
 - l’API rejoint seulement les réseaux internes `frontend` et `backend` ;
@@ -155,6 +156,13 @@ embarquée en secours, puis synchronise l’origine HTTPS en arrière-plan. Il
 vérifie le manifeste canonique, chaque document et chaque média, active le
 staging par renommage atomique et revient au pointeur précédent si l’actif est
 corrompu. Les identifiants TV sont chiffrés via Android Keystore.
+
+Avant l’enrôlement, Avahi annonce `_roomframe._tcp` sur le lien local. Caddy
+sert `/api/v1/discovery` depuis un répertoire public en lecture seule. Un
+moteur root signe ce manifeste avec une identité ECDSA P-256 persistante qui
+n’est montée dans aucun conteneur. Android vérifie la signature et la
+cohérence avec l’IPv4 DNS-SD ; l’authentification définitive reste le
+déchiffrement de la CA liée au ticket et le contrôle de la chaîne TLS.
 
 La TV génère en plus une clé RSA non exportable et prouve sa possession pendant
 l’enrôlement. L’API ne signe rien elle-même : un courtier systemd root sans port

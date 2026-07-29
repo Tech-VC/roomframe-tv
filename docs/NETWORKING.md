@@ -62,9 +62,28 @@ supporte ce cas sans tenter de renommer le domaine :
 1. DNS unicast administré en priorité ;
 2. FQDN mémorisé après enrôlement ;
 3. IPv4 de secours ;
-4. découverte locale contrôlée et authentifiée pour le premier contact
-   lorsqu’elle sera implémentée ;
+4. découverte DNS-SD locale `_roomframe._tcp` et manifeste signé pour le
+   premier contact sur le même domaine de broadcast ;
 5. validation de l'autorité ou de l'empreinte avant enrôlement.
+
+Avahi publie uniquement le type de service, le port HTTPS, le chemin du
+manifeste et l’empreinte de sa clé publique. Le manifeste complet reste servi
+sur l’origine HTTPS unique à `/api/v1/discovery` et est signé en ECDSA P-256,
+compatible avec Android 12. La signature protège l’intégrité du candidat mais
+n’est pas, seule, une racine de confiance : l’APK déchiffre ensuite la CA liée
+au ticket, vérifie la chaîne TLS réellement observée et compare son empreinte
+avant d’envoyer la clé d’enrôlement. Un faux annonceur ne reçoit donc pas le
+secret.
+
+L’annonce peut être désactivée sans perdre les autres chemins :
+
+```bash
+sudo ./install.sh --disable-local-discovery
+```
+
+La réactiver exige une réinstallation idempotente avec
+`--enable-local-discovery`. RoomFrame installe alors le paquet Debian
+`avahi-daemon`, mais ne modifie ni adresse, ni route, ni résolveur.
 
 La découverte RoomFrame ne doit pas être confondue avec AirPlay ou Cast. Entre
 VLAN, ces derniers peuvent exiger un relais mDNS filtré et validé séparément.
@@ -77,6 +96,7 @@ VLAN, ces derniers peuvent exiger un relais mDNS filtré et validé séparément
 VLAN TV -> RoomFrame      TCP 443
 VLAN TV -> DNS interne    UDP/TCP 53
 VLAN TV -> NTP interne    UDP 123
+TV <-> multicast local    UDP 5353 (DNS-SD, si activé)
 ```
 
 ### Administration
@@ -100,11 +120,9 @@ l’interface LAN déjà configurée.
 4. appairage chiffré et validation de la CA ;
 5. code d'enrôlement approuvé dans l'administration.
 
-Aucun balayage massif de ports n'est prévu.
-
-Le jalon `0.3.0` prend en charge le FQDN, l’URL IP de secours, HTTPS et
-l’enrôlement explicite côté serveur. L’écran Android accepte manuellement
-l’origine HTTPS, l’identifiant TV et la clé à usage unique ; la CA est
-appairée automatiquement sans confiance aveugle. La découverte locale
-signée reste à implémenter ; elle ne doit pas être remplacée par une découverte
-mDNS non authentifiée.
+Aucun balayage massif de ports n'est effectué. Le client Android 0.3.5 acquiert
+temporairement le verrou multicast exigé sur Android 12, collecte les annonces,
+résout uniquement `_roomframe._tcp`, télécharge et vérifie le manifeste signé,
+puis propose le FQDN. En cas d’échec DNS, il essaie l’origine IP signée avant
+l’envoi unique du secret. Plusieurs serveurs détectés restent un cas ambigu :
+l’APK demande alors une saisie manuelle au lieu d’en choisir un arbitrairement.

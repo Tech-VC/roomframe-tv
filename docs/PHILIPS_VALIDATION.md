@@ -243,10 +243,11 @@ provisionne pas Device Owner et ne valide pas encore l’installation silencieus
 depuis l’administration. Une clé de release durable, conservée hors dépôt,
 devra remplacer la clé debug avant tout vrai canal de mise à jour.
 
-La candidate courante `0.3.4` (`versionCode` 7) ajoute le renderer alimenté par
+La candidate courante `0.3.5` (`versionCode` 8) ajoute le renderer alimenté par
 le cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
 mesures techniques, l’appairage chiffré de la CA serveur, la rotation de
-credential en deux phases et le certificat client mTLS individuel. Elle doit
+credential en deux phases, le certificat client mTLS individuel et la
+découverte DNS-SD avec manifeste ECDSA P-256. Elle doit
 servir à la montée de version depuis le code
 3, mais n’est pas encore installée ni validée sur cette Philips. Les candidates
 intermédiaires `0.3.1` / code 4 et `0.3.2` / code 5 ont uniquement été

@@ -54,14 +54,14 @@ Les tests UI sont bien inclus dans la commande globale :
 node --test prototype/admin/*.test.mjs prototype/tv/*.test.mjs
 ```
 
-Ils comptent 23 scénarios : modèle Studio, salutation mono-ligne, flou borné et
+Ils comptent 27 scénarios : modèle Studio, salutation mono-ligne, flou borné et
 compatibilité avec le validateur API, normalisation du vrai manifeste TV,
 réponse `upToDate`, hashes, préférence de la variante 1080p et traitement
 sûr des réponses API non JSON ou malformées, ainsi que la conservation des
 références de formulaire au-delà des appels asynchrones, la présence et le
 nettoyage du flux de récupération locale, la politique d’update opt-in, les
 scènes temporaires et les confirmations du cycle d’identité TV. Ce lot passe
-`23/23`.
+`27/27`.
 
 Pour utiliser une installation Node non découverte automatiquement :
 
@@ -95,11 +95,12 @@ qu’elle est réservée aux tests. `ROOMFRAME_TEST_SERVER_CA_FILE` pointe vers 
 certificat de CA public de test valide ; `scripts/test.sh` en génère un
 automatiquement et ne conserve pas sa clé privée.
 
-La suite API couvre actuellement 23 scénarios Node, auxquels s’ajoutent les
-27 tests UI, soit 50 tests sur un clone frais. Les workflows GitHub de
-validation et de release appellent `./scripts/test.sh`, puis deux tests root
-dédiés au format `age`, à la rétention, au trousseau historique et à la
-restauration PostgreSQL isolée. Les scénarios comprennent notamment :
+La suite API couvre actuellement 24 scénarios Node, auxquels s’ajoutent les
+27 tests UI, soit 51 tests sur un clone frais. Les workflows GitHub de
+validation et de release appellent `./scripts/test.sh`, puis trois tests root :
+deux dédiés au format `age`, à la rétention, au trousseau historique et à la
+restauration PostgreSQL isolée, ainsi qu’un troisième pour la découverte
+ECDSA P-256 et Avahi. Les scénarios comprennent notamment :
 
 - bootstrap concurrent : une réussite, un conflit ;
 - Argon2id, chiffrement TOTP et vecteurs RFC 6238 ;
@@ -158,6 +159,8 @@ sudo /opt/roomframe/scripts/roomframe-diagnose.sh
 sudo /opt/roomframe/scripts/roomframe-backup.sh
 sudo /opt/roomframe/scripts/roomframe-verify-backup.sh --latest
 sudo /opt/roomframe/scripts/roomframe-backup-key.sh --show-recipient
+sudo /opt/roomframe/scripts/roomframe-refresh-discovery.sh
+sudo systemctl status avahi-daemon
 backup_id="$(find /var/lib/roomframe/backups -mindepth 1 -maxdepth 1 \
   -type d -name '????????T??????Z' -printf '%f\n' | sort | tail -n 1)"
 sudo /opt/roomframe/scripts/roomframe-restore.sh \
@@ -274,6 +277,8 @@ Le launcher compile un accueil natif sans WebView et contient :
 - l’enrôlement HTTPS, la clé TLS RSA non exportable, le certificat client
   individuel, l’appairage/épinglage de la CA HTTPS et le stockage chiffré de
   la clé TV dans Android Keystore ;
+- `RoomFrameDiscovery`, qui résout uniquement `_roomframe._tcp`, vérifie le
+  manifeste ECDSA P-256 et conserve FQDN puis IP comme candidats bornés ;
 - `HttpAppUpdateCoordinator`, le contrôle de l’APK et l’adaptateur
   `PackageInstaller` conditionné à Device Owner ;
 - les contrats HDMI, Cast, AirPlay et puissance ;
@@ -285,15 +290,14 @@ dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
 D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
 client HTTPS, de la distribution APK et des métriques techniques minimales est
 maintenant codée et testée hors matériel. Le provisionnement Device Owner,
-l’installation silencieuse réelle, l’appairage CA, la rotation et le mTLS
-0.3.4 restent à
-valider sur la TV.
+l’installation silencieuse réelle, la découverte DNS-SD, l’appairage CA, la
+rotation et le mTLS 0.3.5 restent à valider sur la TV.
 Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
 peut être déduit des adaptateurs `unsupported` ou des tests JVM.
 
-La candidate courante est `0.3.4` / `versionCode 7`. Elle inclut le cache,
+La candidate courante est `0.3.5` / `versionCode 8`. Elle inclut le cache,
 la synchronisation, la distribution APK, l’appairage chiffré de la CA,
-la rotation de credential et le mTLS ; elle
+la rotation de credential, le mTLS et la découverte locale signée ; elle
 n’est pas considérée installée tant que la TV n’a pas été reconnectée et
 contrôlée. La candidate intermédiaire `0.3.1` / code 4 a seulement été
 construite hors matériel.

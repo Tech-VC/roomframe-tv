@@ -39,6 +39,14 @@ __ROOMFRAME_SITE_ADDRESSES__ {
     }
   }
 
+  handle /api/v1/discovery {
+    header Cache-Control "no-store"
+    header Content-Type "application/json"
+    root * /srv/discovery
+    rewrite * /manifest.json
+    file_server
+  }
+
   redir /api /api/ 308
   handle /api/* {
     reverse_proxy api:8080 {

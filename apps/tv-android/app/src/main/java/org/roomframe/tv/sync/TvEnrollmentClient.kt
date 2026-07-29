@@ -9,13 +9,44 @@ import org.json.JSONObject
 
 class TvEnrollmentClient {
     fun enroll(serverUrl: String, deviceId: String, enrollmentKey: String): DeviceCredentials {
-        val normalizedUrl = DeviceCredentialStore.validateServerUrl(serverUrl)
+        return enroll(listOf(serverUrl), deviceId, enrollmentKey, null)
+    }
+
+    fun enroll(
+        serverUrls: List<String>,
+        deviceId: String,
+        enrollmentKey: String,
+        expectedServerCaFingerprintSha256: String? = null,
+    ): DeviceCredentials {
+        val normalizedUrls = serverUrls
+            .map(DeviceCredentialStore::validateServerUrl)
+            .distinct()
+        require(normalizedUrls.isNotEmpty() && normalizedUrls.size <= 2) {
+            "Une ou deux origines RoomFrame sont attendues"
+        }
         val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
         DeviceCredentialStore.validateDeviceKey(enrollmentKey)
-        ServerTrustBootstrapClient().bootstrap(
-            normalizedUrl,
-            normalizedId,
-            enrollmentKey,
+        if (expectedServerCaFingerprintSha256 != null) {
+            require(expectedServerCaFingerprintSha256.matches(Regex("^[0-9a-f]{64}$"))) {
+                "Empreinte de CA HTTPS attendue invalide"
+            }
+        }
+        var bootstrapFailure: Throwable? = null
+        val normalizedUrl = normalizedUrls.firstOrNull { candidate ->
+            runCatching {
+                val fingerprint = ServerTrustBootstrapClient().bootstrap(
+                    candidate,
+                    normalizedId,
+                    enrollmentKey,
+                )
+                require(
+                    expectedServerCaFingerprintSha256 == null ||
+                        fingerprint == expectedServerCaFingerprintSha256,
+                ) { "La CA HTTPS ne correspond pas au manifeste de découverte" }
+            }.onFailure { bootstrapFailure = it }.isSuccess
+        } ?: throw IllegalStateException(
+            "Aucune origine RoomFrame n'a validé l'autorité HTTPS",
+            bootstrapFailure,
         )
         val certificateProof = TvClientCertificateStore().enrollmentProof(
             normalizedId,

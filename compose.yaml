@@ -51,6 +51,7 @@ services:
       - ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./prototype/admin:/srv/admin:ro
       - ./prototype/tv:/srv/simulator:ro
+      - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/discovery:/srv/discovery:ro
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy:/data
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/caddy-config:/config
       - ${ROOMFRAME_DATA_DIR:-/var/lib/roomframe}/pki/tv-client-ca/ca.crt:/etc/roomframe/tv-client-ca.crt:ro
