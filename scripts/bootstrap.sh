@@ -151,6 +151,22 @@ create_secret_once bootstrap_token 32
 create_secret_once session_secret 48
 create_secret_once totp_encryption_key 32
 
+# Ce fichier reste vide en mode d'évaluation. Un abonnement commercial peut y
+# déposer sa clé sans jamais l'ajouter au dépôt ni au runtime.conf.
+WEATHER_API_KEY="$SECRETS_DIR/weather_api_key"
+[[ ! -L "$WEATHER_API_KEY" ]] \
+  || fail "un secret météo ne peut pas être un lien symbolique"
+if [[ ! -e "$WEATHER_API_KEY" ]]; then
+  weather_key_temporary="$(mktemp "$SECRETS_DIR/.weather-api-key.XXXXXX")"
+  chmod 0444 "$weather_key_temporary"
+  chown root:root "$weather_key_temporary"
+  mv -n "$weather_key_temporary" "$WEATHER_API_KEY"
+  [[ ! -e "$weather_key_temporary" ]] || rm -f "$weather_key_temporary"
+fi
+[[ -f "$WEATHER_API_KEY" ]] || fail "le secret météo existant est invalide"
+chmod 0444 "$WEATHER_API_KEY"
+chown root:root "$WEATHER_API_KEY"
+
 if [[ -e "$DISCOVERY_PRIVATE_KEY" ]]; then
   [[
     -f "$DISCOVERY_PRIVATE_KEY"

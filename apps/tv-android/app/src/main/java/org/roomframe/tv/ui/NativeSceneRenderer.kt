@@ -34,6 +34,27 @@ import org.roomframe.tv.experience.ExperienceSnapshot
 import org.roomframe.tv.experience.NodeKind
 import org.roomframe.tv.experience.SceneNodeDocument
 
+internal fun weatherDisplayLocation(value: String): String = value
+    .trim()
+    .replace(Regex("\\s+\\d{4,6}$"), "")
+    .trim()
+
+internal fun weatherIconForCode(code: Int?): String = when (code) {
+    0 -> "☀️"
+    1, 2 -> "⛅️"
+    3 -> "☁️"
+    45, 48 -> "🌫️"
+    51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82 -> "🌧️"
+    71, 73, 75, 77, 85, 86 -> "❄️"
+    95, 96, 99 -> "⛈️"
+    else -> "🌡️"
+}
+
+internal fun clockPattern(showDate: Boolean, format: String): String {
+    val time = if (format == "12h") "h:mm a" else "HH'h'mm"
+    return if (showDate) "d MMMM - $time" else time
+}
+
 class NativeSceneRenderer(
     private val activity: Activity,
     private val adapters: DeviceAdapters,
@@ -124,7 +145,7 @@ class NativeSceneRenderer(
     private fun renderNode(node: SceneNodeDocument): View? = when (node.kind) {
         NodeKind.TEXT -> textNode(node)
         NodeKind.CLOCK -> clockNode(node)
-        NodeKind.WEATHER -> simpleTextNode(node, node.properties.label ?: "Météo")
+        NodeKind.WEATHER -> weatherNode(node)
         NodeKind.MESSAGE -> messageNode(node)
         NodeKind.IMAGE -> mediaNode(node, preferredVariant = "1080p")
         NodeKind.VIDEO -> videoNode(node)
@@ -147,8 +168,8 @@ class NativeSceneRenderer(
                 scenePx((if (greeting) 44f else 34f) * node.properties.fontScale),
             )
             if (greeting) {
-                isSingleLine = true
-                maxLines = 1
+                isSingleLine = false
+                maxLines = node.properties.maxLines.coerceIn(1, 2)
                 ellipsize = TextUtils.TruncateAt.END
                 setAutoSizeTextTypeUniformWithConfiguration(
                     scenePx(28f).roundToInt(),
@@ -164,19 +185,44 @@ class NativeSceneRenderer(
     }
 
     private fun clockNode(node: SceneNodeDocument): TextClock = TextClock(activity).apply {
-        val time = if (node.properties.format == "12h") "h:mm a" else "HH:mm"
-        val displayed = if (node.properties.showDate) "EEE d MMM · $time" else time
+        val displayed = clockPattern(node.properties.showDate, node.properties.format)
         format24Hour = displayed
         format12Hour = displayed
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(36f * node.properties.fontScale))
+        setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(44f * node.properties.fontScale))
         setTextColor(Color.WHITE)
         typeface = sceneTypeface()
         gravity = Gravity.END or Gravity.CENTER_VERTICAL
         includeFontPadding = false
-        contentDescription = "Heure"
+        contentDescription = if (node.properties.showDate) "Date et heure" else "Heure"
     }
 
-    private fun messageNode(node: SceneNodeDocument): View {
+    private fun weatherNode(node: SceneNodeDocument): View {
+        val reading = node.properties.locationKey?.let(snapshot.weather.readings::get)
+        val location = weatherDisplayLocation(node.properties.location ?: reading?.location ?: "Météo")
+        val value = when {
+            reading?.temperature != null -> {
+                "$location\n${weatherIconForCode(reading.weatherCode)} ${reading.temperature.roundToInt()} ${reading.temperatureUnit} · ${reading.condition ?: "Conditions inconnues"}"
+            }
+            node.properties.locationKey != null -> "$location\nDonnées indisponibles"
+            else -> "Météo à configurer"
+        }
+        return LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            addView(baseText(node).apply {
+                text = value
+                setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(20f * node.properties.fontScale))
+                gravity = Gravity.END
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+            })
+            contentDescription = "$value. ${snapshot.weather.attributionLabel}"
+        }
+    }
+
+    private fun messageNode(node: SceneNodeDocument): View? {
+        val messages = snapshot.messages.take(node.properties.maximumItems)
+        if (messages.isEmpty()) return null
         val container = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(scenePx(24f).roundToInt(), scenePx(20f).roundToInt(), scenePx(24f).roundToInt(), 0)
@@ -189,9 +235,7 @@ class NativeSceneRenderer(
             typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
             isSingleLine = true
         })
-        snapshot.messages
-            .take(node.properties.maximumItems)
-            .forEach { message ->
+        messages.forEach { message ->
                 container.addView(baseText(node).apply {
                     text = listOf(message.title, message.body).filter(String::isNotBlank).joinToString("\n")
                     setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(18f))
@@ -241,6 +285,8 @@ class NativeSceneRenderer(
             } else {
                 ImageView.ScaleType.FIT_CENTER
             }
+            val padding = scenePx(8f).roundToInt()
+            setPadding(padding, padding, padding, padding)
             contentDescription = branding.displayName
         }
     }
@@ -254,9 +300,11 @@ class NativeSceneRenderer(
             typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(scenePx(22f).roundToInt(), 0, scenePx(22f).roundToInt(), 0)
-            setCompoundDrawablesRelativeWithIntrinsicBounds(sourceIcon(source), 0, 0, 0)
+            val icon = sourceIcon(source, adapter)
+            val iconSize = scenePx(58f).roundToInt()
+            icon?.setBounds(0, 0, iconSize, iconSize)
+            setCompoundDrawablesRelative(icon, null, null, null)
             compoundDrawablePadding = scenePx(18f).roundToInt()
-            compoundDrawableTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
             setBackgroundColor(withAlpha(parseColor(branding.primary, Color.BLACK), 0xCC))
             isFocusable = true
             id = View.generateViewId()
@@ -378,7 +426,12 @@ class NativeSceneRenderer(
         else -> null
     }
 
-    private fun sourceIcon(source: String): Int = when (source) {
+    private fun sourceIcon(source: String, adapter: SourceAdapter?): Drawable? =
+        adapter?.brandedIcon()?.mutate() ?: sourceIconResource(source).takeIf { it != 0 }
+            ?.let(activity::getDrawable)
+            ?.mutate()
+
+    private fun sourceIconResource(source: String): Int = when (source) {
         "airplay" -> R.drawable.ic_source_airplay
         "cast" -> R.drawable.ic_source_cast
         "hdmi" -> R.drawable.ic_source_hdmi

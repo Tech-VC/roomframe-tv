@@ -470,12 +470,12 @@ if docker compose version >/dev/null 2>&1; then
   ROOMFRAME_VERSION="$RELEASE_VERSION" \
   ROOMFRAME_INSTALL_DIR="$CANDIDATE" \
     docker compose --env-file /dev/null -f "$CANDIDATE/compose.yaml" \
-      build api worker update-poller
+      build api worker weather-gateway update-poller
 elif command -v docker-compose >/dev/null 2>&1; then
   ROOMFRAME_VERSION="$RELEASE_VERSION" \
   ROOMFRAME_INSTALL_DIR="$CANDIDATE" \
     docker-compose --env-file /dev/null -f "$CANDIDATE/compose.yaml" \
-      build api worker update-poller
+      build api worker weather-gateway update-poller
 else
   fail "Docker Compose est introuvable"
 fi

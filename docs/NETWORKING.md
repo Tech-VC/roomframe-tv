@@ -52,11 +52,12 @@ certificats individuels lorsqu’une TV en présente un. L’API les rend
 obligatoires uniquement après leur activation pour l’identité TV concernée ;
 aucun second port ou hôte mTLS n’est nécessaire.
 
-Au premier enrôlement, l’APK effectue un GET sans secret pour obtenir une
-enveloppe de CA chiffrée par le ticket. Il ne transmet la clé à usage unique
-qu’après déchiffrement, contrôle de la chaîne TLS réellement rencontrée,
-validation du nom/IP et épinglage local de la CA. Cette étape fonctionne avec
-le FQDN comme avec l’URL IP de secours.
+Au premier enrôlement, l’APK dérive localement un identifiant SHA-256 du code
+affiché par le Studio et utilise uniquement cet identifiant pour récupérer une
+enveloppe chiffrée. Le code lisible reste sur la TV. Elle déchiffre la CA et la
+clé longue, contrôle la chaîne TLS réellement rencontrée, valide le nom ou
+l’IP et épingle la CA avant de transmettre la clé d’enrôlement. Cette étape
+fonctionne avec le FQDN comme avec l’URL IP de secours.
 
 ## Cas particulier de `.local`
 
@@ -119,15 +120,17 @@ l’interface LAN déjà configurée.
 
 ## Ordre de découverte cible côté TV
 
-1. FQDN provisionné ou déjà mémorisé ;
-2. découverte locale signée sur le VLAN autorisé ;
-3. adresse IP ou nom saisi manuellement ;
+1. découverte locale signée sur le VLAN autorisé ;
+2. si un seul serveur est trouvé, saisie du code d’installation ;
+3. sinon, ou à la demande de l’opérateur, adresse HTTPS ou IP saisie
+   manuellement puis le même code ;
 4. appairage chiffré et validation de la CA ;
-5. code d'enrôlement approuvé dans l'administration.
+5. mémorisation de l’origine validée pour les synchronisations suivantes.
 
 Aucun balayage massif de ports n'est effectué. Le client Android 0.3.5 acquiert
 temporairement le verrou multicast exigé sur Android 12, collecte les annonces,
 résout uniquement `_roomframe._tcp`, télécharge et vérifie le manifeste signé,
-puis propose le FQDN. En cas d’échec DNS, il essaie l’origine IP signée avant
-l’envoi unique du secret. Plusieurs serveurs détectés restent un cas ambigu :
-l’APK demande alors une saisie manuelle au lieu d’en choisir un arbitrairement.
+puis propose le FQDN. En cas d’échec DNS, il essaie l’origine IP signée. Zéro
+ou plusieurs serveurs détectés rendent immédiatement visible la saisie
+manuelle au lieu d’imposer la découverte ou de choisir arbitrairement. Le
+bouton manuel reste disponible même lorsqu’un serveur a été détecté.

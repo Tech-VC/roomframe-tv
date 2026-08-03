@@ -2,6 +2,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
   DEFAULT_SCENE,
+  activeMessagesForNode,
   cloneScene,
   createNode,
   nodeDisplayText,
@@ -10,14 +11,16 @@ import {
   normalizeScene,
   setNodeDisplayText,
   validateScene,
-} from "./scene-model.js?v=0.3.0-ui12";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui12";
+  weatherReadingForNode,
+} from "./scene-model.js?v=0.3.0-ui19";
+import { paletteFromRgba } from "./logo-palette.js?v=0.3.0-ui19";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui15";
 import {
   creationOptionsFromJSON,
   credentialToJSON,
   passkeysAvailable,
   requestOptionsFromJSON,
-} from "./passkey-client.js?v=0.3.0-ui12";
+} from "./passkey-client.js?v=0.3.0-ui13";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -74,9 +77,9 @@ const sourceGlyph = (source) => {
 
 const api = {
   csrfToken: "",
-  async request(path, { method = "GET", body, authenticated = method === "POST" } = {}) {
+  async request(path, { method = "GET", body, authenticated = method === "POST", signal } = {}) {
     const headers = { Accept: "application/json" };
-    const options = { method, headers, credentials: "same-origin", cache: "no-store" };
+    const options = { method, headers, credentials: "same-origin", cache: "no-store", signal };
     if (body instanceof FormData) options.body = body;
     else if (body !== undefined) {
       headers["content-type"] = "application/json";
@@ -91,7 +94,7 @@ const api = {
     this.csrfToken = response.headers.get("x-csrf-token") || payload?.csrfToken || payload?.session?.csrfToken || this.csrfToken;
     return payload;
   },
-  get(path) { return this.request(path, { authenticated: false }); },
+  get(path, options = {}) { return this.request(path, { ...options, authenticated: false }); },
   post(path, body, authenticated = true) { return this.request(path, { method: "POST", body, authenticated }); },
   put(path, body, authenticated = true) { return this.request(path, { method: "PUT", body, authenticated }); },
 };
@@ -99,6 +102,7 @@ const api = {
 const state = {
   bootstrapStatus: null,
   instance: null,
+  persistedIdentity: null,
   session: null,
   scene: null,
   scenes: [],
@@ -121,6 +125,9 @@ const state = {
   releaseSource: null,
   serverUpdatePolicy: null,
   measuredMetrics: null,
+  weather: null,
+  weatherSuggestions: [],
+  weatherSuggestionIndex: -1,
   enrollmentTicket: null,
   tvCredentialAction: null,
   tvCredentialReturnFocus: null,
@@ -140,6 +147,8 @@ const state = {
   passkeyReturnFocus: null,
   activationChallengeId: null,
   studioLoaded: false,
+  pendingBrandPalette: null,
+  logoPaletteRequest: 0,
 };
 
 const refs = {
@@ -174,6 +183,8 @@ const refs = {
 };
 
 let toastTimer;
+let weatherSearchTimer;
+let weatherSearchController;
 const toast = (message, error = false) => {
   clearTimeout(toastTimer);
   refs.toast.textContent = message;
@@ -249,6 +260,23 @@ const sessionHasPermission = (permission) => {
     && (permissions.includes("*") || permissions.includes(permission));
 };
 
+const switchView = (view, { focus = false } = {}) => {
+  const panel = $(`#view-${view}`);
+  const button = $(`.section[data-view="${view}"]`);
+  if (!panel || !button) return;
+  $$(".section").forEach((item) => {
+    const active = item === button;
+    item.classList.toggle("on", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  });
+  $$(".workspace-panel").forEach((item) => item.classList.toggle("on", item === panel));
+  if (focus) {
+    panel.querySelector("h1, h2")?.focus({ preventScroll: true });
+    panel.scrollTo?.({ top: 0, behavior: "instant" });
+  }
+};
+
 const applyBranding = (instanceOrIdentity = {}) => {
   const branding = normalizeBranding(instanceOrIdentity.branding);
   const displayName = String(instanceOrIdentity.displayName || "RoomFrame").trim();
@@ -318,6 +346,7 @@ const enterStudio = async () => {
   renderSecurity();
   await loadStudio();
   await loadSecurityState();
+  switchView("home");
 };
 
 const loadStudio = async (sceneId = null) => {
@@ -328,6 +357,7 @@ const loadStudio = async (sceneId = null) => {
       sceneId ? `studio?sceneId=${encodeURIComponent(sceneId)}` : "studio",
     );
     applyBranding(payload.instance ?? state.bootstrapStatus?.identity ?? {});
+    state.persistedIdentity = structuredClone(state.instance);
     const sourceScene = payload.scene?.document ?? payload.scene ?? payload.draft?.scene ?? payload.currentRevision?.scene ?? payload.layout;
     state.scene = normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE));
     state.sceneId = payload.scene?.id ?? state.scene.layoutId;
@@ -362,6 +392,7 @@ const loadStudio = async (sceneId = null) => {
     state.releaseSource = payload.releaseSource ?? null;
     state.serverUpdatePolicy = payload.serverUpdatePolicy ?? null;
     state.measuredMetrics = payload.measuredMetrics ?? null;
+    state.weather = payload.weather ?? null;
     state.preview = null;
     state.previewSelection = "";
     state.selectedId = state.scene.nodes[0]?.id ?? null;
@@ -559,6 +590,17 @@ const renderNodes = () => {
   const scene = displayedScene();
   const nodes = [];
   for (const node of [...scene.nodes].sort((a, b) => a.zIndex - b.zIndex)) {
+    const messageSource = state.preview?.documents?.messages
+      ?? state.messages.filter(
+        (message) => (message.targetType ?? message.target_type ?? "instance") === "instance",
+      );
+    const messages = node.kind === "message"
+      ? activeMessagesForNode(
+        node,
+        messageSource,
+      )
+      : [];
+    if (node.kind === "message" && messages.length === 0) continue;
     const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
     const selected = !state.preview && node.id === state.selectedId;
     const element = make("div", `node kind-${node.kind}${roleClass}${selected ? " selected" : ""}`);
@@ -588,10 +630,20 @@ const renderNodes = () => {
       element.append(
         sourceGlyph(node.props?.source),
         make("span", "node-text", nodeDisplayText(node)),
-        make("span", "source-action", "↗"),
       );
+    } else if (node.kind === "message") {
+      element.append(make("strong", "message-heading", node.props.title ?? "MESSAGES"));
+      const list = make("div", "message-list");
+      for (const message of messages) {
+        const entry = make("article", "message-entry");
+        if (message.title) entry.append(make("b", "", message.title));
+        if (message.body) entry.append(make("p", "", message.body));
+        list.append(entry);
+      }
+      element.append(list);
     } else {
-      element.append(make("span", "node-text", nodeDisplayText(node)));
+      const weather = state.preview?.documents?.weather ?? state.weather;
+      element.append(make("span", "node-text", nodeDisplayText(node, weather)));
     }
 
     if (selected) {
@@ -606,6 +658,16 @@ const renderNodes = () => {
   }
   refs.nodeLayer.replaceChildren(...nodes);
   renderObjectList();
+};
+
+const refreshStudioClocks = () => {
+  for (const node of displayedScene()?.nodes ?? []) {
+    if (node.kind !== "clock") continue;
+    const text = refs.nodeLayer.querySelector(
+      `[data-node-id="${CSS.escape(node.id)}"] .node-text`,
+    );
+    if (text) text.textContent = nodeDisplayText(node);
+  }
 };
 
 const renderObjectList = () => {
@@ -623,6 +685,70 @@ const renderObjectList = () => {
   refs.objectList.replaceChildren(...rows);
 };
 
+const closeWeatherSuggestions = () => {
+  state.weatherSuggestions = [];
+  state.weatherSuggestionIndex = -1;
+  $("#weatherSuggestions").replaceChildren();
+  $("#weatherSuggestions").classList.add("hidden");
+  $("#weatherLocation").setAttribute("aria-expanded", "false");
+  $("#weatherLocation").removeAttribute("aria-activedescendant");
+};
+
+const renderWeatherSuggestions = () => {
+  const list = $("#weatherSuggestions");
+  if (!state.weatherSuggestions.length) {
+    closeWeatherSuggestions();
+    return;
+  }
+  list.replaceChildren(...state.weatherSuggestions.map((suggestion, index) => {
+    const button = make(
+      "button",
+      `weather-suggestion${index === state.weatherSuggestionIndex ? " active" : ""}`,
+    );
+    button.type = "button";
+    button.id = `weatherSuggestion-${index}`;
+    button.dataset.weatherIndex = String(index);
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(index === state.weatherSuggestionIndex));
+    button.append(
+      make("b", "", suggestion.location),
+      make("small", "", suggestion.detail || suggestion.timezone),
+    );
+    return button;
+  }));
+  list.classList.remove("hidden");
+  $("#weatherLocation").setAttribute("aria-expanded", "true");
+  if (state.weatherSuggestionIndex >= 0) {
+    $("#weatherLocation").setAttribute(
+      "aria-activedescendant",
+      `weatherSuggestion-${state.weatherSuggestionIndex}`,
+    );
+  } else {
+    $("#weatherLocation").removeAttribute("aria-activedescendant");
+  }
+};
+
+const renderWeatherProperties = (node, weatherDocument) => {
+  $("#weatherLocation").value = node.props.location ?? "";
+  const reading = weatherReadingForNode(node, weatherDocument);
+  let status = "Saisissez une ville ou un code postal, puis choisissez une suggestion.";
+  if (node.props.location && !node.props.locationKey) {
+    status = "La saisie n’est pas encore validée : choisissez une suggestion dans la liste.";
+  } else if (reading?.temperature != null) {
+    const freshness = reading.status === "stale"
+      ? "Dernière valeur conservée · mise à jour en attente."
+      : "Valeur actuelle mise en cache par le serveur.";
+    status = `${Math.round(Number(reading.temperature))} ${reading.temperatureUnit} · ${reading.condition}. ${freshness}`;
+  } else if (node.props.locationKey) {
+    status = "La commune est enregistrée. Les données météo sont en attente.";
+  }
+  $("#weatherStatus").textContent = status;
+  const attribution = weatherDocument?.attribution;
+  const link = $(".weather-attribution");
+  link.textContent = attribution?.label ?? "Données météo : Open-Meteo";
+  link.href = attribution?.url ?? "https://open-meteo.com/";
+};
+
 const renderProperties = () => {
   const node = selectedNode();
   refs.noSelection.classList.toggle("hidden", Boolean(node));
@@ -631,7 +757,17 @@ const renderProperties = () => {
   refs.selectedKind.textContent = node.kind;
   $("#nodeLabel").value = nodeLabel(node);
   $("#nodeLabel").disabled = !nodeSupportsLabel(node);
-  $("#nodeText").value = nodeDisplayText(node);
+  const weatherDocument = state.preview?.documents?.weather ?? state.weather;
+  $("#nodeText").value = nodeDisplayText(node, weatherDocument);
+  $("#nodeTextField").classList.toggle("hidden", ["clock", "weather"].includes(node.kind));
+  $("#nodeClockField").classList.toggle("hidden", node.kind !== "clock");
+  if (node.kind === "clock") {
+    $("#clockShowDate").checked = Boolean(node.props.showDate);
+    $("#clockFormat").value = node.props.format === "12h" ? "12h" : "24h";
+  }
+  $("#nodeWeatherField").classList.toggle("hidden", node.kind !== "weather");
+  if (node.kind === "weather") renderWeatherProperties(node, weatherDocument);
+  else closeWeatherSuggestions();
   const supportsAsset = ["image", "video", "logo"].includes(node.kind);
   $("#nodeAssetField").classList.toggle("hidden", !supportsAsset);
   if (supportsAsset) {
@@ -933,6 +1069,36 @@ const renderOperationalSettings = () => {
   populatePowerSettings();
 };
 
+const renderHome = () => {
+  const totalScreens = state.measuredMetrics?.totalScreens ?? state.televisions.length;
+  const onlineScreens = state.measuredMetrics?.onlineScreens
+    ?? state.televisions.filter((tv) => tv.online === true).length;
+  const reportingScreens = state.measuredMetrics?.reportingScreens
+    ?? state.televisions.filter((tv) => tv.latestMetric ?? tv.latest_metric).length;
+  const publishedScenes = state.scenes.filter(
+    (scene) => (scene.publishedRevision ?? scene.published_revision) != null,
+  ).length;
+  const contentCount = state.media.length + state.messages.length;
+  const verifiedReleases = state.releases.filter((release) => release.status === "verified").length;
+  const displayName = state.instance?.displayName ?? "RoomFrame";
+
+  $("#homeSummary").textContent = `${displayName} est prêt. Consultez l’état des TV ou choisissez l’action à effectuer.`;
+  $("#homeTvMetric").textContent = `${onlineScreens}/${totalScreens}`;
+  $("#homeTvDetail").textContent = totalScreens === 0
+    ? "Aucun écran préparé"
+    : `${reportingScreens} écran${reportingScreens > 1 ? "s" : ""} avec mesures`;
+  $("#homeSceneMetric").textContent = `${publishedScenes}/${state.scenes.length}`;
+  $("#homeSceneDetail").textContent = state.scenes.length === 0
+    ? "Aucune scène enregistrée"
+    : `${publishedScenes} scène${publishedScenes > 1 ? "s" : ""} publiée${publishedScenes > 1 ? "s" : ""}`;
+  $("#homeContentMetric").textContent = String(contentCount);
+  $("#homeContentDetail").textContent = `${state.media.length} média${state.media.length > 1 ? "s" : ""} · ${state.messages.length} message${state.messages.length > 1 ? "s" : ""}`;
+  $("#homeReleaseMetric").textContent = String(verifiedReleases);
+  $("#homeReleaseDetail").textContent = verifiedReleases === 0
+    ? "Aucune version vérifiée"
+    : `${verifiedReleases} version${verifiedReleases > 1 ? "s" : ""} vérifiée${verifiedReleases > 1 ? "s" : ""}`;
+};
+
 const renderCollections = () => {
   const mediaRows = state.media.map((item) => ledgerRow(item.name ?? item.originalFilename ?? item.originalName ?? item.id, [item.kind ?? item.mimeType ?? item.mediaType, item.status].filter(Boolean).join(" · ")));
   $("#mediaList").replaceChildren(...(mediaRows.length ? mediaRows : [make("p", "empty-copy", "Aucun média.")]));
@@ -944,6 +1110,7 @@ const renderCollections = () => {
     const card = make("article", "tv-cell");
     const enrollmentState = tv.enrollmentState ?? tv.enrollment_state;
     const metric = tv.latestMetric ?? tv.latest_metric;
+    const latestUpdate = tv.latestUpdate ?? tv.latest_update;
     const connectionState = enrollmentState === "pending"
       ? "Enrôlement en attente"
       : enrollmentState === "revoked"
@@ -961,6 +1128,16 @@ const renderCollections = () => {
     card.dataset.health = health;
     const signal = make("span", "tv-signal", connectionState);
     signal.setAttribute("aria-label", connectionState);
+    const updateStateLabel = {
+      queued: "Programmée · en attente de son étape",
+      offered: "Disponible · téléchargement en attente",
+      downloading: "Téléchargement en cours",
+      downloaded: "Téléchargée · attente d’un moment sûr",
+      installing: "Installation en cours",
+      installed: "Installée et vérifiée",
+      failed: "Échec de l’installation",
+      deferred: "Différée par la TV",
+    }[latestUpdate?.state] ?? null;
     const metricLines = metric ? [
       `Réseau : ${metric.networkState ?? "inconnu"}`,
       `Synchronisation : ${metric.syncRevision == null ? "non mesurée" : `r${metric.syncRevision}${metric.syncDurationMs == null ? "" : ` · ${metric.syncDurationMs} ms`}`}`,
@@ -968,8 +1145,21 @@ const renderCollections = () => {
       `Stockage libre : ${formatBytes(metric.storageFreeBytes) ?? "non mesuré"}`,
       `Démarrage : ${metric.startupMs == null ? "non mesuré" : `${metric.startupMs} ms`}`,
       `Mise à jour : ${metric.updateState ?? "inconnue"}`,
+      `Installation silencieuse : ${metric.silentUpdateCapable === true
+        ? "prête"
+        : metric.silentUpdateCapable === false
+          ? "Device Owner requis"
+          : "capacité non remontée"}`,
       ...(metric.errorCode ? [`Erreur : ${metric.errorCode}`] : []),
     ] : ["Mesures techniques : en attente"];
+    const updateLines = latestUpdate ? [
+      `Déploiement : RoomFrame ${latestUpdate.version ?? "version inconnue"}`,
+      `État : ${updateStateLabel ?? "état non reconnu"}`,
+      ...(latestUpdate.errorCode ? [`Erreur de mise à jour : ${latestUpdate.errorCode}`] : []),
+      ...(latestUpdate.updatedAt
+        ? [`Dernier changement : ${new Date(latestUpdate.updatedAt).toLocaleString("fr-FR")}`]
+        : []),
+    ] : ["Déploiement : aucune mise à jour envoyée"];
     const credentialGeneration = Number(
       tv.credentialGeneration ?? tv.credential_generation ?? 1,
     );
@@ -992,6 +1182,7 @@ const renderCollections = () => {
         `Source : ${tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"}`,
         `Version : ${tv.version ?? tv.home_version ?? "inconnue"}`,
         ...credentialLines,
+        ...updateLines,
         ...metricLines,
       ].join("\n")),
     );
@@ -1038,24 +1229,39 @@ const renderCollections = () => {
   );
   renderSceneManagement();
   renderOperationalSettings();
+  renderHome();
 };
+
+const validEnrollmentTicket = (ticket) => (
+  /^[0-9a-f-]{36}$/i.test(String(ticket?.id || ""))
+  && typeof ticket?.enrollmentKey === "string"
+  && ticket.enrollmentKey.length >= 20
+  && /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){3}$/.test(String(ticket.enrollmentCode || ""))
+  && Boolean(ticket.expiresAt)
+  && ticket.trustBootstrap?.mode === "encrypted-server-ca"
+  && ticket.trustBootstrap?.version === 1
+  && ticket.simplifiedEnrollment?.mode === "encrypted-code-bootstrap"
+  && ticket.simplifiedEnrollment?.version === 1
+);
 
 const renderEnrollmentTicket = () => {
   const ticket = state.enrollmentTicket;
   $("#enrollmentTicket").classList.toggle("hidden", !ticket);
   if (!ticket) {
+    $("#enrollmentCode").value = "";
     $("#enrollmentServer").value = "";
     $("#enrollmentDeviceId").value = "";
     $("#enrollmentSecret").value = "";
     $("#enrollmentExpiry").textContent = "";
     return;
   }
+  $("#enrollmentCode").value = ticket.enrollmentCode;
   $("#enrollmentServer").value = location.origin;
   $("#enrollmentDeviceId").value = ticket.id;
   $("#enrollmentSecret").value = ticket.enrollmentKey;
   $("#enrollmentExpiry").textContent = (
     `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. `
-    + "La TV appaire l’autorité HTTPS avant d’envoyer la clé, puis cette clé ne fonctionne plus."
+    + "La TV vérifie le serveur avant de récupérer les paramètres techniques, puis le code ne fonctionne plus."
   );
 };
 
@@ -1170,6 +1376,75 @@ const updateServerUpdatePolicyControls = () => {
   if (!activating) confirmation.value = "";
 };
 
+const releaseSourceResultLabel = (result) => ({
+  never: "aucun contrôle effectué",
+  "not-modified": "aucune nouvelle version",
+  "no-candidate": "aucune version compatible trouvée",
+  "already-imported": "version déjà disponible",
+  imported: "nouvelle version importée",
+  rejected: "version refusée",
+  error: "contrôle interrompu",
+}[result] ?? "état non reconnu");
+
+const releaseSourceErrorLabel = (code) => ({
+  untrusted_update_key: "la clé de signature de cette version n’est pas approuvée",
+  invalid_update_signature: "la signature du fichier est invalide",
+  update_version_not_newer: "la version proposée n’est pas plus récente",
+  update_requires_newer_server: "cette version exige un serveur plus récent",
+  update_server_too_new: "cette version est trop ancienne pour ce serveur",
+  update_architecture_incompatible: "cette version n’est pas compatible avec l’architecture du serveur",
+  github_rate_limited: "GitHub a temporairement limité les contrôles",
+  github_releases_request_failed: "GitHub n’a pas répondu correctement",
+  github_asset_download_failed: "le téléchargement de la version a échoué",
+  github_asset_digest_mismatch: "le fichier téléchargé ne correspond pas à l’empreinte annoncée",
+  github_asset_size_mismatch: "la taille du fichier téléchargé est incorrecte",
+  update_supply_chain_incomplete: "les preuves de provenance de la version sont incomplètes",
+}[code] ?? "la version n’a pas passé tous les contrôles de sécurité");
+
+const pollingIntervalLabel = (minutes) => {
+  const value = Number(minutes);
+  if (!Number.isFinite(value) || value <= 0) return "Fréquence de contrôle non communiquée";
+  if (value % 1440 === 0) {
+    const days = value / 1440;
+    return `Vérification tous les ${days} jour${days > 1 ? "s" : ""}`;
+  }
+  if (value % 60 === 0) {
+    const hours = value / 60;
+    return `Vérification toutes les ${hours} heure${hours > 1 ? "s" : ""}`;
+  }
+  return `Vérification toutes les ${value} minutes`;
+};
+
+const deploymentStrategyLabel = (value) => ({
+  canary: "test sur une TV",
+  progressive: "déploiement par étapes",
+  "all-at-once": "déploiement sur toutes les TV",
+}[value] ?? "déploiement");
+
+const deploymentTargetLabel = (value) => ({
+  tv: "une TV",
+  group: "un groupe",
+  fleet: "tout le parc",
+}[value] ?? "cible non précisée");
+
+const deploymentProgressLabel = (value) => ({
+  queued: "en attente",
+  offered: "prêtes à télécharger",
+  downloading: "en téléchargement",
+  downloaded: "téléchargées · moment sûr attendu",
+  installing: "en installation",
+  installed: "installées",
+  failed: "en échec",
+  deferred: "différées",
+}[value] ?? value);
+
+const serverUpdateErrorLabel = (code) => ({
+  broker_interrupted: "le service d’installation a été interrompu",
+  maintenance_busy: "une autre opération de maintenance est déjà en cours",
+  code_rolled_back: "la nouvelle version a échoué et l’ancienne a été restaurée",
+  apply_failed: "l’installation n’a pas pu être terminée",
+}[code] ?? "consultez le diagnostic du serveur");
+
 const renderServerUpdatePolicy = () => {
   const policy = state.serverUpdatePolicy;
   const form = $("#serverUpdatePolicyForm");
@@ -1190,37 +1465,42 @@ const renderServerUpdatePolicy = () => {
     control.disabled = false;
   });
   summary.textContent = policy.mode === "automatic"
-    ? `Automatique : uniquement les imports GitHub signés, âgés d’au moins ${policy.minimumImportAgeMinutes} minutes, entre ${policy.windowStart} et ${policy.windowEnd} (${policy.timezone}). Un échec exige ensuite une décision humaine.`
-    : `Manuel : chaque bascule serveur exige une demande explicite. La fenêtre ${policy.windowStart}–${policy.windowEnd} (${policy.timezone}) est mémorisée mais inactive.`;
+    ? `Automatique : une version GitHub signée peut être installée après ${policy.minimumImportAgeMinutes} minutes, entre ${policy.windowStart} et ${policy.windowEnd} (${policy.timezone}). Après un échec, une confirmation manuelle est obligatoire.`
+    : `Manuel : chaque installation du serveur doit être confirmée. Le créneau ${policy.windowStart}–${policy.windowEnd} (${policy.timezone}) est enregistré, mais il n’est pas utilisé dans ce mode.`;
   updateServerUpdatePolicyControls();
 };
 
 const renderReleases = () => {
   renderServerUpdatePolicy();
+  renderHome();
   const source = state.releaseSource;
   const sourcePanel = $("#automaticReleaseSource");
   const sourceTitle = make(
     "h3",
     "",
-    source?.enabled ? "Veille GitHub signée" : "Veille GitHub désactivée",
+    source?.enabled ? "Mises à jour GitHub activées" : "Mises à jour GitHub désactivées",
   );
   const sourceState = source?.state;
   const sourceDetails = source?.enabled
     ? [
-      `${source.repository} · canal ${source.channel}`,
-      `Contrôle toutes les ${source.pollIntervalMinutes} minutes`,
+      `Source : ${source.repository} · canal ${source.channel === "preview" ? "préversion" : "stable"}`,
+      pollingIntervalLabel(source.pollIntervalMinutes),
       sourceState?.lastCheckedAt
-        ? `Dernier contrôle ${new Date(sourceState.lastCheckedAt).toLocaleString("fr-FR")}`
+        ? `Dernier contrôle : ${new Date(sourceState.lastCheckedAt).toLocaleString("fr-FR")}`
         : "Premier contrôle en attente",
-      sourceState?.lastResult ? `Résultat ${sourceState.lastResult}` : null,
-      sourceState?.lastErrorCode ? `Refus ${sourceState.lastErrorCode}` : null,
+      sourceState?.lastResult
+        ? `Dernier résultat : ${releaseSourceResultLabel(sourceState.lastResult)}`
+        : null,
+      sourceState?.lastErrorCode
+        ? `Motif : ${releaseSourceErrorLabel(sourceState.lastErrorCode)}`
+        : null,
     ]
     : [
-      "L’import hors ligne .rfupdate reste disponible.",
-      "L’installateur peut activer un dépôt owner/repo sans donner de privilèges système à l’API.",
+      "Vous pouvez toujours importer manuellement un fichier signé .rfupdate.",
+      "La recherche automatique peut être activée lors de la configuration du serveur.",
     ];
   sourcePanel.replaceChildren(
-    make("span", "record-kicker", source?.enabled ? "AUTO / GITHUB" : "HORS LIGNE"),
+    make("span", "record-kicker", source?.enabled ? "RECHERCHE AUTOMATIQUE" : "IMPORT MANUEL"),
     sourceTitle,
     make("p", "", sourceDetails.filter(Boolean).join("\n")),
   );
@@ -1267,13 +1547,13 @@ const renderReleases = () => {
       make("span", "record-kicker", releaseHasHomeApk(release) ? "APK HOME PRÊT" : "SERVEUR / ARCHIVE"),
       make("h3", "", `RoomFrame ${release.version}`),
       make("p", "", [
-        release.status ?? "statut inconnu",
+        release.status === "verified" ? "Version vérifiée" : "Version non vérifiée",
         release.deployed_at
           ? `Serveur appliqué le ${new Date(release.deployed_at).toLocaleString("fr-FR")}`
           : release.has_server_archive === true
             ? "Archive serveur disponible"
             : null,
-        apk ? `${apk.packageName} · code ${apk.versionCode}` : "Aucun APK Home dans ce bundle",
+        apk ? `${apk.packageName} · version Android ${apk.versionCode}` : "Aucune application TV dans cette version",
         release.imported_at ? new Date(release.imported_at).toLocaleString("fr-FR") : null,
       ].filter(Boolean).join("\n")),
     );
@@ -1283,24 +1563,24 @@ const renderReleases = () => {
     const row = make("article", "deployment-record");
     const progress = typeof deployment.progress === "object" && deployment.progress ? deployment.progress : {};
     const line = Object.entries(progress)
-      .map(([status, count]) => `${status} ${count}`)
+      .map(([status, count]) => `${count} ${deploymentProgressLabel(status)}`)
       .join(" · ");
     row.append(
-      make("span", "record-kicker", `${deployment.strategy ?? "vague"} · ${deployment.target_type ?? "cible"}`),
-      make("h3", "", deployment.status === "completed" ? "Vague terminée" : "Distribution en cours"),
+      make("span", "record-kicker", `${deploymentStrategyLabel(deployment.strategy)} · ${deploymentTargetLabel(deployment.target_type)}`),
+      make("h3", "", deployment.status === "completed" ? "Déploiement terminé" : "Installation en cours"),
       make("p", "", line || "En attente du premier retour TV"),
     );
     if (deployment.status === "running") {
       const advance = make("button", "tool");
       advance.type = "button";
       advance.dataset.advanceDeployment = deployment.id;
-      advance.textContent = "Valider et ouvrir la suite";
+      advance.textContent = "Valider et poursuivre";
       row.append(advance);
       if (Number(progress.failed ?? 0) + Number(progress.deferred ?? 0) > 0) {
         const retry = make("button", "tool");
         retry.type = "button";
         retry.dataset.retryDeployment = deployment.id;
-        retry.textContent = "Relancer les TV interrompues";
+        retry.textContent = "Réessayer sur les TV en échec";
         row.append(retry);
       }
     }
@@ -1309,14 +1589,14 @@ const renderReleases = () => {
   const serverRequestRows = state.serverUpdateRequests.map((request) => {
     const row = make("article", "deployment-record");
     row.append(
-      make("span", "record-kicker", `SERVEUR · ${request.status ?? "inconnu"}`),
+      make("span", "record-kicker", "MISE À JOUR DU SERVEUR"),
       make("h3", "", `RoomFrame ${request.version}`),
       make("p", "", [
-        request.status === "pending" ? "En attente du courtier Debian" : null,
-        request.status === "running" ? "Sauvegarde ou bascule en cours" : null,
-        request.status === "completed" ? "Healthchecks réussis" : null,
-        request.status === "rolled-back" ? "Ancien code rétabli automatiquement" : null,
-        request.status === "failed" ? `Échec contrôlé · ${request.last_error_code ?? "voir diagnostic"}` : null,
+        request.status === "pending" ? "Installation en attente" : null,
+        request.status === "running" ? "Sauvegarde et installation en cours" : null,
+        request.status === "completed" ? "Installation terminée et serveur vérifié" : null,
+        request.status === "rolled-back" ? "La version précédente a été restaurée automatiquement" : null,
+        request.status === "failed" ? `Installation arrêtée : ${serverUpdateErrorLabel(request.last_error_code)}` : null,
         request.requested_at
           ? new Date(request.requested_at).toLocaleString("fr-FR")
           : null,
@@ -1344,6 +1624,15 @@ const refreshReleases = async () => {
   renderReleases();
 };
 
+const updateBrandLogoPreview = (assetId) => {
+  const logoUrl = assetUrl(assetId, "logo");
+  for (const image of [$("#instanceLogo"), $("#brandPreviewLogo")]) {
+    image.classList.toggle("hidden", !logoUrl);
+    if (logoUrl) image.src = logoUrl;
+    else image.removeAttribute("src");
+  }
+};
+
 const populateBrandForm = () => {
   const branding = normalizeBranding(state.instance?.branding);
   $("#brandDisplayName").value = state.instance?.displayName ?? "RoomFrame";
@@ -1364,12 +1653,7 @@ const populateBrandForm = () => {
   }
   logoSelect.replaceChildren(...options);
   logoSelect.value = branding.logoAssetId ?? "";
-  const logoUrl = assetUrl(branding.logoAssetId, "logo");
-  for (const image of [$("#instanceLogo"), $("#brandPreviewLogo")]) {
-    image.classList.toggle("hidden", !logoUrl);
-    if (logoUrl) image.src = logoUrl;
-    else image.removeAttribute("src");
-  }
+  updateBrandLogoPreview(branding.logoAssetId);
 };
 
 const previewBrandForm = () => {
@@ -1386,6 +1670,82 @@ const previewBrandForm = () => {
     },
   };
   applyBranding(candidate);
+  updateBrandLogoPreview(candidate.branding.logoAssetId);
+};
+
+const rgbaForLogo = async (url) => {
+  const image = new Image();
+  image.decoding = "async";
+  await new Promise((resolve, reject) => {
+    image.addEventListener("load", resolve, { once: true });
+    image.addEventListener("error", () => reject(new Error("logo_unreadable")), { once: true });
+    image.src = url;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context || !image.naturalWidth || !image.naturalHeight) {
+    throw new Error("canvas_unavailable");
+  }
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+  const width = Math.max(1, image.naturalWidth * scale);
+  const height = Math.max(1, image.naturalHeight * scale);
+  context.drawImage(image, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+  return context.getImageData(0, 0, canvas.width, canvas.height).data;
+};
+
+const paletteFieldValue = (field) => {
+  const text = $(`#brand${field}Text`).value.trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(text) ? text : $(`#brand${field}`).value;
+};
+
+const showBrandPaletteProposal = (palette, logoAssetId) => {
+  const current = {
+    primary: paletteFieldValue("Primary"),
+    accent: paletteFieldValue("Accent"),
+  };
+  state.pendingBrandPalette = { ...palette, logoAssetId };
+  for (const [prefix, values] of [["Current", current], ["Proposed", palette]]) {
+    for (const field of ["Primary", "Accent"]) {
+      const value = values[field.toLowerCase()];
+      $(`#brandPalette${prefix}${field}`).style.setProperty("--swatch", value);
+      $(`#brandPalette${prefix}${field}Value`).textContent = value.toUpperCase();
+    }
+  }
+  const dialog = $("#brandPaletteDialog");
+  if (!dialog.open) dialog.showModal();
+};
+
+const proposeBrandPalette = async () => {
+  const logoAssetId = $("#brandLogoAsset").value || null;
+  const requestId = ++state.logoPaletteRequest;
+  const persistedLogoAssetId = state.persistedIdentity?.branding?.logoAssetId ?? null;
+  if (!logoAssetId || logoAssetId === persistedLogoAssetId) {
+    state.pendingBrandPalette = null;
+    if ($("#brandPaletteDialog").open) $("#brandPaletteDialog").close();
+    return;
+  }
+  const url = assetUrl(logoAssetId, "logo");
+  if (!url) return;
+  try {
+    const palette = paletteFromRgba(await rgbaForLogo(url));
+    if (
+      requestId !== state.logoPaletteRequest
+      || $("#brandLogoAsset").value !== logoAssetId
+      || (state.persistedIdentity?.branding?.logoAssetId ?? null) === logoAssetId
+    ) return;
+    if (!palette) {
+      toast("Le logo ne contient pas assez de couleurs exploitables. Vos couleurs restent inchangées.");
+      return;
+    }
+    showBrandPaletteProposal(palette, logoAssetId);
+  } catch {
+    if (requestId === state.logoPaletteRequest) {
+      toast("Impossible d’analyser ce logo. Vos couleurs restent inchangées.", true);
+    }
+  }
 };
 
 const renderSecurity = () => {
@@ -1394,14 +1754,21 @@ const renderSecurity = () => {
   ledger.replaceChildren();
   const entries = [
     ["Session", user?.username ?? user?.email ?? "Authentifiée"],
-    ["Rôle", user?.role ?? (Array.isArray(user?.roles) ? user.roles.join(", ") : "Non communiqué")],
+    [
+      "Rôle",
+      user?.role
+        ? roleLabel(user.role)
+        : Array.isArray(user?.roles)
+          ? user.roles.map(roleLabel).join(", ")
+          : "Non communiqué",
+    ],
     [
       "Double validation",
       state.passkeys.length > 0
-        ? `TOTP actif · ${state.passkeys.length} passkey${state.passkeys.length > 1 ? "s" : ""}`
-        : "TOTP obligatoire · aucune passkey liée",
+        ? `Code TOTP activé · ${state.passkeys.length} clé${state.passkeys.length > 1 ? "s" : ""} d’accès`
+        : "Code TOTP activé · aucune clé d’accès enregistrée",
     ],
-    ["Protection TOTP", "Secret chiffré · code 30 s · réutilisation refusée"],
+    ["Code de sécurité", "Renouvelé toutes les 30 secondes · un même code ne peut pas être réutilisé"],
     ["Sessions actives", state.securitySessions.length || "Chargement…"],
   ];
   for (const [term, description] of entries) ledger.append(make("dt", "", term), make("dd", "", description));
@@ -1436,21 +1803,21 @@ const sessionAgentLabel = (value) => {
 
 const passkeyErrorMessage = (error) => {
   if (error?.name === "NotAllowedError") {
-    return "La demande a été annulée ou l’appareil n’a pas validé la passkey.";
+    return "La demande a été annulée ou l’appareil n’a pas validé la clé d’accès.";
   }
   const messages = {
-    passkey_not_available: "Aucune passkey n’est encore liée à ce compte. Utilisez le TOTP.",
-    passkey_not_configured: "Les passkeys ne sont pas configurées sur cette instance.",
+    passkey_not_available: "Aucune clé d’accès n’est encore liée à ce compte. Utilisez le code TOTP.",
+    passkey_not_configured: "Les clés d’accès ne sont pas configurées sur cette installation.",
     passkey_canonical_origin_required: (
       `Ouvrez le nom HTTPS principal${
         error?.payload?.preferredUrl ? ` : ${error.payload.preferredUrl}` : ""
-      }. Les passkeys ne fonctionnent pas sur l’URL IP de secours.`
+      }. Les clés d’accès ne fonctionnent pas sur l’adresse IP de secours.`
     ),
     step_up_failed: "Phrase de passe ou nouveau code TOTP incorrect.",
-    invalid_passkey_response: "La preuve passkey a été refusée.",
-    invalid_passkey_challenge: "La demande passkey a expiré. Recommencez.",
+    invalid_passkey_response: "La clé d’accès a été refusée.",
+    invalid_passkey_challenge: "La demande de clé d’accès a expiré. Recommencez.",
   };
-  return messages[error?.message] ?? error?.message ?? "Opération passkey impossible.";
+  return messages[error?.message] ?? error?.message ?? "Impossible d’utiliser la clé d’accès.";
 };
 
 const renderPasskeys = () => {
@@ -1458,17 +1825,17 @@ const renderPasskeys = () => {
   const available = passkeysAvailable();
   $("#openPasskeyRegistration").disabled = !available;
   $("#passkeyCanonicalUrl").textContent = state.passkeyCanonicalUrl
-    ? `Origine liée : ${state.passkeyCanonicalUrl}`
+    ? `Adresse sécurisée utilisée : ${state.passkeyCanonicalUrl}`
     : available
-      ? "Origine HTTPS principale non communiquée."
-      : "Ce navigateur ne fournit pas WebAuthn dans ce contexte sécurisé.";
+      ? "L’adresse HTTPS principale n’a pas été communiquée."
+      : "Ce navigateur ne permet pas d’utiliser une clé d’accès dans ce contexte.";
   if (state.passkeys.length === 0) {
     container.replaceChildren(make(
       "p",
       "empty-copy",
       available
-        ? "Aucune passkey. Le TOTP reste obligatoire pour ouvrir la régie."
-        : "Aucune passkey affichée. Utilisez un navigateur WebAuthn sur le nom HTTPS principal.",
+        ? "Aucune clé d’accès enregistrée. La phrase de passe et le code TOTP restent nécessaires."
+        : "Aucune clé d’accès affichée. Ouvrez le nom HTTPS principal dans un navigateur compatible.",
     ));
     return;
   }
@@ -1496,7 +1863,7 @@ const renderPasskeys = () => {
     const revoke = make("button", "tool", "Révoquer");
     revoke.type = "button";
     revoke.dataset.passkeyRevoke = passkey.id;
-    revoke.setAttribute("aria-label", `Révoquer la passkey ${passkey.label}`);
+    revoke.setAttribute("aria-label", `Retirer la clé d’accès ${passkey.label}`);
     row.append(identity, activity, revoke);
     return row;
   }));
@@ -1544,6 +1911,12 @@ const renderSecuritySessions = () => {
 
 const roleLabel = (slug) => (
   state.adminRoles.find((role) => role.slug === slug)?.displayName
+  ?? ({
+    owner: "Propriétaire",
+    admin: "Administrateur",
+    content: "Gestionnaire de contenus",
+    viewer: "Lecture seule",
+  }[slug])
   ?? slug
   ?? "Rôle inconnu"
 );
@@ -1578,7 +1951,7 @@ const renderUserInvitationTicket = () => {
   $("#userInvitationToken").textContent = state.userInvitation.activationToken;
   $("#userInvitationTicketDescription").textContent = (
     `${state.userInvitation.username} · expire ${securityDate(state.userInvitation.expiresAt)}. `
-    + "Ce jeton ne sera plus affiché après masquage ou rechargement."
+    + "Envoyez-le par un canal sécurisé : il ne sera plus affiché après masquage ou rechargement."
   );
   ticket.classList.remove("hidden");
 };
@@ -1627,7 +2000,7 @@ const renderAdminUsers = () => {
         "p",
         "",
         `${roleLabel(user.role)} · ${user.sessionCount} session${user.sessionCount > 1 ? "s" : ""}`
-          + ` · ${user.passkeyCount} passkey${user.passkeyCount > 1 ? "s" : ""}`
+          + ` · ${user.passkeyCount} clé${user.passkeyCount > 1 ? "s" : ""} d’accès`
           + (
             user.status === "pending" && user.invitationExpiresAt
               ? ` · invitation jusqu’au ${securityDate(user.invitationExpiresAt)}`
@@ -1806,7 +2179,13 @@ const updateSelectedProperties = () => {
   const node = selectedNode();
   if (!node) return;
   if (nodeSupportsLabel(node)) node.props.label = $("#nodeLabel").value.slice(0, 120);
-  setNodeDisplayText(node, $("#nodeText").value.slice(0, 1000));
+  if (node.kind !== "weather") {
+    setNodeDisplayText(node, $("#nodeText").value.slice(0, 1000));
+  }
+  if (node.kind === "clock") {
+    node.props.showDate = $("#clockShowDate").checked;
+    node.props.format = $("#clockFormat").value === "12h" ? "12h" : "24h";
+  }
   if (["image", "video", "logo"].includes(node.kind)) {
     const assetId = $("#nodeAsset").value || null;
     node.props.assetId = assetId;
@@ -1819,6 +2198,77 @@ const updateSelectedProperties = () => {
   node.zIndex = Math.max(0, Math.min(10000, Math.round(Number($("#nodeZ").value) || 0)));
   node.focusOrder = Math.max(0, Math.min(10000, Math.round(Number($("#focusOrder").value) || 0)));
   renderNodes();
+};
+
+const searchWeatherLocationsForNode = async (nodeId, query) => {
+  weatherSearchController?.abort();
+  weatherSearchController = new AbortController();
+  const controller = weatherSearchController;
+  $("#weatherStatus").textContent = "Recherche de communes…";
+  try {
+    const parameters = new URLSearchParams({ q: query });
+    const payload = await api.get(`weather/locations?${parameters}`, {
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted || selectedNode()?.id !== nodeId) return;
+    state.weatherSuggestions = Array.isArray(payload.results) ? payload.results : [];
+    state.weatherSuggestionIndex = state.weatherSuggestions.length ? 0 : -1;
+    renderWeatherSuggestions();
+    $("#weatherStatus").textContent = state.weatherSuggestions.length
+      ? `${state.weatherSuggestions.length} commune${state.weatherSuggestions.length > 1 ? "s" : ""} proposée${state.weatherSuggestions.length > 1 ? "s" : ""}.`
+      : "Aucune commune trouvée. Essayez le nom seul ou le code postal.";
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    closeWeatherSuggestions();
+    $("#weatherStatus").textContent = `Recherche indisponible : ${error.message}`;
+  }
+};
+
+const selectWeatherSuggestion = async (index) => {
+  const node = selectedNode();
+  const suggestion = state.weatherSuggestions[index];
+  if (!node || node.kind !== "weather" || !suggestion) return;
+  Object.assign(node.props, {
+    location: suggestion.location,
+    locationKey: suggestion.key,
+    latitude: Number(suggestion.latitude),
+    longitude: Number(suggestion.longitude),
+    timezone: suggestion.timezone,
+    units: suggestion.units ?? "metric",
+  });
+  $("#weatherLocation").value = suggestion.location;
+  closeWeatherSuggestions();
+  $("#weatherStatus").textContent = "Commune enregistrée · récupération de la météo…";
+  renderNodes();
+  try {
+    const parameters = new URLSearchParams({
+      location: suggestion.location,
+      locationKey: suggestion.key,
+      latitude: String(suggestion.latitude),
+      longitude: String(suggestion.longitude),
+      timezone: suggestion.timezone,
+      units: suggestion.units ?? "metric",
+    });
+    const payload = await api.get(`weather/current?${parameters}`);
+    const reading = payload.weather;
+    if (!reading?.key) throw new Error("Réponse météo incomplète.");
+    state.weather = {
+      schemaVersion: 1,
+      provider: "open-meteo",
+      attribution: state.weather?.attribution ?? {
+        label: "Données météo : Open-Meteo",
+        url: "https://open-meteo.com/",
+      },
+      items: [
+        ...(state.weather?.items ?? []).filter((item) => item.key !== reading.key),
+        reading,
+      ],
+    };
+    renderNodes();
+    renderWeatherProperties(node, state.weather);
+  } catch (error) {
+    $("#weatherStatus").textContent = `Commune enregistrée, mais météo indisponible : ${error.message}`;
+  }
 };
 
 const saveRevision = async () => {
@@ -1965,7 +2415,7 @@ $("#openPasskeyRegistration").addEventListener("click", (event) => {
   ) {
     formError(
       "passkeyError",
-      `Ouvrez ${state.passkeyCanonicalUrl} pour ajouter une passkey.`,
+      `Ouvrez ${state.passkeyCanonicalUrl} pour ajouter une clé d’accès.`,
     );
     return;
   }
@@ -2016,7 +2466,7 @@ $("#passkeyRegistrationForm").addEventListener("submit", async (event) => {
     });
     $("#passkeyRegistrationDialog").close();
     await loadSecurityState();
-    toast("Passkey liée et journalisée.");
+    toast("Clé d’accès ajoutée.");
   } catch (error) {
     formError("passkeyRegistrationError", passkeyErrorMessage(error));
   } finally {
@@ -2071,7 +2521,7 @@ $("#passkeyRevokeForm").addEventListener("submit", async (event) => {
     });
     $("#passkeyRevokeDialog").close();
     await loadSecurityState();
-    toast("Passkey révoquée.");
+    toast("Clé d’accès retirée.");
   } catch (error) {
     formError("passkeyRevokeError", passkeyErrorMessage(error));
   } finally {
@@ -2229,9 +2679,9 @@ const updateUserActionControls = () => {
   $("#userActionHelp").textContent = {
     role: "Le changement ferme toutes les sessions du compte.",
     reissue: (
-      "Le compte sera désactivé, ses sessions et passkeys révoquées, puis un nouveau jeton sera affiché une seule fois."
+      "Le compte sera désactivé, ses sessions fermées et ses clés d’accès retirées. Un nouveau jeton sera ensuite affiché une seule fois."
     ),
-    disable: "La désactivation ferme les sessions, retire les passkeys et révoque toute invitation active.",
+    disable: "La désactivation ferme les sessions, retire les clés d’accès et annule toute invitation active.",
   }[action];
   $("#userActionSubmit").textContent = {
     role: "Changer le rôle",
@@ -2509,7 +2959,7 @@ $("#recoveryForm").addEventListener("submit", async (event) => {
     showGate("login");
     $("#loginUsername").value = username;
     $("#loginPassword").focus();
-    toast("Compte récupéré. Les anciennes sessions et passkeys ont été révoquées.");
+    toast("Compte récupéré. Les anciennes sessions ont été fermées et les clés d’accès retirées.");
   } catch (error) {
     formError("recoveryError", error.message);
   } finally {
@@ -2725,8 +3175,8 @@ $("#sceneScheduleForm").addEventListener("submit", async (event) => {
     renderSceneManagement();
     toast(
       payload.syncRevision == null
-        ? "Scène programmée. Le worker activera la révision à l’heure prévue."
-        : `Scène activée · synchronisation r${payload.syncRevision}.`,
+        ? "Scène programmée. Elle sera affichée automatiquement à l’heure prévue."
+        : `Scène affichée. Synchronisation ${payload.syncRevision} envoyée aux TV.`,
     );
   } catch (error) {
     formError("sceneScheduleError", error.message);
@@ -2763,13 +3213,10 @@ refs.targetSelect.addEventListener("change", () => {
 });
 
 $$(".section").forEach((button) => button.addEventListener("click", () => {
-  $$(".section").forEach((item) => {
-    const active = item === button;
-    item.classList.toggle("on", active);
-    if (active) item.setAttribute("aria-current", "page");
-    else item.removeAttribute("aria-current");
-  });
-  $$(".workspace-panel").forEach((panel) => panel.classList.toggle("on", panel.id === `view-${button.dataset.view}`));
+  switchView(button.dataset.view);
+}));
+$$(`[data-go-view]`).forEach((button) => button.addEventListener("click", () => {
+  switchView(button.dataset.goView, { focus: true });
 }));
 
 refs.sceneName.addEventListener("input", () => {
@@ -2953,14 +3400,7 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
   submit.disabled = true;
   try {
     const ticket = await api.post("tvs/enrollment", { displayName, roomName });
-    if (
-      !/^[0-9a-f-]{36}$/i.test(String(ticket.id || "")) ||
-      typeof ticket.enrollmentKey !== "string" ||
-      ticket.enrollmentKey.length < 20 ||
-      !ticket.expiresAt ||
-      ticket.trustBootstrap?.mode !== "encrypted-server-ca" ||
-      ticket.trustBootstrap?.version !== 1
-    ) {
+    if (!validEnrollmentTicket(ticket)) {
       throw new Error("Réponse d’enrôlement incomplète.");
     }
     if (!state.televisions.some((tv) => (tv.id ?? tv.deviceId) === ticket.id)) {
@@ -2974,7 +3414,7 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
     form.reset();
     renderCollections();
     setEnrollmentTicket(ticket);
-    toast("Enrôlement créé. La clé ne sera plus réaffichée après masquage.");
+    toast("Code créé. Saisissez-le sur la TV ; il ne sera plus réaffiché après masquage.");
   } catch (error) {
     formError("enrollmentError", enrollmentErrorMessage(error));
   } finally {
@@ -2985,14 +3425,10 @@ $("#copyEnrollmentButton").addEventListener("click", async () => {
   const ticket = state.enrollmentTicket;
   if (!ticket) return;
   try {
-    await navigator.clipboard.writeText(JSON.stringify({
-      serverUrl: location.origin,
-      deviceId: ticket.id,
-      enrollmentKey: ticket.enrollmentKey,
-    }));
-    toast("Paramètres d’enrôlement copiés. Effacez le presse-papiers après usage.");
+    await navigator.clipboard.writeText(ticket.enrollmentCode);
+    toast("Code d’installation copié. Effacez le presse-papiers après usage.");
   } catch {
-    toast("Copie indisponible. Utilisez les trois champs affichés.", true);
+    toast("Copie indisponible. Saisissez le code affiché sur la TV.", true);
   }
 });
 $("#hideEnrollmentButton").addEventListener("click", () => {
@@ -3060,6 +3496,9 @@ $("#tvCredentialForm").addEventListener("submit", async (event) => {
       ));
       toast("Accès TV révoqué. Son cache local n’a pas été effacé.");
     } else {
+      if (!validEnrollmentTicket(payload)) {
+        throw new Error("Réponse de nouvel enrôlement incomplète.");
+      }
       state.televisions = state.televisions.map((tv) => (
         tv.id === pending.tvId
           ? {
@@ -3114,7 +3553,34 @@ for (const field of ["Primary", "Accent", "Surface", "Ink", "Muted"]) {
 }
 $("#brandDisplayName").addEventListener("input", previewBrandForm);
 $("#brandFontPreset").addEventListener("change", previewBrandForm);
-$("#brandLogoAsset").addEventListener("change", previewBrandForm);
+$("#brandLogoAsset").addEventListener("change", () => {
+  previewBrandForm();
+  proposeBrandPalette();
+});
+$("#brandPaletteCancel").addEventListener("click", () => {
+  state.pendingBrandPalette = null;
+  $("#brandPaletteDialog").close("kept-manual-colors");
+});
+$("#brandPaletteDialog").addEventListener("close", () => {
+  state.pendingBrandPalette = null;
+});
+$("#brandPaletteForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const palette = state.pendingBrandPalette;
+  if (!palette || $("#brandLogoAsset").value !== palette.logoAssetId) {
+    $("#brandPaletteDialog").close("stale-proposal");
+    return;
+  }
+  for (const field of ["Primary", "Accent"]) {
+    const value = palette[field.toLowerCase()];
+    $(`#brand${field}`).value = value;
+    $(`#brand${field}Text`).value = value;
+  }
+  state.pendingBrandPalette = null;
+  $("#brandPaletteDialog").close("applied");
+  previewBrandForm();
+  toast("Couleurs proposées appliquées à l’aperçu. Enregistrez l’identité pour les conserver.");
+});
 $("#brandForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("brandError");
@@ -3136,12 +3602,16 @@ $("#brandForm").addEventListener("submit", async (event) => {
       branding,
     });
     applyBranding(payload.instance);
+    state.persistedIdentity = structuredClone(state.instance);
+    state.logoPaletteRequest += 1;
+    if ($("#brandPaletteDialog").open) $("#brandPaletteDialog").close("identity-saved");
     populateBrandForm();
     toast("Charte globale enregistrée et transmise à la synchronisation TV.");
     setStatus("ok", "Identité visuelle enregistrée par l’API");
   } catch (error) {
     formError("brandError", error.message);
-    applyBranding(state.instance ?? state.bootstrapStatus?.identity ?? {});
+    applyBranding(state.persistedIdentity ?? state.bootstrapStatus?.identity ?? {});
+    populateBrandForm();
   } finally {
     submit.disabled = false;
   }
@@ -3161,6 +3631,63 @@ refs.monitor.addEventListener("pointermove", moveInteraction);
 refs.monitor.addEventListener("pointerup", endInteraction);
 refs.monitor.addEventListener("pointercancel", endInteraction);
 $("#propertiesForm").addEventListener("input", updateSelectedProperties);
+$("#weatherLocation").addEventListener("input", (event) => {
+  const node = selectedNode();
+  if (!node || node.kind !== "weather") return;
+  const value = event.currentTarget.value.slice(0, 120).replace(/\s+/g, " ");
+  if (value !== node.props.location) {
+    node.props.location = value;
+    delete node.props.locationKey;
+    delete node.props.latitude;
+    delete node.props.longitude;
+    delete node.props.timezone;
+  }
+  clearTimeout(weatherSearchTimer);
+  weatherSearchController?.abort();
+  closeWeatherSuggestions();
+  renderNodes();
+  const query = value.trim();
+  if (query.length < 2) {
+    $("#weatherStatus").textContent = "Saisissez au moins deux caractères.";
+    return;
+  }
+  $("#weatherStatus").textContent = "Recherche en attente…";
+  weatherSearchTimer = setTimeout(
+    () => searchWeatherLocationsForNode(node.id, query),
+    280,
+  );
+});
+$("#weatherLocation").addEventListener("keydown", (event) => {
+  if (!state.weatherSuggestions.length) {
+    if (event.key === "Escape") closeWeatherSuggestions();
+    return;
+  }
+  if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    state.weatherSuggestionIndex = (
+      state.weatherSuggestionIndex + direction + state.weatherSuggestions.length
+    ) % state.weatherSuggestions.length;
+    renderWeatherSuggestions();
+    $(`#weatherSuggestion-${state.weatherSuggestionIndex}`)?.scrollIntoView({ block: "nearest" });
+  } else if (event.key === "Enter" && state.weatherSuggestionIndex >= 0) {
+    event.preventDefault();
+    selectWeatherSuggestion(state.weatherSuggestionIndex);
+  } else if (event.key === "Escape") {
+    event.preventDefault();
+    closeWeatherSuggestions();
+  }
+});
+$("#weatherLocation").addEventListener("blur", () => {
+  setTimeout(() => {
+    if (!$("#weatherSuggestions").contains(document.activeElement)) closeWeatherSuggestions();
+  }, 120);
+});
+$("#weatherSuggestions").addEventListener("mousedown", (event) => event.preventDefault());
+$("#weatherSuggestions").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-weather-index]");
+  if (button) selectWeatherSuggestion(Number(button.dataset.weatherIndex));
+});
 
 $("#backgroundFile").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
@@ -3287,7 +3814,7 @@ $("#serverUpdateForm").addEventListener("submit", async (event) => {
     );
     form.reset();
     await refreshReleases();
-    toast(`RoomFrame ${request.version} est en file. Le courtier Debian revalidera tout avant la bascule.`);
+    toast(`L’installation de RoomFrame ${request.version} est programmée. La version sera de nouveau vérifiée avant son installation.`);
   } catch (error) {
     formError("serverUpdateError", error.message);
   } finally {
@@ -3330,7 +3857,7 @@ $("#releaseBoard").addEventListener("click", async (event) => {
         {},
       );
       await refreshReleases();
-      toast(`${result.retriedCount} TV remise(s) dans la vague active.`);
+      toast(`${result.retriedCount} TV relancée${result.retriedCount > 1 ? "s" : ""} dans l’étape en cours.`);
     } catch (error) {
       toast(`La relance a été refusée : ${error.message}`, true);
     } finally {
@@ -3347,12 +3874,17 @@ $("#releaseBoard").addEventListener("click", async (event) => {
       { batchSize: Number($("#deploymentBatchSize").value || 1) },
     );
     await refreshReleases();
-    toast(result.status === "completed" ? "Déploiement terminé." : `${result.offeredCount} nouvelle(s) TV ont reçu la vague.`);
+    toast(
+      result.status === "completed"
+        ? "Déploiement terminé."
+        : `${result.offeredCount} nouvelle${result.offeredCount > 1 ? "s" : ""} TV ont reçu la mise à jour.`,
+    );
   } catch (error) {
-    toast(`La vague ne peut pas avancer : ${error.message}`, true);
+    toast(`Le déploiement ne peut pas continuer : ${error.message}`, true);
   } finally {
     button.disabled = false;
   }
 });
 
+setInterval(refreshStudioClocks, 15_000);
 boot();

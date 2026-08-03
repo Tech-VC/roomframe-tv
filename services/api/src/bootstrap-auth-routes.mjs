@@ -27,8 +27,17 @@ const cleanText = (value, {
   field,
   minimum = 1,
   maximum,
+  multiline = false,
 }) => {
-  const result = String(value ?? '').replace(/\s+/gu, ' ').trim();
+  const source = String(value ?? '').replace(/\r\n?/gu, '\n');
+  const result = multiline
+    ? source
+      .split('\n')
+      .map((line) => line.replace(/[\t\f\v ]+/gu, ' ').trim())
+      .slice(0, 2)
+      .join('\n')
+      .trim()
+    : source.replace(/\s+/gu, ' ').trim();
   if (result.length < minimum || result.length > maximum) {
     throw Object.assign(new Error(`invalid_${field}`), { statusCode: 400 });
   }
@@ -61,7 +70,7 @@ const normalizeBootstrapPayload = (body) => {
     roomName,
     defaultGreeting: cleanText(
       body.defaultGreeting ?? `Bonjour, bienvenue en ${roomName.toLowerCase()}`,
-      { field: 'default_greeting', maximum: 220 },
+      { field: 'default_greeting', maximum: 220, multiline: true },
     ),
     branding: {
       primary: color(body.branding?.primary, '#151511'),

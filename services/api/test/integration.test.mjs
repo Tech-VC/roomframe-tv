@@ -25,7 +25,12 @@ import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
-import { loadServerCa } from '../src/trust-bootstrap.mjs';
+import {
+  ENROLLMENT_CODE_BOOTSTRAP_CONTEXT,
+  enrollmentCodeLookupId,
+  loadServerCa,
+  normalizeEnrollmentCode,
+} from '../src/trust-bootstrap.mjs';
 import {
   createAuthenticationResponse,
   createRegistrationFixture,
@@ -89,6 +94,31 @@ const decryptTrustBootstrap = ({
     decipher.update(Buffer.from(payload.ciphertext, 'base64url')),
     decipher.final(),
   ]).toString('utf8');
+};
+
+const decryptEnrollmentCodeBootstrap = ({ payload, enrollmentCode }) => {
+  assert.equal(payload.version, 1);
+  assert.equal(payload.algorithm, 'AES-256-GCM');
+  assert.equal(payload.keyDerivation, 'HKDF-SHA256');
+  assert.equal(payload.context, ENROLLMENT_CODE_BOOTSTRAP_CONTEXT);
+  const info = Buffer.from(payload.context, 'utf8');
+  const normalizedCode = normalizeEnrollmentCode(enrollmentCode);
+  const inputKeyMaterial = crypto
+    .createHash('sha256')
+    .update(`${payload.context}\0`, 'utf8')
+    .update(normalizedCode, 'ascii')
+    .digest();
+  const salt = Buffer.from(payload.salt, 'base64url');
+  const iv = Buffer.from(payload.iv, 'base64url');
+  const tag = Buffer.from(payload.tag, 'base64url');
+  const key = Buffer.from(crypto.hkdfSync('sha256', inputKeyMaterial, salt, info, 32));
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAAD(info);
+  decipher.setAuthTag(tag);
+  return JSON.parse(Buffer.concat([
+    decipher.update(Buffer.from(payload.ciphertext, 'base64url')),
+    decipher.final(),
+  ]).toString('utf8'));
 };
 
 test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV restent cohérents', {
@@ -1283,6 +1313,45 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     mode: 'encrypted-server-ca',
     version: 1,
   });
+  assert.deepEqual(pendingDevice.simplifiedEnrollment, {
+    mode: 'encrypted-code-bootstrap',
+    version: 1,
+  });
+  assert.match(
+    pendingDevice.enrollmentCode,
+    /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){3}$/,
+  );
+  const codeBootstrap = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enrollment-bootstrap',
+    payload: {
+      enrollmentCodeId: enrollmentCodeLookupId(pendingDevice.enrollmentCode),
+    },
+  });
+  assert.equal(codeBootstrap.statusCode, 200, codeBootstrap.body);
+  const resolvedEnrollment = decryptEnrollmentCodeBootstrap({
+    payload: codeBootstrap.json(),
+    enrollmentCode: pendingDevice.enrollmentCode,
+  });
+  assert.equal(resolvedEnrollment.deviceId, pendingDevice.id);
+  assert.equal(resolvedEnrollment.enrollmentKey, pendingDevice.enrollmentKey);
+  assert.equal(resolvedEnrollment.certificatePem, serverCaPem);
+  assert.equal(
+    resolvedEnrollment.certificateFingerprintSha256,
+    (await loadServerCa(serverCaFile)).fingerprintSha256,
+  );
+  const invalidCodeBootstrap = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enrollment-bootstrap',
+    payload: { enrollmentCodeId: 'not-a-code-id' },
+  });
+  assert.equal(invalidCodeBootstrap.statusCode, 404);
+  const clearCodeBootstrap = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enrollment-bootstrap',
+    payload: { enrollmentCode: pendingDevice.enrollmentCode },
+  });
+  assert.equal(clearCodeBootstrap.statusCode, 404);
   const trustBootstrap = await app.inject({
     method: 'GET',
     url: `/api/v1/tv/trust-bootstrap?deviceId=${pendingDevice.id}`,
@@ -1335,6 +1404,14 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     url: `/api/v1/tv/trust-bootstrap?deviceId=${pendingDevice.id}`,
   });
   assert.equal(consumedTrustBootstrap.statusCode, 404);
+  const consumedCodeBootstrap = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enrollment-bootstrap',
+    payload: {
+      enrollmentCodeId: enrollmentCodeLookupId(pendingDevice.enrollmentCode),
+    },
+  });
+  assert.equal(consumedCodeBootstrap.statusCode, 404);
   const deviceCredential = claimed.json();
   assert.equal(deviceCredential.credentialDelivery, 'one-time');
   assert.equal(deviceCredential.credentialGeneration, 1);
@@ -1954,6 +2031,30 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     mode: 'encrypted-server-ca',
     version: 1,
   });
+  assert.deepEqual(reenrollment.json().simplifiedEnrollment, {
+    mode: 'encrypted-code-bootstrap',
+    version: 1,
+  });
+  const reenrollmentCodeBootstrap = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enrollment-bootstrap',
+    payload: {
+      enrollmentCodeId: enrollmentCodeLookupId(
+        reenrollment.json().enrollmentCode,
+      ),
+    },
+  });
+  assert.equal(
+    reenrollmentCodeBootstrap.statusCode,
+    200,
+    reenrollmentCodeBootstrap.body,
+  );
+  const resolvedReenrollment = decryptEnrollmentCodeBootstrap({
+    payload: reenrollmentCodeBootstrap.json(),
+    enrollmentCode: reenrollment.json().enrollmentCode,
+  });
+  assert.equal(resolvedReenrollment.deviceId, otherPendingDevice.id);
+  assert.equal(resolvedReenrollment.enrollmentKey, reenrollment.json().enrollmentKey);
   const reenrollmentTrustBootstrap = await app.inject({
     method: 'GET',
     url: `/api/v1/tv/trust-bootstrap?deviceId=${otherPendingDevice.id}`,
@@ -2157,6 +2258,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
       syncRevision: deviceSync.json().revision,
       syncDurationMs: 245,
       updateState: 'available',
+      silentUpdateCapable: true,
     },
   });
   assert.equal(acceptedMetrics.statusCode, 202, acceptedMetrics.body);
@@ -2206,7 +2308,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   const seededGreeting = studioState.scene.document.nodes.find(
     (node) => node.kind === 'text' && node.props?.role === 'greeting',
   );
-  assert.equal(seededGreeting.props.text, 'Bonjour, bienvenue en salle de réunion 1');
+  assert.equal(seededGreeting.props.text, 'Bonjour,\nbienvenue en salle de réunion 1');
 
   const noCsrf = await app.inject({
     method: 'POST',

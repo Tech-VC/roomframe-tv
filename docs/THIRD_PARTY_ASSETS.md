@@ -19,3 +19,23 @@ Android. La licence du dépôt amont reste applicable à ces fichiers.
 Ces glyphes identifient des types de source connus. Ils ne valident ni une
 marque partenaire ni le fonctionnement matériel de Cast, AirPlay ou HDMI sur
 un modèle de téléviseur donné.
+
+Sur un profil matériel validé, le client Android peut charger à l'exécution
+l'icône publiée par le récepteur Cast déjà installé par le constructeur. Cette
+icône système n'est ni extraite, ni modifiée, ni redistribuée dans le dépôt.
+Le service AirPlay de la Philips testée publie seulement une icône Android
+générique : RoomFrame conserve donc le glyphe vidéo AirPlay Apache-2.0 du
+tableau ci-dessus, sans intégrer le pack graphique Apple réservé aux logiciels
+Apple. Ces vecteurs restent aussi les replis neutres lorsqu'un service ne
+fournit aucune icône exploitable.
+
+## Données météo
+
+La recherche de commune et les conditions courantes proviennent de
+[Open-Meteo](https://open-meteo.com/). La régie conserve l’attribution
+« Données météo : Open-Meteo » avec un lien vers le fournisseur dans les
+propriétés du bloc météo et la documentation. L’accueil TV reste limité au nom
+de la commune, à l’icône, à la température et aux conditions. Le mode
+d’évaluation n’est destiné qu’aux usages couverts par les conditions gratuites
+d’Open-Meteo ; une instance commerciale doit utiliser son endpoint client et
+sa propre clé d’abonnement.

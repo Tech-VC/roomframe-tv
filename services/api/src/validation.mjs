@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
+import { weatherLocationKey } from './weather.mjs';
 
 const schemaNames = [
   'instance.schema.json',
@@ -15,14 +16,18 @@ const schemaNames = [
   'tv-credential.schema.json',
   'tv-certificate.schema.json',
   'tv-trust-bootstrap.schema.json',
+  'tv-enrollment-bootstrap.schema.json',
   'discovery.schema.json',
   'admin-user.schema.json',
+  'weather.schema.json',
 ];
 
 const allowedProps = {
   text: new Set(['role', 'text', 'fontScale', 'maxLines', 'color', 'align']),
   clock: new Set(['showDate', 'showWeather', 'timezone', 'format']),
-  weather: new Set(['location', 'units', 'label']),
+  weather: new Set([
+    'location', 'locationKey', 'latitude', 'longitude', 'timezone', 'units', 'label',
+  ]),
   message: new Set(['title', 'feed', 'maximumItems']),
   image: new Set(['assetId', 'fit', 'focalX', 'focalY', 'alt']),
   video: new Set(['assetId', 'fit', 'focalX', 'focalY', 'muted', 'loop']),
@@ -37,10 +42,12 @@ const invalid = (code, details) => Object.assign(new Error(code), {
   validation: details,
 });
 
-const textValue = (value, maximum = 500) => (
+const textValue = (value, maximum = 500, allowLineBreaks = false) => (
   typeof value === 'string'
   && value.length <= maximum
-  && !/[\u0000-\u001f\u007f]/.test(value)
+  && !(allowLineBreaks
+    ? /[\u0000-\u0009\u000b-\u001f\u007f]/.test(value)
+    : /[\u0000-\u001f\u007f]/.test(value))
 );
 
 const assetReference = (value, { allowDefault = false, nullable = true } = {}) => (
@@ -63,8 +70,8 @@ const assertNodeProps = (node) => {
   const reject = (property) => {
     throw invalid('invalid_node_property_value', [{ nodeId: node.id, property }]);
   };
-  const optionalText = (property, maximum = 500) => {
-    if (property in props && !textValue(props[property], maximum)) reject(property);
+  const optionalText = (property, maximum = 500, allowLineBreaks = false) => {
+    if (property in props && !textValue(props[property], maximum, allowLineBreaks)) reject(property);
   };
   const optionalBoolean = (property) => {
     if (property in props && typeof props[property] !== 'boolean') reject(property);
@@ -95,10 +102,12 @@ const assertNodeProps = (node) => {
     'text', 'title', 'label', 'value', 'alt', 'feed', 'location', 'role',
     'applicationId', 'source',
   ]) {
-    optionalText(property, property === 'text' ? 500 : 200);
+    optionalText(property, property === 'text' ? 500 : 200, property === 'text');
   }
   for (const property of ['showDate', 'showWeather', 'muted', 'loop']) optionalBoolean(property);
   for (const property of ['focalX', 'focalY']) optionalNumber(property, 0, 1);
+  optionalNumber('latitude', -90, 90);
+  optionalNumber('longitude', -180, 180);
   optionalNumber('fontScale', 0.25, 4);
   optionalInteger('maxLines', 1, 20);
   optionalInteger('maximumItems', 1, 20);
@@ -131,6 +140,28 @@ const assertNodeProps = (node) => {
   if ('asset' in props && !assetReference(props.asset, { allowDefault: true })) reject('asset');
   if ('physicalInput' in props && !/^(?:auto|HDMI[1-8])$/.test(props.physicalInput)) {
     reject('physicalInput');
+  }
+  if ('locationKey' in props && !/^[a-f0-9]{64}$/.test(props.locationKey)) reject('locationKey');
+  if (node.kind === 'weather') {
+    const configured = Boolean(
+      props.location
+      || props.locationKey
+      || props.latitude !== undefined
+      || props.longitude !== undefined
+      || props.timezone,
+    );
+    if (configured) {
+      for (const property of [
+        'location', 'locationKey', 'latitude', 'longitude', 'timezone', 'units',
+      ]) {
+        if (props[property] === undefined || props[property] === '') reject(property);
+      }
+      try {
+        if (weatherLocationKey(props) !== props.locationKey) reject('locationKey');
+      } catch {
+        reject('locationKey');
+      }
+    }
   }
 };
 
@@ -218,7 +249,9 @@ export const createValidators = async (contractsDir) => {
     assertTvCredential: (value) => assert('tv-credential.schema.json', value),
     assertTvCertificate: (value) => assert('tv-certificate.schema.json', value),
     assertTvTrustBootstrap: (value) => assert('tv-trust-bootstrap.schema.json', value),
+    assertTvEnrollmentBootstrap: (value) => assert('tv-enrollment-bootstrap.schema.json', value),
     assertDiscovery: (value) => assert('discovery.schema.json', value),
     assertAdminUser: (value) => assert('admin-user.schema.json', value),
+    assertWeather: (value) => assert('weather.schema.json', value),
   });
 };

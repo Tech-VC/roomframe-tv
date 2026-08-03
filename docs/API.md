@@ -92,6 +92,8 @@ PUT  /api/v1/instance/branding
 GET  /api/v1/studio
 GET  /api/v1/studio?sceneId=<uuid>
 GET  /api/v1/studio/preview?targetType=tv|group&targetId=<uuid>
+GET  /api/v1/weather/locations?q=<ville-ou-code-postal>
+GET  /api/v1/weather/current?location=<libellé>&locationKey=<sha256>&latitude=<n>&longitude=<n>&timezone=<iana>&units=metric|imperial
 POST /api/v1/scenes
 POST /api/v1/scenes/:sceneId/revisions
 POST /api/v1/scenes/:sceneId/publish
@@ -123,6 +125,16 @@ GET  /api/v1/audit
 Chaque route applique une permission dédiée. Le rôle contenu peut, par
 exemple, obtenir le Studio sans recevoir le parc, les réglages de sources ou
 les releases. Les actions d’écriture sont ajoutées au journal d’audit.
+
+Les deux routes météo exigent `studio:read`. L’autocomplétion retourne un
+libellé, des coordonnées WGS84, un fuseau IANA et une clé stable calculée par
+le serveur. Une scène ne peut pas enregistrer une simple chaîne ambiguë : les
+champs de localisation doivent être présents et cohérents. La route `current`
+passe uniquement par la passerelle météo interne, met la réponse en cache
+PostgreSQL et ne transmet jamais une URL choisie par le navigateur.
+Le manifeste de synchronisation référence `weather.json`, document versionné
+et haché comme les autres documents TV, avec l’attribution du fournisseur et
+un état `ready`, `stale` ou `unavailable` par lieu.
 
 Les écritures sur les comptes sont réservées au rôle propriétaire au moyen de
 la permission interne `users:owner`. Elles exigent une session, le CSRF, la
@@ -203,6 +215,7 @@ héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 
 ```text
 GET  /api/v1/discovery
+POST /api/v1/tv/enrollment-bootstrap
 GET  /api/v1/tv/trust-bootstrap?deviceId=<UUID>
 POST /api/v1/tv/enroll
 POST /api/v1/tv/credentials/rotate
@@ -224,17 +237,23 @@ ECDSA P-256. Il ne contient ni secret, ni organisation, ni salle, ni identité
 TV. La signature est vérifiée avant que l’APK ne tente le bootstrap chiffré.
 
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
-`POST /api/v1/tvs/enrollment`. Avant de transmettre la clé temporaire, la TV
-récupère sur `GET /tv/trust-bootstrap` la CA HTTPS chiffrée du ticket. Le
-payload suit `contracts/tv-trust-bootstrap.schema.json` : AES-256-GCM,
-HKDF-SHA256, sel et IV propres au ticket, avec l’UUID dans le contexte
-authentifié. La clé d’enrôlement n’est jamais envoyée pendant ce premier
-contact non encore approuvé. L’APK déchiffre la CA, valide la chaîne TLS
-observée et l’épingle, puis échange la clé une seule fois sur
-`POST /api/v1/tv/enroll`; l’API lui remet alors une nouvelle clé d’appareil.
-Le blob chiffré est supprimé lors de cet échange. Une TV encore en attente ne
-peut pas synchroniser. Le client Android joint aussi une clé publique RSA SPKI
-et une preuve `RS256` suivant
+`POST /api/v1/tvs/enrollment`. Le parcours courant affiche un code de 16
+caractères. La TV calcule localement son identifiant SHA-256 contextuel et
+envoie seulement `{ "enrollmentCodeId": "<64 hex>" }` à
+`POST /tv/enrollment-bootstrap`. La réponse AES-256-GCM contient la CA HTTPS,
+l’UUID et la clé longue ; seul le code resté sur la TV permet de la
+déchiffrer. L’APK valide ensuite la chaîne TLS observée et épingle la CA avant
+d’échanger la clé longue une seule fois sur `POST /api/v1/tv/enroll`.
+
+Le parcours historique reste disponible pour une ancienne APK : celle-ci
+récupère sur `GET /tv/trust-bootstrap` la CA HTTPS chiffrée avec la clé longue
+du ticket. Son payload suit `contracts/tv-trust-bootstrap.schema.json` :
+AES-256-GCM, HKDF-SHA256, sel et IV propres au ticket, avec l’UUID dans le
+contexte authentifié. Dans les deux parcours, aucune clé d’enrôlement n’est
+envoyée pendant le premier contact non encore approuvé. Les blobs chiffrés
+sont supprimés lors de l’enrôlement. Une TV encore en attente ne peut pas
+synchroniser. Le client Android joint aussi une clé publique RSA SPKI et une
+preuve `RS256` suivant
 `contracts/tv-certificate.schema.json`. La clé privée correspondante reste
 non exportable dans Android Keystore.
 

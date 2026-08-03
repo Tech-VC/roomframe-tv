@@ -46,10 +46,10 @@ Une mise à jour logicielle :
 - scène 1920 × 1080 ;
 - fond neutre optimisé ;
 - flou de fond réglable de 0 à 40 px, nul par défaut et stocké dans la scène ;
-- salutation mono-ligne, réduite automatiquement si nécessaire ;
-- heure et météo ;
+- salutation limitée à deux lignes, réduite automatiquement si nécessaire ;
+- date et heure au format français ;
 - AirPlay, Cast et HDMI ;
-- zone de messages ;
+- zone de messages, absente du rendu lorsqu’aucun message n’est actif ;
 - indication réseau ;
 - logo image en bas à droite ;
 - retour à l’accueil après 15 minutes sans source ;

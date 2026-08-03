@@ -2,6 +2,33 @@ import crypto from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 export const SERVER_TRUST_BOOTSTRAP_CONTEXT = 'roomframe-server-ca-bootstrap-v1';
+export const ENROLLMENT_CODE_BOOTSTRAP_CONTEXT = 'roomframe-enrollment-code-bootstrap-v1';
+
+const enrollmentCodeAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+export const normalizeEnrollmentCode = (value) => {
+  const normalized = String(value ?? '')
+    .toUpperCase()
+    .replaceAll(/[-\s]/g, '');
+  if (
+    normalized.length !== 16
+    || [...normalized].some((character) => !enrollmentCodeAlphabet.includes(character))
+  ) {
+    throw new Error('invalid_enrollment_code');
+  }
+  return normalized;
+};
+
+export const formatEnrollmentCode = (value) => (
+  normalizeEnrollmentCode(value).match(/.{4}/g).join('-')
+);
+
+export const randomEnrollmentCode = () => {
+  const random = crypto.randomBytes(16);
+  return [...random]
+    .map((value) => enrollmentCodeAlphabet[value & 31])
+    .join('');
+};
 
 const normalizedFingerprint = (certificate) => (
   certificate.fingerprint256.replaceAll(':', '').toLowerCase()
@@ -102,6 +129,75 @@ export const encryptServerTrustBootstrap = ({
   };
 };
 
+const enrollmentCodeKeyMaterial = (enrollmentCode) => crypto
+  .createHash('sha256')
+  .update(`${ENROLLMENT_CODE_BOOTSTRAP_CONTEXT}\0`, 'utf8')
+  .update(normalizeEnrollmentCode(enrollmentCode), 'ascii')
+  .digest();
+
+export const enrollmentCodeLookupId = (enrollmentCode) => (
+  enrollmentCodeKeyMaterial(enrollmentCode).toString('hex')
+);
+
+export const encryptEnrollmentCodeBootstrap = ({
+  certificatePem,
+  certificateFingerprintSha256,
+  deviceId,
+  enrollmentKey,
+  enrollmentCode,
+  salt = crypto.randomBytes(32),
+  iv = crypto.randomBytes(12),
+}) => {
+  if (
+    !Buffer.isBuffer(salt)
+    || salt.length !== 32
+    || !Buffer.isBuffer(iv)
+    || iv.length !== 12
+  ) {
+    throw new Error('invalid_enrollment_code_bootstrap_nonce');
+  }
+  const keyBytes = Buffer.from(String(enrollmentKey), 'base64url');
+  if (
+    keyBytes.length !== 32
+    || keyBytes.toString('base64url') !== enrollmentKey
+  ) {
+    throw new Error('invalid_trust_bootstrap_key');
+  }
+  if (!/^[a-f0-9]{64}$/.test(certificateFingerprintSha256)) {
+    throw new Error('invalid_server_ca_fingerprint');
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(String(deviceId))) {
+    throw new Error('invalid_enrollment_device_id');
+  }
+  const info = Buffer.from(ENROLLMENT_CODE_BOOTSTRAP_CONTEXT, 'utf8');
+  const key = Buffer.from(crypto.hkdfSync(
+    'sha256',
+    enrollmentCodeKeyMaterial(enrollmentCode),
+    salt,
+    info,
+    32,
+  ));
+  const plaintext = Buffer.from(JSON.stringify({
+    version: 1,
+    deviceId,
+    enrollmentKey,
+    certificatePem,
+    certificateFingerprintSha256,
+  }), 'utf8');
+  if (plaintext.length < 500 || plaintext.length > 32_768) {
+    throw new Error('invalid_enrollment_code_bootstrap_payload');
+  }
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(info);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  return {
+    salt,
+    iv,
+    ciphertext,
+    tag: cipher.getAuthTag(),
+  };
+};
+
 export const serializeServerTrustBootstrap = (row) => ({
   version: 1,
   algorithm: 'AES-256-GCM',
@@ -111,4 +207,15 @@ export const serializeServerTrustBootstrap = (row) => ({
   iv: row.server_ca_bootstrap_iv.toString('base64url'),
   ciphertext: row.server_ca_bootstrap_ciphertext.toString('base64url'),
   tag: row.server_ca_bootstrap_tag.toString('base64url'),
+});
+
+export const serializeEnrollmentCodeBootstrap = (row) => ({
+  version: 1,
+  algorithm: 'AES-256-GCM',
+  keyDerivation: 'HKDF-SHA256',
+  context: ENROLLMENT_CODE_BOOTSTRAP_CONTEXT,
+  salt: row.enrollment_code_bootstrap_salt.toString('base64url'),
+  iv: row.enrollment_code_bootstrap_iv.toString('base64url'),
+  ciphertext: row.enrollment_code_bootstrap_ciphertext.toString('base64url'),
+  tag: row.enrollment_code_bootstrap_tag.toString('base64url'),
 });

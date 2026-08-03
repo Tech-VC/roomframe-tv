@@ -47,6 +47,8 @@ data class NodeProperties(
     val label: String?,
     val value: String?,
     val title: String?,
+    val location: String?,
+    val locationKey: String?,
     val source: String?,
     val asset: String?,
     val assetId: String?,
@@ -96,6 +98,22 @@ data class MessageDocument(
     val title: String,
     val body: String,
     val priority: Int,
+)
+
+data class WeatherReadingDocument(
+    val key: String,
+    val location: String,
+    val status: String,
+    val temperatureUnit: String,
+    val temperature: Float?,
+    val weatherCode: Int?,
+    val condition: String?,
+)
+
+data class WeatherDocument(
+    val readings: Map<String, WeatherReadingDocument> = emptyMap(),
+    val attributionLabel: String = "Données météo : Open-Meteo",
+    val attributionUrl: String = "https://open-meteo.com/",
 )
 
 object ExperienceDocumentParser {
@@ -172,6 +190,56 @@ object ExperienceDocumentParser {
         }.sortedByDescending(MessageDocument::priority)
     }
 
+    fun parseWeather(bytes: ByteArray?): WeatherDocument {
+        if (bytes == null) return WeatherDocument()
+        val root = parseObject(bytes, "weather")
+        require(root.getInt("schemaVersion") == 1) { "Version météo non supportée" }
+        require(root.getString("provider") == "open-meteo") { "Fournisseur météo non supporté" }
+        val attribution = root.getJSONObject("attribution")
+        val label = boundedText(attribution.getString("label"), 100, singleLine = true)
+        val url = boundedText(attribution.getString("url"), 200, singleLine = true)
+        require(url == "https://open-meteo.com/") { "Attribution météo invalide" }
+        val rawItems = root.getJSONArray("items")
+        require(rawItems.length() <= 50) { "Trop de lieux météo" }
+        val readings = buildMap {
+            repeat(rawItems.length()) { index ->
+                val item = rawItems.getJSONObject(index)
+                val key = item.getString("key")
+                require(Regex("^[a-f0-9]{64}$").matches(key)) { "Clé météo invalide" }
+                val status = item.getString("status")
+                require(status in setOf("ready", "stale", "unavailable")) { "État météo invalide" }
+                val unit = item.getString("temperatureUnit")
+                require(unit in setOf("°C", "°F")) { "Unité météo invalide" }
+                val temperature = if (item.isNull("temperature")) null else {
+                    finiteFloat(item.getDouble("temperature"), -150f, 160f, "temperature")
+                }
+                put(
+                    key,
+                    WeatherReadingDocument(
+                        key = key,
+                        location = boundedText(item.getString("location"), 200, singleLine = true),
+                        status = status,
+                        temperatureUnit = unit,
+                        temperature = temperature,
+                        weatherCode = if (item.isNull("weatherCode")) null else {
+                            item.getInt("weatherCode").also {
+                                require(it in 0..99) { "Code météo invalide" }
+                            }
+                        },
+                        condition = if (item.isNull("condition")) null else {
+                            boundedText(item.getString("condition"), 100, singleLine = true)
+                        },
+                    ),
+                )
+            }
+        }
+        return WeatherDocument(
+            readings = readings,
+            attributionLabel = label,
+            attributionUrl = url,
+        )
+    }
+
     private fun parseBackground(raw: JSONObject): BackgroundDocument {
         val type = raw.getString("type")
         require(type in setOf("color", "image", "video")) { "Type de fond invalide" }
@@ -214,6 +282,10 @@ object ExperienceDocumentParser {
                 label = props.optNullableString("label")?.let { boundedText(it, 200, true) },
                 value = props.optNullableString("value")?.let { boundedText(it, 500, false) },
                 title = props.optNullableString("title")?.let { boundedText(it, 200, true) },
+                location = props.optNullableString("location")?.let { boundedText(it, 200, true) },
+                locationKey = props.optNullableString("locationKey")?.also {
+                    require(Regex("^[a-f0-9]{64}$").matches(it)) { "Clé météo invalide" }
+                },
                 source = props.optNullableString("source")?.let { boundedText(it, 64, true) },
                 asset = optionalAsset(props.optNullableString("asset")),
                 assetId = optionalAsset(props.optNullableString("assetId")),
@@ -224,7 +296,7 @@ object ExperienceDocumentParser {
                 feed = props.optNullableString("feed")?.let { boundedText(it, 64, true) },
                 maximumItems = props.optInt("maximumItems", 3).coerceIn(1, 20),
                 fontScale = finiteFloat(props.optDouble("fontScale", 1.0), 0.25f, 4f, "fontScale"),
-                maxLines = props.optInt("maxLines", if (props.optString("role") == "greeting") 1 else 10)
+                maxLines = props.optInt("maxLines", if (props.optString("role") == "greeting") 2 else 10)
                     .coerceIn(1, 20),
                 showDate = props.optBoolean("showDate", false),
                 format = props.optString("format", "24h").takeIf { it in setOf("12h", "24h") } ?: "24h",

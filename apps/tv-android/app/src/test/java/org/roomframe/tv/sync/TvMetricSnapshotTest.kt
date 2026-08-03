@@ -16,12 +16,14 @@ class TvMetricSnapshotTest {
             syncRevision = 14,
             syncDurationMs = 245,
             updateState = "idle",
+            silentUpdateCapable = true,
             errorCode = null,
         ).toJson()
 
         assertEquals("ethernet", json.getString("networkState"))
         assertEquals(14L, json.getLong("syncRevision"))
         assertEquals(2_147_483_648L, json.getLong("storageFreeBytes"))
+        assertEquals(true, json.getBoolean("silentUpdateCapable"))
         assertFalse(json.has("ssid"))
         assertFalse(json.has("content"))
         assertFalse(json.has("personalDevices"))

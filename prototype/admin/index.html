@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui12">
-  <script type="module" src="/app.js?v=0.3.0-ui12"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui19">
+  <script type="module" src="/app.js?v=0.3.0-ui19"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -16,7 +16,8 @@
     <header class="mast">
       <div class="wordmark"><span class="mark" aria-hidden="true"></span><img class="hidden" id="instanceLogo" alt=""><span id="instanceWordmark">ROOMFRAME TV</span></div>
       <nav class="sections" aria-label="Espaces de travail">
-        <button class="section on" type="button" data-view="surface" aria-current="page">Surface</button>
+        <button class="section on" type="button" data-view="home" aria-current="page">Accueil</button>
+        <button class="section" type="button" data-view="surface">Surface</button>
         <button class="section" type="button" data-view="content">Contenus</button>
         <button class="section" type="button" data-view="brand">Identité</button>
         <button class="section" type="button" data-view="fleet">Parc</button>
@@ -36,20 +37,73 @@
     </div>
 
     <main id="main-content">
-      <section class="workspace-panel on" id="view-surface" aria-labelledby="surfaceTitle">
+      <section class="workspace-panel full-panel home-panel on" id="view-home" aria-labelledby="homeTitle">
+        <aside class="panel-index">
+          <div class="eyebrow">Vue d’ensemble</div>
+          <h1 class="editorial-title" id="homeTitle">Votre régie<br>en un coup<br>d’œil.</h1>
+          <p class="note">Retrouvez l’état des TV, des scènes, des contenus et des mises à jour.</p>
+        </aside>
+        <div class="panel-content home-workbench">
+          <header class="home-intro">
+            <span class="index-number">ACCUEIL / 01</span>
+            <h2>État actuel de l’installation</h2>
+            <p id="homeSummary">Chargement de l’instance locale…</p>
+          </header>
+          <section class="home-metrics" aria-label="État de la régie">
+            <article>
+              <span>PARC</span>
+              <strong id="homeTvMetric">—</strong>
+              <small id="homeTvDetail">Écrans en attente</small>
+              <button class="text-button" type="button" data-go-view="fleet">Voir le parc</button>
+            </article>
+            <article>
+              <span>SCÈNES</span>
+              <strong id="homeSceneMetric">—</strong>
+              <small id="homeSceneDetail">Publication en attente</small>
+              <button class="text-button" type="button" data-go-view="surface">Composer</button>
+            </article>
+            <article>
+              <span>CONTENUS</span>
+              <strong id="homeContentMetric">—</strong>
+              <small id="homeContentDetail">Bibliothèque locale</small>
+              <button class="text-button" type="button" data-go-view="content">Ouvrir</button>
+            </article>
+            <article>
+              <span>VERSIONS</span>
+              <strong id="homeReleaseMetric">—</strong>
+              <small id="homeReleaseDetail">Aucune version disponible</small>
+              <button class="text-button" type="button" data-go-view="releases">Contrôler</button>
+            </article>
+          </section>
+          <section class="home-actions" aria-labelledby="homeActionsTitle">
+            <div>
+              <span class="index-number">ACCUEIL / 02</span>
+              <h2 id="homeActionsTitle">Que voulez-vous faire&nbsp;?</h2>
+              <p>Accédez directement aux outils utilisés le plus souvent.</p>
+            </div>
+            <div class="home-action-grid">
+              <button type="button" data-go-view="surface"><b>01</b><span>Modifier la scène d’accueil</span><i aria-hidden="true">→</i></button>
+              <button type="button" data-go-view="fleet"><b>02</b><span>Préparer ou contrôler une TV</span><i aria-hidden="true">→</i></button>
+              <button type="button" data-go-view="content"><b>03</b><span>Ajouter un média ou un message</span><i aria-hidden="true">→</i></button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="workspace-panel" id="view-surface" aria-labelledby="surfaceTitle">
         <div class="workspace">
           <aside class="left">
-            <div class="eyebrow">Scène active / configuration</div>
-            <h1 class="bigtitle" id="surfaceTitle"><span>01</span>Table<br>de composition</h1>
+            <div class="eyebrow">Éditeur de scène</div>
+            <h1 class="bigtitle" id="surfaceTitle"><span>01</span>Composer<br>l’écran d’accueil</h1>
 
             <div class="field scene-library">
-              <label for="sceneLibrarySelect">Scène de travail</label>
+              <label for="sceneLibrarySelect">Scène à modifier</label>
               <select id="sceneLibrarySelect"></select>
               <button class="text-button" id="sceneLoadButton" type="button">Charger la scène</button>
-              <label for="sceneCloneName">Créer depuis le brouillon</label>
+              <label for="sceneCloneName">Créer une copie du brouillon</label>
               <input id="sceneCloneName" maxlength="100" placeholder="Nom de la nouvelle scène">
               <button class="text-button" id="sceneCloneButton" type="button">Créer la copie</button>
-              <small>Charger une autre scène abandonne les modifications non enregistrées.</small>
+              <small>Si vous chargez une autre scène, les modifications non enregistrées seront perdues.</small>
             </div>
             <div class="field">
               <label for="targetSelect">Aperçu</label>
@@ -61,7 +115,8 @@
             </div>
             <div class="field">
               <label for="greetingInput">Salutation</label>
-              <input id="greetingInput" maxlength="220" autocomplete="off">
+              <textarea id="greetingInput" maxlength="220" rows="2" autocomplete="off" aria-describedby="greetingHelp"></textarea>
+              <small id="greetingHelp">Deux lignes maximum. Le retour à la ligne saisi ici est repris à l’identique sur la TV.</small>
             </div>
             <fieldset class="field">
               <legend>Fond de scène</legend>
@@ -133,8 +188,24 @@
                 <p class="empty-copy" id="noSelection">Sélectionnez un objet dans la scène.</p>
                 <div id="propertyFields" class="hidden">
                   <div class="property-heading"><b id="selectedKind">Objet</b><button class="danger-link" id="deleteNodeButton" type="button">Retirer</button></div>
-                  <label for="nodeLabel">Libellé</label><input id="nodeLabel" maxlength="120">
-                  <label for="nodeText">Texte / valeur</label><textarea id="nodeText" maxlength="1000"></textarea>
+                  <div id="nodeLabelField"><label for="nodeLabel">Libellé</label><input id="nodeLabel" maxlength="120"></div>
+                  <div id="nodeTextField"><label for="nodeText">Texte affiché</label><textarea id="nodeText" maxlength="1000"></textarea></div>
+                  <div class="clock-field hidden" id="nodeClockField">
+                    <label class="check-line" for="clockShowDate"><input id="clockShowDate" type="checkbox"> Afficher la date</label>
+                    <label for="clockFormat">Format de l’heure</label>
+                    <select id="clockFormat">
+                      <option value="24h">24 heures · 18h15</option>
+                      <option value="12h">12 heures · 6:15 PM</option>
+                    </select>
+                  </div>
+                  <div class="weather-field hidden" id="nodeWeatherField">
+                    <label for="weatherLocation">Ville ou code postal</label>
+                    <input id="weatherLocation" type="search" maxlength="120" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="weatherSuggestions" aria-expanded="false" aria-describedby="weatherLocationHelp weatherStatus">
+                    <small id="weatherLocationHelp">Saisissez au moins deux caractères, puis choisissez la commune exacte.</small>
+                    <div class="weather-suggestions hidden" id="weatherSuggestions" role="listbox"></div>
+                    <p class="weather-status" id="weatherStatus" role="status"></p>
+                    <a class="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noreferrer">Données météo : Open-Meteo</a>
+                  </div>
                   <div id="nodeAssetField" class="hidden">
                     <label for="nodeAsset">Média</label>
                     <select id="nodeAsset"></select>
@@ -165,14 +236,14 @@
       <section class="workspace-panel full-panel" id="view-content" aria-labelledby="contentTitle">
         <aside class="panel-index">
           <div class="eyebrow">Bibliothèque locale</div>
-          <h1 class="editorial-title" id="contentTitle">Ce qui<br>passe à<br>l’écran.</h1>
-          <p class="note">Médias et messages ne deviennent visibles qu’après validation serveur et publication.</p>
+          <h1 class="editorial-title" id="contentTitle">Médias et<br>messages.</h1>
+          <p class="note">Importez les images et vidéos, puis programmez les messages à afficher sur les TV.</p>
         </aside>
         <div class="panel-content content-columns">
           <section>
             <h2>Médias</h2>
             <form class="release-drop" id="mediaForm">
-              <div><h3>Importer un média</h3><p>Image ou vidéo, nettoyée et adaptée par le serveur.</p></div>
+              <div><h3>Importer un média</h3><p>Choisissez une image ou une vidéo. RoomFrame l’adaptera au format des TV.</p></div>
               <label class="action-label" for="mediaFile">Choisir<input class="visually-hidden" id="mediaFile" name="file" type="file" accept="image/*,video/*" required></label>
               <button class="tool primary" type="submit">Envoyer</button>
             </form>
@@ -196,45 +267,45 @@
 
       <section class="workspace-panel full-panel brand-panel" id="view-brand" aria-labelledby="brandTitle">
         <aside class="panel-index">
-          <div class="eyebrow">Identité de l’instance</div>
-          <h1 class="editorial-title" id="brandTitle">Une régie.<br>Votre<br>signature.</h1>
-          <p class="note">La charte pilote la connexion, l’administration et les documents envoyés aux TV.</p>
+          <div class="eyebrow">Identité visuelle</div>
+          <h1 class="editorial-title" id="brandTitle">L’identité<br>de vos<br>écrans.</h1>
+          <p class="note">Choisissez le nom, les couleurs et le logo utilisés dans la régie et sur les TV.</p>
         </aside>
         <div class="panel-content brand-workbench">
           <form class="brand-form" id="brandForm">
             <div class="brand-form-head">
-              <div><span class="index-number">ID / 01</span><h2>Charte globale</h2></div>
-              <button class="tool primary" type="submit">Appliquer la charte</button>
+              <div><span class="index-number">IDENTITÉ / 01</span><h2>Identité visuelle</h2></div>
+              <button class="tool primary" type="submit">Enregistrer l’identité</button>
             </div>
             <label for="brandDisplayName">Nom affiché</label>
             <input id="brandDisplayName" name="displayName" maxlength="100" required>
             <div class="color-bench">
-              <label for="brandPrimary"><span>Structure</span><input id="brandPrimary" name="primary" type="color"><input id="brandPrimaryText" class="color-text" aria-label="Couleur de structure en hexadécimal" maxlength="7"></label>
-              <label for="brandAccent"><span>Signal</span><input id="brandAccent" name="accent" type="color"><input id="brandAccentText" class="color-text" aria-label="Couleur de signal en hexadécimal" maxlength="7"></label>
-              <label for="brandSurface"><span>Surface</span><input id="brandSurface" name="surface" type="color"><input id="brandSurfaceText" class="color-text" aria-label="Couleur de surface en hexadécimal" maxlength="7"></label>
-              <label for="brandInk"><span>Encre</span><input id="brandInk" name="ink" type="color"><input id="brandInkText" class="color-text" aria-label="Couleur d’encre en hexadécimal" maxlength="7"></label>
-              <label for="brandMuted"><span>Secondaire</span><input id="brandMuted" name="muted" type="color"><input id="brandMutedText" class="color-text" aria-label="Couleur secondaire en hexadécimal" maxlength="7"></label>
+              <label for="brandPrimary"><span>Couleur principale</span><input id="brandPrimary" name="primary" type="color"><input id="brandPrimaryText" class="color-text" aria-label="Couleur principale en hexadécimal" maxlength="7"></label>
+              <label for="brandAccent"><span>Couleur d’accent</span><input id="brandAccent" name="accent" type="color"><input id="brandAccentText" class="color-text" aria-label="Couleur d’accent en hexadécimal" maxlength="7"></label>
+              <label for="brandSurface"><span>Fond</span><input id="brandSurface" name="surface" type="color"><input id="brandSurfaceText" class="color-text" aria-label="Couleur du fond en hexadécimal" maxlength="7"></label>
+              <label for="brandInk"><span>Texte principal</span><input id="brandInk" name="ink" type="color"><input id="brandInkText" class="color-text" aria-label="Couleur du texte principal en hexadécimal" maxlength="7"></label>
+              <label for="brandMuted"><span>Texte secondaire</span><input id="brandMuted" name="muted" type="color"><input id="brandMutedText" class="color-text" aria-label="Couleur du texte secondaire en hexadécimal" maxlength="7"></label>
             </div>
             <div class="brand-pair">
-              <label for="brandFontPreset">Rythme typographique
+              <label for="brandFontPreset">Style typographique
                 <select id="brandFontPreset" name="fontPreset">
                   <option value="studio">Studio — net et éditorial</option>
                   <option value="compact">Compact — dense et technique</option>
                   <option value="humanist">Humaniste — calme et accueillant</option>
                 </select>
               </label>
-              <label for="brandLogoAsset">Logo de l’instance
+              <label for="brandLogoAsset">Logo principal
                 <select id="brandLogoAsset" name="logoAssetId"><option value="">Aucun logo global</option></select>
               </label>
             </div>
             <p class="form-error hidden" id="brandError" role="alert"></p>
           </form>
           <section class="brand-preview" aria-label="Aperçu de la charte">
-            <div class="preview-signal"><span></span><span>APERÇU DIRECT</span></div>
+            <div class="preview-signal"><span></span><span>APERÇU DE LA CONNEXION</span></div>
             <div class="preview-lockup">
               <img class="hidden" id="brandPreviewLogo" alt="">
               <p id="brandPreviewName">ROOMFRAME</p>
-              <span>RÉGIE LOCALE / DOUBLE VALIDATION</span>
+              <span>RÉGIE LOCALE · CONNEXION SÉCURISÉE</span>
             </div>
             <div class="preview-console">
               <span>IDENTITÉ</span>
@@ -245,33 +316,64 @@
         </div>
       </section>
 
+      <dialog class="credential-dialog palette-dialog" id="brandPaletteDialog" aria-labelledby="brandPaletteTitle" aria-describedby="brandPaletteDescription">
+        <form id="brandPaletteForm" method="dialog">
+          <div class="eyebrow">Suggestion du logo</div>
+          <h2 id="brandPaletteTitle">Utiliser les couleurs du logo&nbsp;?</h2>
+          <p id="brandPaletteDescription">Vos couleurs manuelles restent inchangées tant que vous ne confirmez pas. Seules la couleur principale et la couleur d’accent seront remplacées.</p>
+          <div class="palette-comparison" aria-label="Comparaison des couleurs actuelles et proposées">
+            <section>
+              <h3>Couleurs actuelles</h3>
+              <div><span class="palette-swatch" id="brandPaletteCurrentPrimary"></span><b>Principale</b><code id="brandPaletteCurrentPrimaryValue"></code></div>
+              <div><span class="palette-swatch" id="brandPaletteCurrentAccent"></span><b>Accent</b><code id="brandPaletteCurrentAccentValue"></code></div>
+            </section>
+            <section>
+              <h3>Proposition du logo</h3>
+              <div><span class="palette-swatch" id="brandPaletteProposedPrimary"></span><b>Principale</b><code id="brandPaletteProposedPrimaryValue"></code></div>
+              <div><span class="palette-swatch" id="brandPaletteProposedAccent"></span><b>Accent</b><code id="brandPaletteProposedAccentValue"></code></div>
+            </section>
+          </div>
+          <div class="credential-dialog-actions">
+            <button class="tool" id="brandPaletteCancel" type="button">Garder mes couleurs</button>
+            <button class="tool primary" type="submit">Remplacer les deux couleurs</button>
+          </div>
+        </form>
+      </dialog>
+
       <section class="workspace-panel full-panel" id="view-fleet" aria-labelledby="fleetTitle">
-        <aside class="panel-index"><div class="eyebrow">Parc local</div><h1 class="editorial-title" id="fleetTitle">Les salles<br>comme une<br>constellation.</h1><p class="note">Les capacités non remontées restent explicitement inconnues.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Parc des écrans</div><h1 class="editorial-title" id="fleetTitle">Les TV,<br>salle par<br>salle.</h1><p class="note">Préparez chaque TV, choisissez sa scène et suivez son état depuis cette page.</p></aside>
         <div class="panel-content fleet-workbench">
           <section class="enrollment-console" aria-labelledby="enrollmentTitle">
-            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La clé expire après 30 minutes et disparaît de cette régie dès que vous la masquez.</p></div>
+            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La TV détecte normalement le serveur. Vous ne saisirez qu’un code valable 30 minutes ; l’adresse HTTPS reste disponible si la détection échoue.</p></div>
             <form id="enrollmentForm">
               <label for="enrollmentDisplayName">Nom de la TV<input id="enrollmentDisplayName" name="displayName" maxlength="100" required placeholder="Écran salle 1"></label>
               <label for="enrollmentRoomName">Salle<input id="enrollmentRoomName" name="roomName" maxlength="100" required placeholder="Salle de réunion 1"></label>
-              <button class="tool primary" type="submit">Créer l’enrôlement</button>
+              <button class="tool primary" type="submit">Créer le code</button>
               <p class="form-error hidden" id="enrollmentError" role="alert"></p>
             </form>
           </section>
           <section class="enrollment-ticket hidden" id="enrollmentTicket" aria-live="polite" aria-labelledby="enrollmentTicketTitle">
-            <div><span>USAGE UNIQUE</span><h2 id="enrollmentTicketTitle">À remettre à la TV</h2><p id="enrollmentExpiry"></p></div>
-            <label for="enrollmentServer">Serveur HTTPS<input id="enrollmentServer" readonly></label>
-            <label for="enrollmentDeviceId">Identifiant TV<input id="enrollmentDeviceId" readonly></label>
-            <label for="enrollmentSecret">Clé d’enrôlement<input id="enrollmentSecret" readonly></label>
+            <div><span>USAGE UNIQUE</span><h2 id="enrollmentTicketTitle">Code à saisir sur la TV</h2><p id="enrollmentExpiry"></p></div>
+            <label class="enrollment-code-field" for="enrollmentCode">Code d’installation<input id="enrollmentCode" readonly autocomplete="off" spellcheck="false"></label>
             <div class="ticket-actions">
-              <button class="tool primary" id="copyEnrollmentButton" type="button">Copier les trois valeurs</button>
+              <button class="tool primary" id="copyEnrollmentButton" type="button">Copier le code</button>
               <button class="tool" id="hideEnrollmentButton" type="button">Masquer maintenant</button>
             </div>
+            <details class="enrollment-advanced">
+              <summary>Dépannage · saisie complète</summary>
+              <p>À utiliser uniquement avec une ancienne application TV ou pour un diagnostic manuel.</p>
+              <div>
+                <label for="enrollmentServer">Serveur HTTPS<input id="enrollmentServer" readonly></label>
+                <label for="enrollmentDeviceId">Identifiant TV<input id="enrollmentDeviceId" readonly></label>
+                <label for="enrollmentSecret">Clé technique<input id="enrollmentSecret" readonly></label>
+              </div>
+            </details>
           </section>
           <section class="assignment-console" aria-labelledby="assignmentTitle">
             <div class="console-index">
               <span>PARC / 02</span>
               <h2 id="assignmentTitle">Affecter une scène</h2>
-              <p>Une scène publiée peut remplacer l’accueil de toute l’instance, d’un groupe ou d’une TV.</p>
+              <p>Choisissez la scène affichée par défaut sur toute l’installation, un groupe ou une TV.</p>
             </div>
             <form id="sceneAssignmentForm">
               <label for="sceneAssignmentTarget">Cible<select id="sceneAssignmentTarget"></select></label>
@@ -285,7 +387,7 @@
             <div class="console-index">
               <span>PARC / 03</span>
               <h2 id="sceneScheduleTitle">Programmer une scène temporaire</h2>
-              <p>À l’heure prévue, le worker publie une nouvelle révision de synchronisation. À la fin, l’affectation habituelle revient automatiquement.</p>
+              <p>La scène choisie sera affichée à l’heure prévue. À la fin du créneau, la scène habituelle reviendra automatiquement.</p>
             </div>
             <form id="sceneScheduleForm">
               <label for="sceneScheduleTarget">Cible<select id="sceneScheduleTarget"></select></label>
@@ -295,18 +397,18 @@
               <button class="tool primary" type="submit">Programmer</button>
               <p class="form-error hidden" id="sceneScheduleError" role="alert"></p>
             </form>
-            <p class="schedule-note">Heures saisies dans le fuseau <b id="sceneScheduleTimezone">local du navigateur</b>. Sans fin, la scène reste prioritaire jusqu’à une annulation explicite. Deux créneaux d’une même cible ne peuvent pas se chevaucher.</p>
+            <p class="schedule-note">Les heures utilisent le fuseau <b id="sceneScheduleTimezone">local du navigateur</b>. Sans heure de fin, la scène restera affichée jusqu’à son annulation. Deux créneaux ne peuvent pas se chevaucher pour une même cible.</p>
             <div class="assignment-ledger" id="sceneScheduleList" aria-live="polite"><p class="empty-copy">Aucune scène programmée.</p></div>
           </section>
           <section class="operations-console" aria-labelledby="operationsTitle">
             <div class="console-index">
               <span>PARC / 04</span>
               <h2 id="operationsTitle">Règles de salle</h2>
-              <p>Les intégrations matérielles restent soumises à la sonde de capacité de chaque TV.</p>
+              <p>Définissez les boutons de source et les horaires envoyés aux TV. Chaque fonction dépend des capacités du modèle.</p>
             </div>
             <div class="operations-targets">
-              <label for="sourceTargetSelect">Cible des sources<select id="sourceTargetSelect"></select></label>
-              <label for="powerTargetSelect">Cible des horaires<select id="powerTargetSelect"></select></label>
+              <label for="sourceTargetSelect">Appliquer les sources à<select id="sourceTargetSelect"></select></label>
+              <label for="powerTargetSelect">Appliquer les horaires à<select id="powerTargetSelect"></select></label>
             </div>
             <form id="sourceSettingsForm" class="source-settings-form">
               <fieldset>
@@ -328,7 +430,7 @@
                 <label for="sourceHdmiInput">Entrée physique<select id="sourceHdmiInput"><option>HDMI1</option><option>HDMI2</option><option>HDMI3</option><option>HDMI4</option></select></label>
               </fieldset>
               <fieldset>
-                <legend><span class="source-glyph app" aria-hidden="true"></span> Application privée</legend>
+                <legend><span class="source-glyph app" aria-hidden="true"></span> Application Android</legend>
                 <label><input id="sourcePrivateAppEnabled" type="checkbox"> Afficher cette source</label>
                 <label for="sourcePrivateAppLabel">Libellé<input id="sourcePrivateAppLabel" maxlength="100" value="Application privée"></label>
                 <label for="sourcePrivateAppId">Identifiant Android<input id="sourcePrivateAppId" maxlength="200" value="org.example.privateapp"></label>
@@ -355,7 +457,7 @@
               </fieldset>
               <button class="tool primary" type="submit">Enregistrer les horaires</button>
               <p class="form-error hidden" id="powerSettingsError" role="alert"></p>
-              <p class="capability-note">Le serveur distribue ces règles. Une TV ne les exécute que si son adaptateur confirme la capacité ; aucun réveil constructeur n’est présumé.</p>
+              <p class="capability-note">RoomFrame envoie ces réglages aux TV. Une source, une mise en veille ou un réveil ne sera exécuté que si la TV confirme qu’elle le prend en charge.</p>
             </form>
           </section>
           <div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div>
@@ -380,14 +482,14 @@
       </dialog>
 
       <section class="workspace-panel full-panel" id="view-releases" aria-labelledby="releasesTitle">
-        <aside class="panel-index"><div class="eyebrow">Distribution locale</div><h1 class="editorial-title" id="releasesTitle">Mettre à<br>jour sans<br>effacer.</h1><p class="note">Le serveur vérifie le bundle avant de proposer tout déploiement.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Mises à jour</div><h1 class="editorial-title" id="releasesTitle">Gérer les<br>mises à<br>jour.</h1><p class="note">RoomFrame vérifie chaque version avant son installation et conserve vos réglages et vos données.</p></aside>
         <div class="panel-content">
           <form class="release-drop" id="releaseForm">
-            <div><h3>Importer une version hors ligne</h3><p>Bundle signé <b>.rfupdate</b>. Aucun statut n’est présumé avant la réponse serveur.</p></div>
-            <label class="action-label" for="releaseFile">Choisir<input class="visually-hidden" id="releaseFile" name="file" type="file" accept=".rfupdate" required></label>
-            <button class="tool primary" type="submit">Vérifier</button>
+            <div><h3>Importer une version hors ligne</h3><p>Sélectionnez un fichier signé <b>.rfupdate</b>. Le serveur le contrôle avant de l’ajouter aux versions disponibles.</p></div>
+            <label class="action-label" for="releaseFile">Choisir le fichier<input class="visually-hidden" id="releaseFile" name="file" type="file" accept=".rfupdate" required></label>
+            <button class="tool primary" type="submit">Importer et vérifier</button>
           </form>
-          <div class="release-result" id="releaseResult" aria-live="polite"><p class="empty-copy">Aucun bundle importé.</p></div>
+          <div class="release-result" id="releaseResult" aria-live="polite"><p class="empty-copy">Aucune version importée.</p></div>
           <article class="release-source" id="automaticReleaseSource" aria-live="polite">
             <span class="record-kicker">AUTO / GITHUB</span>
             <h3>Lecture de la source signée…</h3>
@@ -395,9 +497,9 @@
           </article>
           <section class="deployment-console update-policy-console" aria-labelledby="serverUpdatePolicyTitle">
             <div class="console-index">
-              <span>POLITIQUE / OPT-IN</span>
-              <h2 id="serverUpdatePolicyTitle">Choisir quand le serveur peut basculer</h2>
-              <p id="serverUpdatePolicySummary">Le mode manuel reste actif tant qu’un propriétaire ne valide pas explicitement l’automatisation.</p>
+              <span>INSTALLATION AUTOMATIQUE</span>
+              <h2 id="serverUpdatePolicyTitle">Planifier les mises à jour du serveur</h2>
+              <p id="serverUpdatePolicySummary">En mode manuel, chaque installation doit être confirmée par un propriétaire.</p>
             </div>
             <form id="serverUpdatePolicyForm">
               <label for="serverUpdatePolicyMode">Mode<select id="serverUpdatePolicyMode" name="mode"><option value="manual">Manuel · validation humaine</option><option value="automatic">Automatique · GitHub signé</option></select></label>
@@ -413,30 +515,30 @@
           </section>
           <section class="deployment-console" aria-labelledby="serverUpdateTitle">
             <div class="console-index">
-              <span>SERVEUR / FILE LOCALE</span>
-              <h2 id="serverUpdateTitle">Appliquer sans donner root au web</h2>
-              <p>L’administration dépose une demande. Le courtier Debian revalide la signature, sauvegarde, puis bascule le code hors du processus web.</p>
+              <span>INSTALLATION DU SERVEUR</span>
+              <h2 id="serverUpdateTitle">Installer une version vérifiée</h2>
+              <p>Après confirmation, RoomFrame crée une sauvegarde, installe la version, puis vérifie que le serveur répond correctement.</p>
             </div>
             <form id="serverUpdateForm">
-              <label for="serverUpdateRelease">Archive serveur vérifiée<select id="serverUpdateRelease" name="releaseId" required></select></label>
-              <label for="serverUpdateConfirm">Retaper la version<input id="serverUpdateConfirm" name="confirmVersion" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="0.3.1" required></label>
-              <button class="tool primary" type="submit">Mettre en file</button>
+              <label for="serverUpdateRelease">Version prête à installer<select id="serverUpdateRelease" name="releaseId" required></select></label>
+              <label for="serverUpdateConfirm">Confirmer en saisissant la version<input id="serverUpdateConfirm" name="confirmVersion" type="text" maxlength="64" autocomplete="off" spellcheck="false" placeholder="0.3.1" required></label>
+              <button class="tool primary" type="submit">Programmer l’installation</button>
               <p class="form-error hidden" id="serverUpdateError" role="alert"></p>
             </form>
           </section>
           <section class="deployment-console" aria-labelledby="deploymentTitle">
             <div class="console-index">
-              <span>VAGUES CONTRÔLÉES</span>
-              <h2 id="deploymentTitle">Ouvrir une voie de distribution</h2>
-              <p>Le canari cible une seule TV. Le progressif attend la validation de la vague active avant d’offrir la suivante.</p>
+              <span>DÉPLOIEMENT SUR LES TV</span>
+              <h2 id="deploymentTitle">Installer une version sur les TV</h2>
+              <p>Commencez par une TV de test, puis poursuivez par groupes après validation de chaque étape.</p>
             </div>
             <form id="deploymentForm">
               <label for="deploymentRelease">Version vérifiée<select id="deploymentRelease" name="releaseId" required></select></label>
-              <label for="deploymentStrategy">Stratégie<select id="deploymentStrategy" name="strategy"><option value="canary">Canari · une TV</option><option value="progressive">Progressive · groupe ou parc</option></select></label>
+              <label for="deploymentStrategy">Méthode<select id="deploymentStrategy" name="strategy"><option value="canary">Test · une TV</option><option value="progressive">Par étapes · groupe ou parc</option></select></label>
               <label for="deploymentTargetType">Portée<select id="deploymentTargetType" name="targetType"><option value="tv">Une TV</option><option value="group">Un groupe</option><option value="fleet">Tout le parc</option></select></label>
               <label for="deploymentTarget" id="deploymentTargetField">Cible<select id="deploymentTarget" name="targetId" required></select></label>
-              <label for="deploymentBatchSize">Taille de vague<input id="deploymentBatchSize" name="batchSize" type="number" min="1" max="100" value="1" required></label>
-              <button class="tool primary" type="submit">Démarrer la vague</button>
+              <label for="deploymentBatchSize">TV par étape<input id="deploymentBatchSize" name="batchSize" type="number" min="1" max="100" value="1" required></label>
+              <button class="tool primary" type="submit">Démarrer le déploiement</button>
               <p class="form-error hidden" id="deploymentError" role="alert"></p>
             </form>
           </section>
@@ -445,20 +547,20 @@
       </section>
 
       <section class="workspace-panel full-panel" id="view-security" aria-labelledby="securityTitle">
-        <aside class="panel-index"><div class="eyebrow">Confiance locale</div><h1 class="editorial-title" id="securityTitle">Chaque<br>accès laisse<br>une trace.</h1><p class="note">Les passkeys restent liées au nom HTTPS principal. Le TOTP demeure disponible en secours contrôlé.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Sécurité de la régie</div><h1 class="editorial-title" id="securityTitle">Accès à<br>la régie.</h1><p class="note">Gérez la double validation, les appareils connectés et les comptes pouvant accéder à la régie.</p></aside>
         <div class="panel-content">
           <dl class="security-ledger" id="securityLedger"><dt>Session</dt><dd>Chargement…</dd></dl>
           <section class="security-console" aria-labelledby="passkeysTitle">
             <header>
-              <div><span>FACTEURS / ANTI-HAMEÇONNAGE</span><h2 id="passkeysTitle">Passkeys de ce compte</h2><p id="passkeyCanonicalUrl">Chargement de l’origine HTTPS…</p></div>
-              <button class="tool primary" id="openPasskeyRegistration" type="button">Ajouter une passkey</button>
+              <div><span>DOUBLE VALIDATION</span><h2 id="passkeysTitle">Clés d’accès de ce compte</h2><p id="passkeyCanonicalUrl">Chargement de l’adresse HTTPS sécurisée…</p></div>
+              <button class="tool primary" id="openPasskeyRegistration" type="button">Ajouter une clé d’accès</button>
             </header>
             <p class="form-error hidden" id="passkeyError" role="alert"></p>
             <div class="security-records" id="passkeyList" aria-live="polite"><p class="empty-copy">Chargement…</p></div>
           </section>
           <section class="security-console" aria-labelledby="sessionsTitle">
             <header>
-              <div><span>SESSIONS / CE COMPTE</span><h2 id="sessionsTitle">Postes actuellement autorisés</h2><p>Une révocation est immédiate et journalisée.</p></div>
+              <div><span>SESSIONS DE CE COMPTE</span><h2 id="sessionsTitle">Appareils connectés</h2><p>Vous pouvez fermer immédiatement une session que vous ne reconnaissez pas.</p></div>
               <button class="tool" id="revokeOtherSessions" type="button">Fermer les autres sessions</button>
             </header>
             <p class="form-error hidden" id="sessionSecurityError" role="alert"></p>
@@ -466,13 +568,13 @@
           </section>
           <section class="security-console" id="userAdministrationConsole" aria-labelledby="usersTitle">
             <header>
-              <div><span>ÉQUIPE / DROITS LOCAUX</span><h2 id="usersTitle">Comptes de la régie</h2><p>Un compte reste inactif jusqu’à l’enrôlement de sa phrase de passe et de son TOTP.</p></div>
-              <button class="tool primary" id="openUserInvitation" type="button">Inviter un compte</button>
+              <div><span>UTILISATEURS AUTORISÉS</span><h2 id="usersTitle">Comptes de la régie</h2><p>Un compte invité doit configurer sa phrase de passe et son code TOTP avant de pouvoir se connecter.</p></div>
+              <button class="tool primary" id="openUserInvitation" type="button">Inviter un utilisateur</button>
             </header>
             <aside class="invitation-ticket hidden" id="userInvitationTicket" aria-labelledby="userInvitationTicketTitle">
-              <span>JETON / AFFICHAGE UNIQUE</span>
-              <h3 id="userInvitationTicketTitle">Transmettre hors bande</h3>
-              <p id="userInvitationTicketDescription">Ce jeton ne sera plus affiché après masquage ou rechargement.</p>
+              <span>JETON AFFICHÉ UNE SEULE FOIS</span>
+              <h3 id="userInvitationTicketTitle">À transmettre en privé</h3>
+              <p id="userInvitationTicketDescription">Envoyez ce jeton par un canal sécurisé. Il ne sera plus affiché après masquage ou rechargement.</p>
               <output id="userInvitationToken" aria-label="Jeton d’activation"></output>
               <div>
                 <button class="tool" id="copyUserInvitation" type="button">Copier le jeton</button>
@@ -487,7 +589,7 @@
 
       <dialog class="credential-dialog" id="passkeyRegistrationDialog" aria-labelledby="passkeyRegistrationTitle" aria-describedby="passkeyRegistrationDescription">
         <form id="passkeyRegistrationForm">
-          <span class="record-kicker">PASSKEY / AJOUT SENSIBLE</span>
+          <span class="record-kicker">CLÉ D’ACCÈS / AJOUT SENSIBLE</span>
           <h2 id="passkeyRegistrationTitle">Lier un appareil de confiance</h2>
           <p id="passkeyRegistrationDescription">Confirmez votre phrase de passe et un nouveau code TOTP. Le navigateur demandera ensuite Touch ID, le code du Mac ou une clé de sécurité.</p>
           <label for="passkeyLabel">Nom de repère
@@ -510,9 +612,9 @@
 
       <dialog class="credential-dialog" id="passkeyRevokeDialog" aria-labelledby="passkeyRevokeTitle" aria-describedby="passkeyRevokeDescription">
         <form id="passkeyRevokeForm">
-          <span class="record-kicker">PASSKEY / RÉVOCATION</span>
-          <h2 id="passkeyRevokeTitle">Retirer cette passkey</h2>
-          <p id="passkeyRevokeDescription">La passkey ne pourra plus ouvrir la régie. Confirmez avec votre phrase de passe et un nouveau code TOTP.</p>
+          <span class="record-kicker">CLÉ D’ACCÈS / RÉVOCATION</span>
+          <h2 id="passkeyRevokeTitle">Retirer cette clé d’accès</h2>
+          <p id="passkeyRevokeDescription">Cette clé ne pourra plus ouvrir la régie. Confirmez avec votre phrase de passe et un nouveau code TOTP.</p>
           <input id="passkeyRevokeId" name="passkeyId" type="hidden">
           <label for="passkeyRevokePassword">Phrase de passe actuelle
             <input id="passkeyRevokePassword" name="password" type="password" autocomplete="current-password" required>
@@ -561,7 +663,7 @@
         <form id="userActionForm">
           <span class="record-kicker">COMPTE / ACTION SENSIBLE</span>
           <h2 id="userActionTitle">Gérer ce compte</h2>
-          <p id="userActionDescription">Les changements de rôle ferment les sessions. La désactivation retire aussi les passkeys.</p>
+          <p id="userActionDescription">Un changement de rôle ferme les sessions ouvertes. La désactivation retire aussi les clés d’accès.</p>
           <input id="userActionId" name="userId" type="hidden">
           <label for="userActionKind">Action
             <select id="userActionKind" name="action" required>
@@ -614,10 +716,10 @@
         </div>
         <p class="form-error hidden" id="loginError" role="alert"></p>
         <button class="next" type="submit"><span>Entrer</span><b aria-hidden="true">→</b></button>
-        <button class="passkey-login" id="loginPasskeyButton" type="button"><span>Phrase de passe + passkey</span><b aria-hidden="true">◇</b></button>
+        <button class="passkey-login" id="loginPasskeyButton" type="button"><span>Phrase de passe + clé d’accès</span><b aria-hidden="true">◇</b></button>
         <p class="passkey-login-note" id="loginPasskeyNote">Touch ID, code de l’appareil ou clé de sécurité. Disponible uniquement sur le nom HTTPS principal.</p>
         <button class="gate-switch" id="openActivationButton" type="button">Activer une invitation reçue</button>
-        <button class="gate-switch" id="openRecoveryButton" type="button">Utiliser une récupération locale root-only</button>
+        <button class="gate-switch" id="openRecoveryButton" type="button">Utiliser la récupération depuis le serveur</button>
       </form>
     </section>
     <section class="gate-panel hidden" id="bootstrapPanel" aria-labelledby="bootstrapTitle">
@@ -629,7 +731,8 @@
           <label class="wide" for="bootstrapToken">Jeton initial affiché par l’installateur<input id="bootstrapToken" name="bootstrapToken" type="password" autocomplete="off" minlength="20" required></label>
           <label for="bootstrapDisplayName">Organisation<input id="bootstrapDisplayName" name="displayName" maxlength="100" required></label>
           <label for="bootstrapRoomName">Salle par défaut<input id="bootstrapRoomName" name="roomName" value="Salle de réunion 1" maxlength="100" required></label>
-          <label class="wide" for="bootstrapGreeting">Salutation<input id="bootstrapGreeting" name="defaultGreeting" value="Bonjour, bienvenue en salle de réunion 1" maxlength="220" required></label>
+          <label class="wide" for="bootstrapGreeting">Salutation<textarea id="bootstrapGreeting" name="defaultGreeting" rows="2" maxlength="220" required>Bonjour,
+Bienvenue en salle de réunion 1</textarea></label>
           <label for="bootstrapUsername">Identifiant admin<input id="bootstrapUsername" name="username" autocomplete="username" required></label>
           <label for="bootstrapEmail">E-mail interne<input id="bootstrapEmail" name="email" type="email" autocomplete="email" required></label>
           <label for="bootstrapPassword">Phrase de passe<input id="bootstrapPassword" name="password" type="password" autocomplete="new-password" minlength="12" required></label>
@@ -653,7 +756,7 @@
       <form class="gate-form" id="recoveryForm">
         <span class="form-index">SECOURS / ROOT</span>
         <h2 id="recoveryTitle">Reprendre le contrôle.</h2>
-        <p>Cette procédure exige le jeton affiché localement par <code>roomframe-recover-admin</code>. Elle remplace le mot de passe et le TOTP puis révoque les sessions et passkeys existantes.</p>
+        <p>Cette procédure exige le jeton affiché directement sur le serveur par <code>roomframe-recover-admin</code>. Elle remplace la phrase de passe et le TOTP, puis ferme les sessions et retire les clés d’accès existantes.</p>
         <div class="form-grid">
           <label class="wide" for="recoveryToken">Jeton de récupération<input id="recoveryToken" name="recoveryToken" type="password" autocomplete="off" minlength="20" required></label>
           <label class="wide" for="recoveryUsername">Compte à récupérer<input id="recoveryUsername" name="username" autocomplete="username" required></label>

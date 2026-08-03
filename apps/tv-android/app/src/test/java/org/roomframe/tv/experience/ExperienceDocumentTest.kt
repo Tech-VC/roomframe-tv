@@ -20,7 +20,8 @@ class ExperienceDocumentTest {
     fun `scene parser keeps bounded blur and one logical canvas`() {
         val scene = ExperienceDocumentParser.parseScene(sceneBytes(blur = 18.0))
         assertEquals(18f, scene.background.blur)
-        assertEquals("Bonjour, bienvenue", scene.nodes.single().properties.text)
+        assertEquals("Bonjour,\nBienvenue", scene.nodes.single().properties.text)
+        assertEquals(2, scene.nodes.single().properties.maxLines)
     }
 
     @Test
@@ -47,6 +48,37 @@ class ExperienceDocumentTest {
         assertEquals("Salle Nord", branding.displayName)
         assertEquals("#abcdef", branding.accent)
         assertEquals("humanist", branding.fontPreset)
+    }
+
+    @Test
+    fun `weather parser keeps cached data and attribution`() {
+        val weather = ExperienceDocumentParser.parseWeather(
+            """{
+              "schemaVersion":1,
+              "provider":"open-meteo",
+              "attribution":{"label":"Données météo : Open-Meteo","url":"https://open-meteo.com/"},
+              "items":[{
+                "key":"${"a".repeat(64)}",
+                "location":"Ville Exemple 12345",
+                "timezone":"Europe/Paris",
+                "units":"metric",
+                "status":"ready",
+                "temperatureUnit":"°C",
+                "temperature":21.4,
+                "apparentTemperature":21.0,
+                "weatherCode":2,
+                "condition":"Éclaircies",
+                "isDay":true,
+                "observedAt":"2026-08-03T12:00:00.000Z",
+                "fetchedAt":"2026-08-03T12:01:00.000Z",
+                "errorCode":null
+              }]
+            }""".trimIndent().toByteArray(StandardCharsets.UTF_8),
+        )
+        assertEquals("Ville Exemple 12345", weather.readings.values.single().location)
+        assertEquals(21.4f, weather.readings.values.single().temperature)
+        assertEquals(2, weather.readings.values.single().weatherCode)
+        assertEquals("Données météo : Open-Meteo", weather.attributionLabel)
     }
 
     private fun sceneBytes(blur: Double = 0.0, asset: String = "assets/background.webp"): ByteArray =
@@ -87,9 +119,9 @@ class ExperienceDocumentTest {
                             "props",
                             JSONObject()
                                 .put("role", "greeting")
-                                .put("text", "Bonjour, bienvenue")
+                                .put("text", "Bonjour,\nBienvenue")
                                 .put("fontScale", 1)
-                                .put("maxLines", 1),
+                                .put("maxLines", 2),
                         ),
                 ),
             )

@@ -34,10 +34,19 @@ import {
   serializeReleaseSource,
 } from './update-source.mjs';
 import {
+  encryptEnrollmentCodeBootstrap,
+  enrollmentCodeLookupId,
   encryptServerTrustBootstrap,
+  formatEnrollmentCode,
   loadServerCa,
+  randomEnrollmentCode,
+  serializeEnrollmentCodeBootstrap,
   serializeServerTrustBootstrap,
 } from './trust-bootstrap.mjs';
+import {
+  refreshWeatherForScene,
+  weatherDocumentForScene,
+} from './weather.mjs';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const deviceKeyPattern = /^[A-Za-z0-9_-]{32,200}$/;
@@ -607,8 +616,13 @@ const sceneForScreen = async (pool, screen) => {
   return scene.rows[0];
 };
 
-const synchronizedDocumentsForScreen = async (pool, screen) => {
-  const sceneRecord = await sceneForScreen(pool, screen);
+const synchronizedDocumentsForScreen = async (
+  pool,
+  screen,
+  config,
+  prepared = {},
+) => {
+  const sceneRecord = prepared.sceneRecord ?? await sceneForScreen(pool, screen);
   const [messagesResult, sourcesResult, powerResult, instanceResult] = await Promise.all([
     pool.query(
       `SELECT id, title, body, priority, starts_at, ends_at
@@ -680,6 +694,7 @@ const synchronizedDocumentsForScreen = async (pool, screen) => {
       displayName: instanceConfig.displayName,
       ...instanceConfig.branding,
     },
+    weather: prepared.weather ?? await weatherDocumentForScene(pool, sceneRecord.document),
   };
   return { sceneRecord, documents, instanceConfig };
 };
@@ -932,8 +947,16 @@ export const registerStudioRoutes = ({
                   'syncRevision', metric.sync_revision,
                   'syncDurationMs', metric.sync_duration_ms,
                   'updateState', metric.update_state,
+                  'silentUpdateCapable', metric.silent_update_capable,
                   'errorCode', metric.error_code
-                ) END AS latest_metric
+                ) END AS latest_metric,
+                CASE WHEN update_target.deployment_id IS NULL THEN NULL ELSE jsonb_build_object(
+                  'deploymentId', update_target.deployment_id,
+                  'state', update_target.status,
+                  'version', update_target.version,
+                  'updatedAt', update_target.updated_at,
+                  'errorCode', update_target.error_code
+                ) END AS latest_update
          FROM screens AS screen
          LEFT JOIN LATERAL (
            SELECT *
@@ -942,6 +965,16 @@ export const registerStudioRoutes = ({
            ORDER BY recorded_at DESC, id DESC
            LIMIT 1
          ) AS metric ON true
+         LEFT JOIN LATERAL (
+           SELECT target.deployment_id, target.status, target.updated_at,
+                  target.error_code, release.version
+           FROM deployment_targets AS target
+           JOIN deployments AS deployment ON deployment.id = target.deployment_id
+           JOIN release_history AS release ON release.id = deployment.release_id
+           WHERE target.screen_id = screen.id
+           ORDER BY target.updated_at DESC, deployment.created_at DESC
+           LIMIT 1
+         ) AS update_target ON true
          ORDER BY screen.display_name`,
       ),
       pool.query('SELECT * FROM tv_groups ORDER BY name'),
@@ -976,6 +1009,18 @@ export const registerStudioRoutes = ({
       request.roomframeSession.permissions,
       permission,
     );
+    const weather = scene
+      ? await weatherDocumentForScene(pool, scene.document)
+      : {
+          schemaVersion: 1,
+          provider: 'open-meteo',
+          attribution: {
+            label: 'Données météo : Open-Meteo',
+            url: 'https://open-meteo.com/',
+          },
+          items: [],
+        };
+    validators.assertWeather(weather);
     return {
       instance: instanceResult.rows[0].config,
       scenes: scenesResult.rows.map((row) => ({
@@ -1020,6 +1065,7 @@ export const registerStudioRoutes = ({
         onlineScreens: screensResult.rows.filter((row) => row.online === true).length,
         reportingScreens: screensResult.rows.filter((row) => row.latest_metric !== null).length,
       } : null,
+      weather,
     };
   });
 
@@ -1484,18 +1530,38 @@ export const registerStudioRoutes = ({
     preHandler: [authenticated, requirePermission('fleet:read')],
   }, async () => {
     const result = await pool.query(
-      `SELECT id, display_name, room_name, group_id, enrollment_state, agent_version,
-              home_version, active_revision, capabilities, source_state, last_seen_at,
-              enrollment_expires_at, device_key_rotated_at, credential_generation,
-              device_key_pending_expires_at, credentials_revoked_at,
-              client_certificate_fingerprint, client_certificate_serial,
-              client_certificate_issued_at, client_certificate_expires_at,
-              client_certificate_required_at, client_certificate_activated_at,
-              client_certificate_revoked_at,
-              client_certificate_pending_fingerprint,
-              client_certificate_pending_expires_at,
-              client_certificate_pending_required_at
-       FROM screens ORDER BY display_name`,
+      `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
+              screen.enrollment_state, screen.agent_version, screen.home_version,
+              screen.active_revision, screen.capabilities, screen.source_state,
+              screen.last_seen_at, screen.enrollment_expires_at,
+              screen.device_key_rotated_at, screen.credential_generation,
+              screen.device_key_pending_expires_at, screen.credentials_revoked_at,
+              screen.client_certificate_fingerprint, screen.client_certificate_serial,
+              screen.client_certificate_issued_at, screen.client_certificate_expires_at,
+              screen.client_certificate_required_at, screen.client_certificate_activated_at,
+              screen.client_certificate_revoked_at,
+              screen.client_certificate_pending_fingerprint,
+              screen.client_certificate_pending_expires_at,
+              screen.client_certificate_pending_required_at,
+              CASE WHEN update_target.deployment_id IS NULL THEN NULL ELSE jsonb_build_object(
+                'deploymentId', update_target.deployment_id,
+                'state', update_target.status,
+                'version', update_target.version,
+                'updatedAt', update_target.updated_at,
+                'errorCode', update_target.error_code
+              ) END AS latest_update
+       FROM screens AS screen
+       LEFT JOIN LATERAL (
+         SELECT target.deployment_id, target.status, target.updated_at,
+                target.error_code, release.version
+         FROM deployment_targets AS target
+         JOIN deployments AS deployment ON deployment.id = target.deployment_id
+         JOIN release_history AS release ON release.id = deployment.release_id
+         WHERE target.screen_id = screen.id
+         ORDER BY target.updated_at DESC, deployment.created_at DESC
+         LIMIT 1
+       ) AS update_target ON true
+       ORDER BY screen.display_name`,
     );
     return { tvs: result.rows };
   });
@@ -1505,12 +1571,20 @@ export const registerStudioRoutes = ({
   }, async (request, reply) => {
     const id = crypto.randomUUID();
     const enrollmentKey = randomToken(32);
+    const enrollmentCode = randomEnrollmentCode();
     const serverCa = await loadServerCa(config.serverCaFile);
     const trustBootstrap = encryptServerTrustBootstrap({
       certificatePem: serverCa.pem,
       certificateFingerprintSha256: serverCa.fingerprintSha256,
       deviceId: id,
       enrollmentKey,
+    });
+    const codeBootstrap = encryptEnrollmentCodeBootstrap({
+      certificatePem: serverCa.pem,
+      certificateFingerprintSha256: serverCa.fingerprintSha256,
+      deviceId: id,
+      enrollmentKey,
+      enrollmentCode,
     });
     const groupId = optionalUuid(request.body?.groupId);
     const enrollmentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
@@ -1521,9 +1595,13 @@ export const registerStudioRoutes = ({
            enrollment_expires_at, server_ca_bootstrap_salt,
            server_ca_bootstrap_iv, server_ca_bootstrap_ciphertext,
            server_ca_bootstrap_tag, server_ca_bootstrap_fingerprint_sha256,
-           server_ca_bootstrap_created_at
+           server_ca_bootstrap_created_at, enrollment_code_hash,
+           enrollment_code_bootstrap_salt, enrollment_code_bootstrap_iv,
+           enrollment_code_bootstrap_ciphertext, enrollment_code_bootstrap_tag,
+           enrollment_code_bootstrap_created_at
          ) VALUES (
-           $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, now()
+           $1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, $10, $11, now(),
+           $12, $13, $14, $15, $16, now()
          )`,
         [
           id,
@@ -1537,6 +1615,11 @@ export const registerStudioRoutes = ({
           trustBootstrap.ciphertext,
           trustBootstrap.tag,
           trustBootstrap.fingerprintSha256,
+          enrollmentCodeLookupId(enrollmentCode),
+          codeBootstrap.salt,
+          codeBootstrap.iv,
+          codeBootstrap.ciphertext,
+          codeBootstrap.tag,
         ],
       );
       await writeAudit(client, request, 'tv.enrollment.created', 'tv', id, {
@@ -1547,13 +1630,51 @@ export const registerStudioRoutes = ({
     return reply.code(201).send({
       id,
       enrollmentKey,
+      enrollmentCode: formatEnrollmentCode(enrollmentCode),
       expiresAt: enrollmentExpiresAt.toISOString(),
-      expiresNote: 'À remettre une seule fois à la TV pendant un enrôlement local contrôlé.',
+      expiresNote: 'À saisir une seule fois sur la TV pendant un enrôlement local contrôlé.',
       trustBootstrap: {
         mode: 'encrypted-server-ca',
         version: 1,
       },
+      simplifiedEnrollment: {
+        mode: 'encrypted-code-bootstrap',
+        version: 1,
+      },
     });
+  });
+
+  app.post('/api/v1/tv/enrollment-bootstrap', {
+    config: { rateLimit: { max: 10, timeWindow: '15 minutes' } },
+  }, async (request, reply) => {
+    const enrollmentCodeId = String(request.body?.enrollmentCodeId ?? '')
+      .toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(enrollmentCodeId)) {
+      return reply.code(404).send({ error: 'enrollment_bootstrap_not_found' });
+    }
+    const result = await pool.query(
+      `SELECT enrollment_code_bootstrap_salt, enrollment_code_bootstrap_iv,
+              enrollment_code_bootstrap_ciphertext, enrollment_code_bootstrap_tag,
+              enrollment_expires_at
+       FROM screens
+       WHERE enrollment_code_hash = $1
+         AND enrollment_state = 'pending'
+         AND enrollment_expires_at > now()
+         AND enrollment_code_bootstrap_salt IS NOT NULL
+         AND enrollment_code_bootstrap_iv IS NOT NULL
+         AND enrollment_code_bootstrap_ciphertext IS NOT NULL
+         AND enrollment_code_bootstrap_tag IS NOT NULL`,
+      [enrollmentCodeId],
+    );
+    if (!result.rows[0]) {
+      return reply.code(404).send({ error: 'enrollment_bootstrap_not_found' });
+    }
+    const payload = {
+      ...serializeEnrollmentCodeBootstrap(result.rows[0]),
+      expiresAt: new Date(result.rows[0].enrollment_expires_at).toISOString(),
+    };
+    validators.assertTvEnrollmentBootstrap(payload);
+    return reply.header('cache-control', 'no-store').send(payload);
   });
 
   app.get('/api/v1/tv/trust-bootstrap', {
@@ -1627,6 +1748,12 @@ export const registerStudioRoutes = ({
              server_ca_bootstrap_tag = NULL,
              server_ca_bootstrap_fingerprint_sha256 = NULL,
              server_ca_bootstrap_created_at = NULL,
+             enrollment_code_hash = NULL,
+             enrollment_code_bootstrap_salt = NULL,
+             enrollment_code_bootstrap_iv = NULL,
+             enrollment_code_bootstrap_ciphertext = NULL,
+             enrollment_code_bootstrap_tag = NULL,
+             enrollment_code_bootstrap_created_at = NULL,
              last_seen_at = now(), updated_at = now()
          WHERE id = $1
          RETURNING id, display_name, room_name, credential_generation,
@@ -2057,6 +2184,12 @@ export const registerStudioRoutes = ({
              server_ca_bootstrap_tag = NULL,
              server_ca_bootstrap_fingerprint_sha256 = NULL,
              server_ca_bootstrap_created_at = NULL,
+             enrollment_code_hash = NULL,
+             enrollment_code_bootstrap_salt = NULL,
+             enrollment_code_bootstrap_iv = NULL,
+             enrollment_code_bootstrap_ciphertext = NULL,
+             enrollment_code_bootstrap_tag = NULL,
+             enrollment_code_bootstrap_created_at = NULL,
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation,
@@ -2095,6 +2228,7 @@ export const registerStudioRoutes = ({
     }
     const tvId = optionalUuid(request.params.tvId);
     const enrollmentKey = randomToken(32);
+    const enrollmentCode = randomEnrollmentCode();
     const enrollmentExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
     const serverCa = await loadServerCa(config.serverCaFile);
     const trustBootstrap = encryptServerTrustBootstrap({
@@ -2102,6 +2236,13 @@ export const registerStudioRoutes = ({
       certificateFingerprintSha256: serverCa.fingerprintSha256,
       deviceId: tvId,
       enrollmentKey,
+    });
+    const codeBootstrap = encryptEnrollmentCodeBootstrap({
+      certificatePem: serverCa.pem,
+      certificateFingerprintSha256: serverCa.fingerprintSha256,
+      deviceId: tvId,
+      enrollmentKey,
+      enrollmentCode,
     });
     return withTransaction(pool, async (client) => {
       const current = await client.query(
@@ -2142,6 +2283,12 @@ export const registerStudioRoutes = ({
              server_ca_bootstrap_tag = $7,
              server_ca_bootstrap_fingerprint_sha256 = $8,
              server_ca_bootstrap_created_at = now(),
+             enrollment_code_hash = $9,
+             enrollment_code_bootstrap_salt = $10,
+             enrollment_code_bootstrap_iv = $11,
+             enrollment_code_bootstrap_ciphertext = $12,
+             enrollment_code_bootstrap_tag = $13,
+             enrollment_code_bootstrap_created_at = now(),
              updated_at = now()
          WHERE id = $1
          RETURNING id, enrollment_state, credential_generation`,
@@ -2154,6 +2301,11 @@ export const registerStudioRoutes = ({
           trustBootstrap.ciphertext,
           trustBootstrap.tag,
           trustBootstrap.fingerprintSha256,
+          enrollmentCodeLookupId(enrollmentCode),
+          codeBootstrap.salt,
+          codeBootstrap.iv,
+          codeBootstrap.ciphertext,
+          codeBootstrap.tag,
         ],
       );
       await writeAudit(client, request, 'tv.reenrollment.created', 'tv', tvId, {
@@ -2175,10 +2327,15 @@ export const registerStudioRoutes = ({
         enrollmentState: updated.rows[0].enrollment_state,
         credentialGeneration: Number(updated.rows[0].credential_generation),
         enrollmentKey,
+        enrollmentCode: formatEnrollmentCode(enrollmentCode),
         expiresAt: enrollmentExpiresAt,
-        expiresNote: 'À remettre une seule fois à la TV pendant un enrôlement local contrôlé.',
+        expiresNote: 'À saisir une seule fois sur la TV pendant un enrôlement local contrôlé.',
         trustBootstrap: {
           mode: 'encrypted-server-ca',
+          version: 1,
+        },
+        simplifiedEnrollment: {
+          mode: 'encrypted-code-bootstrap',
           version: 1,
         },
       };
@@ -3089,7 +3246,12 @@ export const registerStudioRoutes = ({
     } else {
       screen = { id: null, group_id: null };
     }
-    const { sceneRecord, documents } = await synchronizedDocumentsForScreen(pool, screen);
+    const { sceneRecord, documents } = await synchronizedDocumentsForScreen(
+      pool,
+      screen,
+      config,
+    );
+    validators.assertWeather(documents.weather);
     return {
       target: {
         type: targetType,
@@ -3145,6 +3307,13 @@ export const registerStudioRoutes = ({
       config,
       sessionPermission: 'studio:read',
     });
+    const preparedScene = await sceneForScreen(pool, screen);
+    const preparedWeather = await refreshWeatherForScene(
+      pool,
+      config,
+      preparedScene.document,
+    );
+    validators.assertWeather(preparedWeather);
     const syncResult = await pool.query('SELECT revision FROM sync_state WHERE singleton = true');
     const revision = Number(syncResult.rows[0]?.revision ?? 1);
     const current = Number(request.query?.revision ?? 0);
@@ -3160,13 +3329,17 @@ export const registerStudioRoutes = ({
       sceneRecord,
       documents,
       instanceConfig,
-    } = await synchronizedDocumentsForScreen(pool, screen);
+    } = await synchronizedDocumentsForScreen(pool, screen, config, {
+      sceneRecord: preparedScene,
+      weather: preparedWeather,
+    });
     const documentEntries = [
       jsonDocument('scene.json', documents.scene),
       jsonDocument('messages.json', documents.messages),
       jsonDocument('schedule.json', documents.schedule),
       jsonDocument('sources.json', documents.sources),
       jsonDocument('branding.json', documents.branding),
+      jsonDocument('weather.json', documents.weather),
     ];
 
     const brandingLogoId = instanceConfig.branding?.logoAssetId;
@@ -3259,6 +3432,10 @@ export const registerStudioRoutes = ({
     ) {
       throw Object.assign(new Error('invalid_update_state'), { statusCode: 400 });
     }
+    const silentUpdateCapable = body.silentUpdateCapable ?? null;
+    if (silentUpdateCapable !== null && typeof silentUpdateCapable !== 'boolean') {
+      throw Object.assign(new Error('invalid_silent_update_capability'), { statusCode: 400 });
+    }
     const metricErrorCode = body.errorCode
       ? cleanText(body.errorCode, 'error_code', 120)
       : null;
@@ -3292,14 +3469,16 @@ export const registerStudioRoutes = ({
         2_147_483_647,
       ),
       updateState,
+      silentUpdateCapable,
       errorCode: metricErrorCode,
     };
     await withTransaction(pool, async (client) => {
       await client.query(
         `INSERT INTO device_metrics (
            screen_id, startup_ms, resume_ms, memory_bytes, storage_free_bytes,
-           network_state, sync_revision, sync_duration_ms, update_state, error_code
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+           network_state, sync_revision, sync_duration_ms, update_state,
+           silent_update_capable, error_code
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           screen.id,
           metric.startupMs,
@@ -3310,6 +3489,7 @@ export const registerStudioRoutes = ({
           metric.syncRevision,
           metric.syncDurationMs,
           metric.updateState,
+          metric.silentUpdateCapable,
           metric.errorCode,
         ],
       );

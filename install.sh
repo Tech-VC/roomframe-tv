@@ -22,6 +22,12 @@ UPDATE_POLL_EXPLICIT=0
 DISCOVERY_AVAHI_OVERRIDE="${ROOMFRAME_DISCOVERY_AVAHI_ENABLED:-}"
 DISCOVERY_AVAHI_EXPLICIT=0
 [[ -z "${ROOMFRAME_DISCOVERY_AVAHI_ENABLED+x}" ]] || DISCOVERY_AVAHI_EXPLICIT=1
+WEATHER_PROVIDER_MODE="${ROOMFRAME_WEATHER_PROVIDER_MODE:-}"
+WEATHER_PROVIDER_EXPLICIT=0
+[[ -z "${ROOMFRAME_WEATHER_PROVIDER_MODE+x}" ]] || WEATHER_PROVIDER_EXPLICIT=1
+WEATHER_CACHE_MINUTES="${ROOMFRAME_WEATHER_CACHE_MINUTES:-}"
+WEATHER_CACHE_EXPLICIT=0
+[[ -z "${ROOMFRAME_WEATHER_CACHE_MINUTES+x}" ]] || WEATHER_CACHE_EXPLICIT=1
 SOURCE_DIR=""
 NO_START=0
 
@@ -573,6 +579,24 @@ if [[ ! "$BACKUP_WEEKLY_KEEP" =~ ^[0-9]+$ ]] \
   fail "La rétention hebdomadaire doit être comprise entre 2 et 26 sauvegardes."
 fi
 
+if [[ "$WEATHER_PROVIDER_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_WEATHER_PROVIDER_MODE=' "$previous_runtime"; then
+  WEATHER_PROVIDER_MODE="$(runtime_value "$previous_runtime" ROOMFRAME_WEATHER_PROVIDER_MODE)"
+fi
+WEATHER_PROVIDER_MODE="${WEATHER_PROVIDER_MODE:-evaluation}"
+[[ "$WEATHER_PROVIDER_MODE" == "evaluation" || "$WEATHER_PROVIDER_MODE" == "commercial" ]] \
+  || fail "Le mode météo doit être evaluation ou commercial."
+
+if [[ "$WEATHER_CACHE_EXPLICIT" -eq 0 && -r "$previous_runtime" ]] \
+  && grep -q '^ROOMFRAME_WEATHER_CACHE_MINUTES=' "$previous_runtime"; then
+  WEATHER_CACHE_MINUTES="$(runtime_value "$previous_runtime" ROOMFRAME_WEATHER_CACHE_MINUTES)"
+fi
+WEATHER_CACHE_MINUTES="${WEATHER_CACHE_MINUTES:-15}"
+if [[ ! "$WEATHER_CACHE_MINUTES" =~ ^[0-9]+$ ]] \
+  || ((10#$WEATHER_CACHE_MINUTES < 5 || 10#$WEATHER_CACHE_MINUTES > 60)); then
+  fail "Le cache météo doit être compris entre 5 et 60 minutes."
+fi
+
 if [[ -d "$DATA_DIR/postgres" ]] \
   && find "$DATA_DIR/postgres" -mindepth 1 -print -quit | grep -q .; then
   previous_backup="$INSTALL_DIR/scripts/roomframe-backup.sh"
@@ -668,6 +692,8 @@ ROOMFRAME_UPDATE_POLL_MINUTES=${UPDATE_POLL_OVERRIDE}
 ROOMFRAME_BACKUP_DAILY_KEEP=${BACKUP_DAILY_KEEP}
 ROOMFRAME_BACKUP_WEEKLY_KEEP=${BACKUP_WEEKLY_KEEP}
 ROOMFRAME_DISCOVERY_AVAHI_ENABLED=${DISCOVERY_AVAHI_OVERRIDE}
+ROOMFRAME_WEATHER_PROVIDER_MODE=${WEATHER_PROVIDER_MODE}
+ROOMFRAME_WEATHER_CACHE_MINUTES=${WEATHER_CACHE_MINUTES}
 RUNTIME
 chmod 0640 "$RUNTIME_TMP"
 chown root:root "$RUNTIME_TMP"
@@ -802,7 +828,7 @@ if [[ "$NO_START" -eq 0 ]]; then
   # Build before interruption, then recreate containers and networks. Compose
   # does not change the `internal` flag of an existing network during `up`;
   # keeping an older frontend network would silently preserve API egress.
-  "$INSTALL_DIR/scripts/roomframe-compose.sh" build api worker update-poller migrate
+  "$INSTALL_DIR/scripts/roomframe-compose.sh" build api worker weather-gateway update-poller migrate
   "$INSTALL_DIR/scripts/roomframe-compose.sh" down --remove-orphans
   # Recreate even when the image tag is unchanged: Compose otherwise keeps
   # stale bind-mounted secret metadata after bootstrap hardening.
@@ -842,7 +868,7 @@ if [[ "$NO_START" -eq 0 ]]; then
     fail "L'URL HTTPS de secours par IP ne répond pas avec la CA locale."
   fi
 
-  for background_service in worker update-poller; do
+  for background_service in worker weather-gateway update-poller; do
     background_id="$(
       "$INSTALL_DIR/scripts/roomframe-compose.sh" ps -q "$background_service" 2>/dev/null || true
     )"

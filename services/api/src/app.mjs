@@ -10,12 +10,15 @@ import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
 import { registerUserRoutes } from './user-routes.mjs';
 import { createValidators } from './validation.mjs';
+import { registerWeatherRoutes } from './weather-routes.mjs';
 
 const safeServerErrorCodes = new Set([
   'insufficient_storage',
   'passkey_not_configured',
   'server_ca_not_ready',
   'server_ca_invalid',
+  'weather_gateway_unavailable',
+  'weather_provider_unavailable',
 ]);
 
 export const buildApp = async ({ config, logger = true }) => {
@@ -32,6 +35,8 @@ export const buildApp = async ({ config, logger = true }) => {
           'req.body.bootstrapToken',
           'req.body.recoveryToken',
           'req.body.activationToken',
+          'req.body.enrollmentCode',
+          'req.body.enrollmentCodeId',
           'req.body.enrollmentKey',
           'req.body.nextKey',
           'req.body.totpCode',
@@ -126,6 +131,11 @@ export const buildApp = async ({ config, logger = true }) => {
       pool,
       config,
       validators,
+    });
+    registerWeatherRoutes({
+      app,
+      pool,
+      config,
     });
     registerStudioRoutes({
       app,

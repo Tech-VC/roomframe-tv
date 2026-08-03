@@ -119,6 +119,18 @@ for secret_name in postgres_password postgres_migrator_password postgres_runtime
   fi
 done
 
+weather_api_key="$CONFIG_DIR/secrets/weather_api_key"
+weather_key_mode="$(stat -c '%a:%u:%g' "$weather_api_key" 2>/dev/null || true)"
+if [[ -f "$weather_api_key" && ! -L "$weather_api_key" && "$weather_key_mode" == "444:0:0" ]]; then
+  if [[ "${ROOMFRAME_WEATHER_PROVIDER_MODE:-evaluation}" == "commercial" && ! -s "$weather_api_key" ]]; then
+    bad "clé météo commerciale absente"
+  else
+    ok "configuration du secret météo protégée"
+  fi
+else
+  bad "fichier de secret météo absent ou mal protégé"
+fi
+
 if ! command -v docker >/dev/null 2>&1; then
   bad "Docker est introuvable"
 elif ! docker info >/dev/null 2>&1; then
@@ -138,7 +150,7 @@ fi
 if [[ -x "$COMPOSE_COMMAND" ]]; then
   note "État des services:"
   "$COMPOSE_COMMAND" ps 2>&1 || bad "impossible de lire l'état des services"
-  for service_name in caddy api worker update-poller postgres; do
+  for service_name in caddy api worker weather-gateway update-poller postgres; do
     container_id="$("$COMPOSE_COMMAND" ps -q "$service_name" 2>/dev/null || true)"
     if [[ -z "$container_id" ]]; then
       bad "conteneur absent: $service_name"

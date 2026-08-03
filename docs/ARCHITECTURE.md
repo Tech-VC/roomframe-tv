@@ -184,6 +184,8 @@ effacer le cache d’expérience local-first.
 sans WebView : fonds image/vidéo, flou Android 12, textes, heure, messages,
 logo global, médias, boutons source et ordre de focus D-pad. La couche logique
 reste indépendante de la résolution 4K/HDR des applications natives ouvertes.
+L’horloge peut inclure la date, et un objet message sans contenu actif n’ajoute
+aucun panneau vide au rendu.
 
 Après la synchronisation d’expérience, le client peut récupérer une mise à
 jour APK affectée. Il vérifie l’artefact et utilise `PackageInstaller`
@@ -197,6 +199,9 @@ réels de bootstrap, authentification, scènes, médias, messages et releases. L
 modèle partagé côté interface est testé avec le validateur de layout de l’API.
 Les interactions couvrent déplacement, redimensionnement, clavier, calques,
 propriétés, palette et historique.
+Quand un logo différent est choisi, le navigateur peut en extraire une paire
+principale/accent pour l’aperçu. Les valeurs manuelles ne sont remplacées
+qu’après confirmation, puis restent à enregistrer par l’action habituelle.
 
 La console sécurité reste dans cette même direction éditoriale. Elle permet
 d’enrôler ou révoquer les passkeys du compte courant et de fermer ses sessions.

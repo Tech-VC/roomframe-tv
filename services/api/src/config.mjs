@@ -122,6 +122,23 @@ export const loadConfig = async (overrides = {}) => {
       5_000,
       300_000,
     ),
+    weatherGatewayUrl: overrides.weatherGatewayUrl
+      ?? process.env.ROOMFRAME_WEATHER_GATEWAY_URL
+      ?? 'http://weather-gateway:8091',
+    weatherRequestTimeoutMs: boundedInteger(
+      overrides.weatherRequestTimeoutMs
+      ?? process.env.ROOMFRAME_WEATHER_REQUEST_TIMEOUT_MS,
+      8_000,
+      2_000,
+      20_000,
+    ),
+    weatherCacheMinutes: boundedInteger(
+      overrides.weatherCacheMinutes
+      ?? process.env.ROOMFRAME_WEATHER_CACHE_MINUTES,
+      15,
+      5,
+      60,
+    ),
     maxImageBytes: positiveInteger(
       overrides.maxImageBytes ?? process.env.ROOMFRAME_MAX_IMAGE_BYTES,
       25 * 1024 * 1024,

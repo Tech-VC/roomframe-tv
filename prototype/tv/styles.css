@@ -27,12 +27,14 @@ main { min-height: 0; display: grid; place-items: center; background: #050505; }
 .node { position: absolute; display: flex; align-items: center; color: white; overflow: hidden; white-space: pre-wrap; }
 .node-text { min-width: 0; overflow: hidden; }
 .kind-text { font-family: Georgia, serif; font-size: 3.3cqw; line-height: 1.03; letter-spacing: -.04em; }
-.kind-text.role-greeting { white-space: nowrap; font-size: 2.3cqw; }
-.kind-text.role-greeting .node-text { width: 100%; white-space: nowrap; text-overflow: ellipsis; }
-.kind-clock, .kind-weather { justify-content: flex-end; font-size: 1.05cqw; letter-spacing: .08em; }
+.kind-text.role-greeting { white-space: pre-wrap; font-size: 2.3cqw; }
+.kind-text.role-greeting .node-text { width: 100%; white-space: pre-wrap; }
+.kind-clock { justify-content: flex-end; font-size: 1.55cqw; font-weight: 800; letter-spacing: .035em; }
+.kind-weather { justify-content: flex-end; font-size: 1.05cqw; letter-spacing: .08em; }
+.kind-weather { flex-direction: column; align-items: flex-end; text-align: right; white-space: pre-wrap; }
+.kind-weather .node-text { white-space: pre-wrap; line-height: 1.35; }
 .kind-source, .kind-app { justify-content: flex-start; gap: 1cqw; border: 1px solid rgba(255,255,255,.42); border-left: .35cqw solid var(--signal); padding: 0 1cqw; background: rgba(0,0,0,.38); color: white; font-weight: 900; font-size: 1.25cqw; text-transform: uppercase; letter-spacing: .09em; text-align: left; }
 .kind-source .node-text { flex: 1; }
-.source-action { color: var(--signal); font-size: 1.5cqw; }
 .source-glyph { display: inline-block; flex: 0 0 auto; width: 2.2cqw; height: 2.2cqw; background: currentColor; -webkit-mask: var(--source-icon) center / contain no-repeat; mask: var(--source-icon) center / contain no-repeat; }
 .source-glyph.airplay { --source-icon: url("/assets/source-airplay.svg"); }
 .source-glyph.cast { --source-icon: url("/assets/source-cast.svg"); }
@@ -40,6 +42,11 @@ main { min-height: 0; display: grid; place-items: center; background: #050505; }
 .source-glyph.app { --source-icon: linear-gradient(#000 0 0); }
 .kind-message { align-items: flex-start; border-left: .3cqw solid var(--signal); padding: 1.7cqw; background: rgba(5,8,8,.48); font-size: .85cqw; line-height: 1.5; }
 .kind-message strong { display: block; margin-bottom: .8cqw; font-size: 1.05cqw; letter-spacing: .1em; }
+.message-list { display: grid; gap: .8cqw; width: 100%; }
+.message-entry { border-top: 1px solid rgba(255,255,255,.22); padding-top: .65cqw; }
+.message-entry b, .message-entry p { display: block; margin: 0; }
+.message-entry b { font-size: 1cqw; }
+.message-entry p { margin-top: .22cqw; color: var(--muted); font-size: .83cqw; line-height: 1.35; }
 .kind-network { color: #d7ded9; font-size: .7cqw; text-transform: uppercase; letter-spacing: .12em; }
 .kind-logo, .kind-image, .kind-video { justify-content: flex-end; align-items: flex-end; }
 .node img, .node video { width: 100%; height: 100%; object-fit: contain; object-position: right bottom; }

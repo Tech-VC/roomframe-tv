@@ -23,7 +23,9 @@ import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import org.roomframe.tv.adapters.DeviceAdapters
+import org.roomframe.tv.adapters.CapabilityState
 import org.roomframe.tv.cache.FileExperienceStore
+import org.roomframe.tv.experience.ExperienceDocumentParser
 import org.roomframe.tv.experience.ExperienceRepository
 import org.roomframe.tv.experience.ExperienceSnapshot
 import org.roomframe.tv.sync.DeviceCredentialStore
@@ -37,6 +39,8 @@ import org.roomframe.tv.sync.TvCertificateProvisioningResult
 import org.roomframe.tv.sync.TvMetricSnapshot
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
+import org.roomframe.tv.update.SafeUpdateInstallPolicy
+import org.roomframe.tv.update.UpdateInstallMoment
 
 /**
  * Launcher local-first :
@@ -47,10 +51,13 @@ import org.roomframe.tv.update.HttpAppUpdateCoordinator
  */
 class MainActivity : Activity() {
     private val processStartedAt = SystemClock.elapsedRealtime()
+    @Volatile private var lastUserInteractionAt = processStartedAt
+    @Volatile private var userInteractedSinceStartup = false
     private var okDownAt: Long? = null
     private val adapters by lazy { DeviceAdapters.forAndroid(this) }
     private val syncExecutor = Executors.newSingleThreadExecutor()
     private val syncRunning = AtomicBoolean(false)
+    private val startupUpdatePending = AtomicBoolean(true)
     private val scheduler = Handler(Looper.getMainLooper())
     private val periodicSync = object : Runnable {
         override fun run() {
@@ -68,9 +75,14 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        credentialStore = DeviceCredentialStore(this)
+        if (credentialStore.load() == null) {
+            startActivity(Intent(this, EnrollmentActivity::class.java))
+            finish()
+            return
+        }
         store = FileExperienceStore(File(filesDir, "experience"))
         repository = ExperienceRepository(this, store)
-        credentialStore = DeviceCredentialStore(this)
         render(repository.load())
         startupDurationMs = SystemClock.elapsedRealtime() - processStartedAt
     }
@@ -99,19 +111,25 @@ class MainActivity : Activity() {
 
     private fun render(snapshot: ExperienceSnapshot) {
         currentSnapshot = snapshot
+        val renderedSnapshot = localDebugBranding(snapshot)
         val renderer = NativeSceneRenderer(
             activity = this,
             adapters = adapters,
             debugBackground = localDebugBrandingDrawable("background"),
             debugLogo = localDebugBrandingDrawable("logo"),
         )
-        setContentView(renderer.render(snapshot))
+        setContentView(renderer.render(renderedSnapshot))
         window.decorView.post { enterImmersiveMode() }
     }
 
     private fun synchronizeInBackground() {
         val credentials = credentialStore.load() ?: return
         if (!syncRunning.compareAndSet(false, true)) return
+        val updateInstallMoment = if (startupUpdatePending.compareAndSet(true, false)) {
+            UpdateInstallMoment.STARTUP
+        } else {
+            UpdateInstallMoment.PERIODIC
+        }
         val activeRevisionId = currentSnapshot?.revisionId
         syncExecutor.execute {
             val syncStartedAt = SystemClock.elapsedRealtime()
@@ -157,7 +175,7 @@ class MainActivity : Activity() {
                 syncErrorCode = "sync-failed"
                 recordSyncState("failed:${error.message?.take(140) ?: "internal"}")
             } finally {
-                val updateResult = synchronizeAppUpdate(credentials)
+                val updateResult = synchronizeAppUpdate(credentials, updateInstallMoment)
                 val updateState = metricUpdateState(updateResult)
                 if (syncErrorCode == null && updateState == "failed") {
                     syncErrorCode = "update-failed"
@@ -172,6 +190,9 @@ class MainActivity : Activity() {
                     syncRevision = reportedRevision,
                     syncDurationMs = SystemClock.elapsedRealtime() - syncStartedAt,
                     updateState = updateState,
+                    silentUpdateCapable = adapters.appUpdate
+                        .probeCapabilities()
+                        .silentInstall == CapabilityState.SUPPORTED,
                     errorCode = syncErrorCode,
                 )
                 runCatching { HttpTvMetricsClient(credentials).send(metric) }
@@ -185,6 +206,7 @@ class MainActivity : Activity() {
 
     private fun synchronizeAppUpdate(
         credentials: org.roomframe.tv.sync.DeviceCredentials,
+        installMoment: UpdateInstallMoment,
     ): String {
         val state = runCatching {
             HttpAppUpdateCoordinator(
@@ -192,7 +214,14 @@ class MainActivity : Activity() {
                 credentials = credentials,
                 updateRoot = File(filesDir, "updates"),
                 adapter = adapters.appUpdate,
-            ).checkAndApply()
+            ).checkAndApply {
+                SafeUpdateInstallPolicy.decide(
+                    moment = installMoment,
+                    nowElapsedRealtime = SystemClock.elapsedRealtime(),
+                    lastUserInteractionElapsedRealtime = lastUserInteractionAt,
+                    userInteractedSinceStartup = userInteractedSinceStartup,
+                )
+            }
         }.getOrElse { error ->
             "failed:${error.message?.take(140) ?: "internal"}"
         }
@@ -295,6 +324,23 @@ class MainActivity : Activity() {
      * Surcharge locale réservée aux APK debuggables. Une révision serveur
      * validée reste prioritaire sur ces fichiers de laboratoire.
      */
+    private fun localDebugBranding(snapshot: ExperienceSnapshot): ExperienceSnapshot {
+        if (
+            applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0 ||
+            !snapshot.bundled
+        ) {
+            return snapshot
+        }
+        val candidate = File(filesDir, "branding/branding.json")
+        if (!candidate.isFile || candidate.length() !in 1..MAX_LOCAL_BRANDING_DOCUMENT_BYTES) {
+            return snapshot
+        }
+        val branding = runCatching {
+            ExperienceDocumentParser.parseBranding(candidate.readBytes())
+        }.getOrNull() ?: return snapshot
+        return snapshot.copy(branding = branding)
+    }
+
     private fun localDebugBrandingDrawable(name: String): Drawable? {
         if (
             applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0 ||
@@ -326,6 +372,10 @@ class MainActivity : Activity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            lastUserInteractionAt = SystemClock.elapsedRealtime()
+            userInteractedSinceStartup = true
+        }
         if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 okDownAt = System.currentTimeMillis()
@@ -353,6 +403,7 @@ class MainActivity : Activity() {
     private companion object {
         const val ADMIN_HOLD_MILLIS = 8_000L
         const val SYNC_INTERVAL_MILLIS = 5L * 60L * 1_000L
+        const val MAX_LOCAL_BRANDING_DOCUMENT_BYTES = 64L * 1024
         const val MAX_LOCAL_BRANDING_BYTES = 25L * 1024 * 1024
         const val MAX_LOCAL_BRANDING_DIMENSION = 4096
         const val MAX_LOCAL_BRANDING_PIXELS = 3840L * 2160L

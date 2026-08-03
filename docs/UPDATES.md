@@ -363,5 +363,11 @@ compatibilité avec la lignée de signature installée. Le fichier n’atteint
 L’adaptateur Android n’essaie l’installation silencieuse que lorsque
 `DevicePolicyManager` confirme que RoomFrame est Device Owner. Sinon l’état
 reste « APK vérifié · Device Owner requis » et aucune réussite n’est simulée.
-Le parcours Device Owner reste à valider physiquement après réinitialisation de
-la Philips.
+Lorsque cette capacité est présente, la TV n’affiche pas de demande de
+confirmation : elle installe au démarrage avant toute interaction, après 15
+minutes d’inactivité ou juste avant une veille demandée par RoomFrame. Le
+troisième déclencheur attend encore l’implémentation et la validation de
+l’adaptateur de veille réel. Le parcours Device Owner et `PackageInstaller`
+restent à valider physiquement après réinitialisation de la Philips. La
+procédure et le mode manuel d’enrôlement sont décrits dans
+[TV_PROVISIONING.md](TV_PROVISIONING.md).

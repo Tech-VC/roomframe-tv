@@ -184,6 +184,17 @@ et les volumes `processing`/`releases`. Il ne publie aucun port. Lui seul
 rejoint un réseau Docker de sortie Internet ; PostgreSQL reste sur le réseau
 interne.
 
+Le service `weather-gateway` est lui aussi isolé et sans port publié. Il est le
+seul chemin de l’API vers Open-Meteo et conserve les mesures dans le cache
+PostgreSQL. Aucune commune n’est préconfigurée : chaque objet Météo doit
+sélectionner une suggestion de l’autocomplétion du Studio. Le mode
+`evaluation`, utilisé par défaut pour les essais, dépend des conditions
+d’utilisation non commerciales d’Open-Meteo. Pour une exploitation
+commerciale, déposer la clé d’abonnement dans le fichier root-only
+`/etc/roomframe/secrets/weather_api_key`, puis installer avec
+`ROOMFRAME_WEATHER_PROVIDER_MODE=commercial`. La clé ne doit jamais être
+placée dans le dépôt ou dans `runtime.conf`.
+
 Le poller importe seulement. L’application automatique du serveur reste
 `manual` par défaut et se configure ensuite dans le Studio. Lorsqu’elle est
 explicitement activée, le courtier systemd root vérifie le délai, la fenêtre,
@@ -235,7 +246,7 @@ passkeys, défis et invitations de ce compte.
 
 ```bash
 sudo roomframe-compose ps
-sudo roomframe-compose logs --tail=200 api worker update-poller
+sudo roomframe-compose logs --tail=200 api worker weather-gateway update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup-key --show-recipient
@@ -469,9 +480,10 @@ premier démarrage dans :
 ```
 
 Cette racine doit être distribuée par un canal administré aux navigateurs et
-épinglée ou installée lors de l’enrôlement des TV. L’APK release récupère une
-copie chiffrée avec sa clé d’enrôlement, valide la chaîne TLS observée puis
-épingle la CA avant de transmettre cette clé. Ne contournez pas les
+épinglée ou installée lors de l’enrôlement des TV. L’APK récupère une enveloppe
+chiffrée par le code d’installation, valide la chaîne TLS observée puis épingle
+la CA avant de transmettre la clé longue déchiffrée. L’ancien parcours à clé
+longue reste disponible pour les APK déjà déployées. Ne contournez pas les
 avertissements TLS pour l’usage normal. L’API n’est pas publiée directement :
 Caddy expose uniquement `443/tcp`.
 
@@ -498,6 +510,8 @@ sudo ./install.sh --disable-local-discovery
 ```
 
 Le DNS unicast, l’URL IP et la saisie manuelle dans l’APK restent disponibles.
+Le parcours complet, y compris le secours manuel et Device Owner, est décrit
+dans [TV_PROVISIONING.md](TV_PROVISIONING.md).
 
 Une autorité distincte destinée aux certificats clients TV est créée une seule
 fois pendant le bootstrap :

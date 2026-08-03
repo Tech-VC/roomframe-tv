@@ -1,6 +1,7 @@
 package org.roomframe.tv.adapters
 
 import android.content.Context
+import android.graphics.drawable.Drawable
 
 /**
  * Une capacité inconnue ou non supportée n'est jamais présentée comme un succès.
@@ -51,6 +52,7 @@ data class VerifiedApkArtifact(
 interface SourceAdapter {
     val capability: CapabilityState
     fun activate(): AdapterResult
+    fun brandedIcon(): Drawable? = null
 }
 
 interface HdmiAdapter : SourceAdapter {
@@ -88,12 +90,15 @@ data class DeviceAdapters(
             appUpdate = UnsupportedAppUpdateAdapter,
         )
 
-        fun forAndroid(context: Context): DeviceAdapters = DeviceAdapters(
-            hdmi = UnsupportedHdmiAdapter,
-            cast = UnsupportedCastAdapter,
-            airPlay = UnsupportedAirPlayAdapter,
-            power = UnsupportedPowerAdapter,
-            appUpdate = AndroidPackageInstallerAdapter(context.applicationContext),
-        )
+        fun forAndroid(context: Context): DeviceAdapters {
+            val sourceAdapters = PhilipsTa1SourceAdapters.create(context)
+            return DeviceAdapters(
+                hdmi = sourceAdapters?.hdmi ?: UnsupportedHdmiAdapter,
+                cast = sourceAdapters?.cast ?: UnsupportedCastAdapter,
+                airPlay = sourceAdapters?.airPlay ?: UnsupportedAirPlayAdapter,
+                power = UnsupportedPowerAdapter,
+                appUpdate = AndroidPackageInstallerAdapter(context.applicationContext),
+            )
+        }
     }
 }

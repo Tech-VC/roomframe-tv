@@ -30,11 +30,14 @@ L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 - `bootstrap_token` ;
 - `session_secret` ;
 - `totp_encryption_key` ;
+- `weather_api_key` ;
 - `discovery_signing_key` ;
 - `backup_age_identity`.
 
 Le répertoire est `root:root` en mode `0700`. Les fichiers sont réguliers, non
-vides et `root:root`. Les secrets montés dans les conteneurs sont en mode
+vides et `root:root`, à l’exception de `weather_api_key`, volontairement vide
+tant que le mode d’évaluation Open-Meteo est utilisé. Les secrets montés dans
+les conteneurs sont en mode
 `0444` ; les identités age et ECDSA de découverte, jamais montées, sont en mode
 `0400`. Sur l’hôte, aucun
 compte non-root ne peut les
@@ -47,6 +50,15 @@ secret du compte d’administration local utilisé uniquement par PostgreSQL et
 les opérations root. `database-roles` reçoit ce secret le temps de préparer
 les rôles. Le conteneur one-shot `migrate` ne reçoit que le secret migrateur ;
 l’API, le worker et le poller ne reçoivent que le secret runtime.
+
+La météo suit une séparation réseau dédiée. L’API n’accède jamais directement
+à Internet : elle interroge uniquement `weather-gateway` sur le réseau Docker
+interne. Cette passerelle n’expose aucun port entrant, ne reçoit aucun secret
+RoomFrame et rejoint seule `weather-egress`. Elle ne contacte que les points de
+terminaison Open-Meteo fixés dans son code, avec redirections refusées,
+temporisation et taille de réponse bornées. En mode commercial, elle reçoit
+seulement `weather_api_key` par montage Docker en lecture seule ; la clé ne
+transite ni dans `runtime.conf`, ni dans PostgreSQL, ni dans les journaux.
 
 `/etc/roomframe/runtime.conf` contient uniquement les chemins, URL, hôte,
 IPv4, version et fuseau nécessaires à Compose.
@@ -181,18 +193,22 @@ téléchargement média que le Studio.
 
 ## TV et données
 
-La clé d’enrôlement expire après 30 minutes et ne peut pas synchroniser. Elle
-est échangée atomiquement contre une clé d’appareil remise une fois. Seul son
-SHA-256 est stocké.
+Le code d’installation et la clé longue correspondante expirent après 30
+minutes et ne peuvent pas synchroniser. La clé longue est échangée atomiquement
+contre une clé d’appareil remise une fois. Seuls leurs identifiants SHA-256
+contextuels sont stockés.
 
-Avant cet échange, le serveur chiffre sa CA HTTPS publique avec AES-256-GCM.
-La clé AES est dérivée par HKDF-SHA256 depuis la clé d’enrôlement aléatoire et
-un sel propre au ticket. La TV récupère ce blob sans envoyer la clé, le
-déchiffre localement, puis vérifie que la chaîne TLS réellement rencontrée
-aboutit à cette CA et que le nom ou l’IP correspond à l’URL saisie. Elle épingle
-ensuite la CA dans son stockage applicatif avant la première requête contenant
-la clé d’enrôlement. Un relais qui substitue son certificat peut relayer le
-blob, mais il ne peut ni le modifier ni faire valider sa propre chaîne.
+Avant cet échange, le serveur chiffre dans une enveloppe AES-256-GCM sa CA
+HTTPS publique, l’UUID et la clé longue. La clé AES est dérivée par
+HKDF-SHA256 depuis le code à 80 bits et un sel propre au ticket. La TV ne
+transmet que l’identifiant SHA-256 du code, déchiffre l’enveloppe localement,
+puis vérifie que la chaîne TLS réellement rencontrée aboutit à cette CA et que
+le nom ou l’IP correspond à l’URL saisie. Elle épingle ensuite la CA avant la
+première requête contenant la clé longue. Un relais qui substitue son
+certificat peut relayer le blob, mais il ne connaît pas le code, ne peut pas le
+modifier et ne peut pas faire valider sa propre chaîne. L’enveloppe historique
+dérivée directement de la clé longue reste disponible uniquement pour les APK
+déjà déployées.
 
 La copie publique montée dans l’API est
 `/var/lib/roomframe/pki/server-ca/ca.crt`. Elle est synchronisée depuis les

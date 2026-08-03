@@ -22,6 +22,9 @@ x-api-environment: &api-environment
   ROOMFRAME_UPDATE_GITHUB_CHANNEL: ${ROOMFRAME_UPDATE_GITHUB_CHANNEL:-stable}
   ROOMFRAME_UPDATE_POLL_MINUTES: ${ROOMFRAME_UPDATE_POLL_MINUTES:-360}
   ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS: ${ROOMFRAME_UPDATE_REQUEST_TIMEOUT_MS:-60000}
+  ROOMFRAME_WEATHER_GATEWAY_URL: http://weather-gateway:8091
+  ROOMFRAME_WEATHER_REQUEST_TIMEOUT_MS: ${ROOMFRAME_WEATHER_REQUEST_TIMEOUT_MS:-8000}
+  ROOMFRAME_WEATHER_CACHE_MINUTES: ${ROOMFRAME_WEATHER_CACHE_MINUTES:-15}
   ROOMFRAME_RECOVERY_REQUEST_FILE: /run/roomframe/recovery/request.json
   ROOMFRAME_PUBLIC_URL: ${ROOMFRAME_PUBLIC_URL:?ROOMFRAME_PUBLIC_URL requis}
   ROOMFRAME_PREFERRED_URL: ${ROOMFRAME_PREFERRED_URL:?ROOMFRAME_PREFERRED_URL requis}
@@ -90,6 +93,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      weather-gateway:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -144,6 +149,44 @@ services:
     pids_limit: 512
     networks:
       - backend
+
+  weather-gateway:
+    build: *api-build
+    image: roomframe-api:${ROOMFRAME_VERSION:-dev}
+    command: ["npm", "run", "weather-gateway"]
+    restart: unless-stopped
+    user: "${ROOMFRAME_RUNTIME_UID:?ROOMFRAME_RUNTIME_UID requis}:${ROOMFRAME_RUNTIME_GID:?ROOMFRAME_RUNTIME_GID requis}"
+    read_only: true
+    environment:
+      NODE_ENV: production
+      PORT: "8091"
+      ROOMFRAME_WEATHER_PROVIDER_MODE: ${ROOMFRAME_WEATHER_PROVIDER_MODE:-evaluation}
+      ROOMFRAME_WEATHER_REQUEST_TIMEOUT_MS: ${ROOMFRAME_WEATHER_REQUEST_TIMEOUT_MS:-8000}
+      ROOMFRAME_WEATHER_API_KEY_FILE: /run/secrets/weather_api_key
+    secrets:
+      - weather_api_key
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8091/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${ROOMFRAME_WEATHER_MEMORY_LIMIT:-192m}
+    cpus: ${ROOMFRAME_WEATHER_CPU_LIMIT:-0.25}
+    pids_limit: 96
+    networks:
+      - backend
+      - weather-egress
 
   update-poller:
     build: *api-build
@@ -280,6 +323,7 @@ networks:
     internal: true
   ingress:
   update-egress:
+  weather-egress:
 
 secrets:
   postgres_password:
@@ -294,3 +338,5 @@ secrets:
     file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/session_secret
   totp_encryption_key:
     file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/totp_encryption_key
+  weather_api_key:
+    file: ${ROOMFRAME_CONFIG_DIR:-/etc/roomframe}/secrets/weather_api_key

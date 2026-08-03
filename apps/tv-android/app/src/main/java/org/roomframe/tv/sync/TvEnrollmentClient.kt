@@ -8,6 +8,35 @@ import javax.net.ssl.HttpsURLConnection
 import org.json.JSONObject
 
 class TvEnrollmentClient {
+    fun enrollWithCode(
+        serverUrls: List<String>,
+        enrollmentCode: String,
+        expectedServerCaFingerprintSha256: String? = null,
+    ): DeviceCredentials {
+        val normalizedUrls = normalizedUrls(serverUrls)
+        val normalizedCode = EnrollmentCodePolicy.normalize(enrollmentCode)
+        var lastFailure: Throwable? = null
+        for (candidate in normalizedUrls) {
+            val credentials = runCatching {
+                val resolved = EnrollmentCodeBootstrapClient().bootstrap(
+                    candidate,
+                    normalizedCode,
+                    expectedServerCaFingerprintSha256,
+                )
+                enrollTrusted(
+                    candidate,
+                    resolved.deviceId,
+                    resolved.enrollmentKey,
+                )
+            }.onFailure { lastFailure = it }.getOrNull()
+            if (credentials != null) return credentials
+        }
+        throw IllegalStateException(
+            "Aucune origine RoomFrame n’a accepté le code d’installation",
+            lastFailure,
+        )
+    }
+
     fun enroll(serverUrl: String, deviceId: String, enrollmentKey: String): DeviceCredentials {
         return enroll(listOf(serverUrl), deviceId, enrollmentKey, null)
     }
@@ -18,12 +47,7 @@ class TvEnrollmentClient {
         enrollmentKey: String,
         expectedServerCaFingerprintSha256: String? = null,
     ): DeviceCredentials {
-        val normalizedUrls = serverUrls
-            .map(DeviceCredentialStore::validateServerUrl)
-            .distinct()
-        require(normalizedUrls.isNotEmpty() && normalizedUrls.size <= 2) {
-            "Une ou deux origines RoomFrame sont attendues"
-        }
+        val normalizedUrls = normalizedUrls(serverUrls)
         val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
         DeviceCredentialStore.validateDeviceKey(enrollmentKey)
         if (expectedServerCaFingerprintSha256 != null) {
@@ -48,6 +72,24 @@ class TvEnrollmentClient {
             "Aucune origine RoomFrame n'a validé l'autorité HTTPS",
             bootstrapFailure,
         )
+        return enrollTrusted(normalizedUrl, normalizedId, enrollmentKey)
+    }
+
+    private fun normalizedUrls(serverUrls: List<String>): List<String> {
+        val normalized = serverUrls
+            .map(DeviceCredentialStore::validateServerUrl)
+            .distinct()
+        require(normalized.isNotEmpty() && normalized.size <= 2) {
+            "Une ou deux origines RoomFrame sont attendues"
+        }
+        return normalized
+    }
+
+    private fun enrollTrusted(
+        normalizedUrl: String,
+        normalizedId: String,
+        enrollmentKey: String,
+    ): DeviceCredentials {
         val certificateProof = TvClientCertificateStore().enrollmentProof(
             normalizedId,
             enrollmentKey,

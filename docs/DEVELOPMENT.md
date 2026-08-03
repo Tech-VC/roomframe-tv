@@ -248,25 +248,34 @@ pour les essais effectués dans ce dépôt.
 
 ### Surcharge visuelle locale de test
 
-Un APK debuggable peut charger temporairement un fond et un logo depuis son
-stockage privé, sans les embarquer dans le dépôt public. Les noms acceptés
-sont `background` et `logo`, avec une extension `.webp`, `.png`, `.jpg` ou
-`.jpeg`, une limite de 25 Mio par fichier et une limite décodée de 3840 ×
-2160 pixels.
+Un APK debuggable peut charger temporairement une charte, un fond et un logo
+depuis son stockage privé, sans les embarquer dans le dépôt public. La charte
+facultative est un contrat `branding.json` de 64 Kio au maximum, validé par le
+même parseur strict que les révisions serveur. Les médias acceptés sont
+`background` et `logo`, avec une extension `.webp`, `.png`, `.jpg` ou `.jpeg`,
+une limite de 25 Mio par fichier et une limite décodée de 3840 × 2160 pixels.
 
 ```bash
 adb push LOCAL_BACKGROUND_FILE /data/local/tmp/roomframe-background.png
-adb push LOCAL_LOGO_FILE /data/local/tmp/roomframe-logo.png
+adb push LOCAL_LOGO_FILE /data/local/tmp/roomframe-logo.webp
+adb push LOCAL_BRANDING_FILE /data/local/tmp/roomframe-branding.json
 adb shell run-as org.roomframe.tv mkdir -p files/branding
 adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-background.png files/branding/background.png
-adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-logo.png files/branding/logo.png
-adb shell run-as org.roomframe.tv chmod 600 files/branding/background.png files/branding/logo.png
-adb shell rm /data/local/tmp/roomframe-background.png /data/local/tmp/roomframe-logo.png
+adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-logo.webp files/branding/logo.webp
+adb shell run-as org.roomframe.tv cp /data/local/tmp/roomframe-branding.json files/branding/branding.json
+adb shell run-as org.roomframe.tv chmod 600 files/branding/background.png files/branding/logo.webp files/branding/branding.json
+adb shell rm /data/local/tmp/roomframe-background.png /data/local/tmp/roomframe-logo.webp /data/local/tmp/roomframe-branding.json
 ```
 
 Ce chemin est désactivé dans les builds non debuggables. Il sert uniquement
-au prototypage matériel ; les releases doivent recevoir leurs médias validés,
-optimisés et adressés par hash via le pipeline de synchronisation.
+au prototypage matériel et seulement tant que le bundle embarqué est affiché ;
+une révision serveur validée reste toujours prioritaire. Les releases doivent
+recevoir leur charte et leurs médias validés, optimisés et adressés par hash
+via le pipeline de synchronisation.
+
+Le renderer affiche un logo en une seule couche, sans teinte, contour, ombre,
+étirement ni copie décalée. Le canal alpha produit par le worker est utilisé
+tel quel afin de préserver le dessin et la typographie de l'original.
 
 Les builds debug acceptent les autorités de certification ajoutées par
 l’utilisateur Android afin de tester la CA Caddy locale. Les builds release
@@ -287,22 +296,31 @@ Le launcher compile un accueil natif sans WebView et contient :
 - `HttpAppUpdateCoordinator`, le contrôle de l’APK et l’adaptateur
   `PackageInstaller` conditionné à Device Owner ;
 - les contrats HDMI, Cast, AirPlay et puissance ;
-- des adaptateurs qui répondent honnêtement `unsupported` et des simulateurs
-  réservés aux tests.
+- des adaptateurs génériques qui répondent honnêtement `unsupported`, des
+  simulateurs réservés aux tests et un profil matériel strict pour la Philips
+  TA1 `PH1M_WW_9972` ; ce profil ouvre les entrées AirPlay et HDMI avec les
+  API publiques `TvInputManager`/`TvContract` et détecte le récepteur Cast
+  intégré sans simuler le démarrage d'une diffusion. Il affiche l'icône publiée
+  par le service Cast déjà installé, sans l'extraire ni la redistribuer. Le
+  paquet AirPlay Philips ne publiant qu'une icône Android générique, son bouton
+  conserve le glyphe vidéo AirPlay Apache-2.0 ; ces vecteurs restent aussi les
+  replis génériques.
 
 Le build debug 0.3.0 a été installé et lancé sur le matériel Philips documenté
 dans `PHILIPS_VALIDATION.md`. Le rendu logique 1920 × 1080 et le parcours
-D-pad AirPlay, Cast puis HDMI y sont confirmés. L’intégration du cache, du
-client HTTPS, de la distribution APK et des métriques techniques minimales est
-maintenant codée et testée hors matériel. Le provisionnement Device Owner,
-l’installation silencieuse réelle, la découverte DNS-SD, l’appairage CA, la
-rotation et le mTLS 0.3.5 restent à valider sur la TV.
-Aucun résultat HDMI, Cast, AirPlay, puissance ou mise à jour silencieuse ne
-peut être déduit des adaptateurs `unsupported` ou des tests JVM.
+D-pad AirPlay, Cast puis HDMI y sont confirmés. La candidate 0.3.5/code 8 est
+désormais installée sur la même TV. Depuis ses boutons, l'ouverture de l'entrée
+AirPlay native et de HDMI 1 a été observée ; le récepteur Cast intégré est
+détecté et le parcours affiche l'instruction de connexion correcte. Un signal
+HDMI réel, une session AirPlay/Cast, leur fin et le retour automatique restent
+à tester. L’intégration du cache, du client HTTPS, de la distribution APK et
+des métriques techniques minimales est codée et testée hors matériel. Le
+provisionnement Device Owner et l’installation silencieuse réelle restent
+également à valider sur la TV.
 
 La candidate courante est `0.3.5` / `versionCode 8`. Elle inclut le cache,
 la synchronisation, la distribution APK, l’appairage chiffré de la CA,
-la rotation de credential, le mTLS et la découverte locale signée ; elle
-n’est pas considérée installée tant que la TV n’a pas été reconnectée et
-contrôlée. La candidate intermédiaire `0.3.1` / code 4 a seulement été
-construite hors matériel.
+la rotation de credential, le mTLS et la découverte locale signée. Son APK
+debug a été installé et contrôlé sur la Philips sans perte des données privées
+de test. La candidate intermédiaire `0.3.1` / code 4 a seulement été construite
+hors matériel.

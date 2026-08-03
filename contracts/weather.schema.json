@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/weather.schema.json",
+  "title": "RoomFrame cached weather document",
+  "type": "object",
+  "required": ["schemaVersion", "provider", "attribution", "items"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "provider": {"const": "open-meteo"},
+    "attribution": {
+      "type": "object",
+      "required": ["label", "url"],
+      "properties": {
+        "label": {"const": "Données météo : Open-Meteo"},
+        "url": {"const": "https://open-meteo.com/"}
+      },
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": [
+          "key", "location", "timezone", "units", "status", "temperatureUnit"
+        ],
+        "properties": {
+          "key": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "location": {"type": "string", "minLength": 1, "maxLength": 200},
+          "timezone": {"type": "string", "minLength": 1, "maxLength": 100},
+          "units": {"enum": ["metric", "imperial"]},
+          "status": {"enum": ["ready", "stale", "unavailable"]},
+          "temperatureUnit": {"enum": ["°C", "°F"]},
+          "temperature": {"type": ["number", "null"], "minimum": -150, "maximum": 160},
+          "apparentTemperature": {"type": ["number", "null"], "minimum": -170, "maximum": 180},
+          "weatherCode": {"type": ["integer", "null"], "minimum": 0, "maximum": 99},
+          "condition": {"type": ["string", "null"], "maxLength": 100},
+          "isDay": {"type": ["boolean", "null"]},
+          "observedAt": {"type": ["string", "null"], "format": "date-time"},
+          "fetchedAt": {"type": ["string", "null"], "format": "date-time"},
+          "errorCode": {"type": ["string", "null"], "maxLength": 100}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

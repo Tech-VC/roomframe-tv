@@ -150,7 +150,7 @@ running_services="$(
     || "$COMPOSE_COMMAND" ps --services --filter status=running 2>/dev/null \
     || true
 )"
-for service_name in caddy api worker update-poller; do
+for service_name in caddy api worker weather-gateway update-poller; do
   if grep -Fqx "$service_name" <<<"$running_services"; then
     PAUSED_SERVICES+=("$service_name")
   fi

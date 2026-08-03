@@ -30,8 +30,9 @@ commerciale et un relevé ADB en lecture seule :
 | Débogage ADB | Option « Débogage USB » présente ; aucune option « Débogage sans fil » |
 | ADB local | Compatible sur Wi-Fi et même sous-réseau, TCP `5555`, authentification RSA |
 | ADB routé | Délai dépassé dans la topologie inter-VLAN testée |
-| HDMI | Quatre entrées exposées par `TvInputManager`; CEC actif, ARC sur HDMI 2 |
-| AirPlay | Services MediaTek présents ; fonctionnement utilisateur non validé |
+| HDMI | Quatre entrées exposées par `TvInputManager`; ouverture native de HDMI 1 depuis RoomFrame observée, CEC actif, ARC sur HDMI 2 |
+| AirPlay | Ouverture de l'entrée AirPlay MediaTek depuis RoomFrame observée ; diffusion depuis un appareil encore à tester |
+| Cast | Récepteur Chromecast intégré détecté ; parcours d'aide RoomFrame validé, session de diffusion encore à tester |
 | Codecs déclarés | AVC, HEVC, VP8, VP9, AV1, VVC, MPEG-2/4 et Dolby Vision |
 | Compte Google | Compte géré retirable avant une réinitialisation de test |
 | Réinitialisation | Possible si le protocole Device Owner l’exige |
@@ -43,9 +44,11 @@ La
 annonce 16 Go de mémoire flash, dont seule une partie apparaît comme stockage
 partagé accessible après les partitions système et les applications
 préinstallées.
-Ce profil identifie une base de test, mais ne prouve pas encore que Device
-Owner, `PackageInstaller`, HDMI, veille/réveil ou les API constructeur sont
-disponibles.
+Ce profil identifie une base de test. Il valide désormais l'ouverture des
+entrées natives AirPlay et HDMI 1 par l'API Android publique, mais ne prouve
+pas encore Device Owner, `PackageInstaller`, la présence d'un signal HDMI,
+une diffusion AirPlay/Cast complète, le retour automatique, la veille ou le
+réveil.
 
 Les fichiers codecs MediaTek déclarent notamment des décodeurs matériels et
 sécurisés pour AVC, HEVC, VP9, AV1 et Dolby Vision, avec des points de
@@ -214,13 +217,13 @@ sortaient de l’écran. Le renderer utilise désormais les coordonnées logique
 Le firmware Philips lève également une exception si
 `WindowInsetsController` est demandé avant l’attachement de la vue ; le mode
 immersif est donc appliqué après `setContentView`.
-Un second build installé sur la TV confirme à l’écran :
+Un second build installé sur la TV a confirmé à l’écran :
 
 - la salutation, les trois boutons et le logo entièrement visibles ;
 - le rendu capturé en 1920 × 1080 ;
 - l’ordre de focus D-pad AirPlay, Cast puis HDMI ;
-- l’affichage explicite de « Intégration matérielle non validée sur ce
-  téléviseur » lors de l’activation de l’adaptateur HDMI non pris en charge.
+- le refus explicite d'annoncer une intégration matérielle tant qu'aucun
+  adaptateur propre au matériel n'avait été validé.
 
 Après correction du mode immersif, un nouveau démarrage à froid est resté au
 premier plan et le journal Android ne contient aucun crash RoomFrame.
@@ -247,11 +250,11 @@ La candidate courante `0.3.5` (`versionCode` 8) ajoute le renderer alimenté par
 le cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
 mesures techniques, l’appairage chiffré de la CA serveur, la rotation de
 credential en deux phases, le certificat client mTLS individuel et la
-découverte DNS-SD avec manifeste ECDSA P-256. Elle doit
-servir à la montée de version depuis le code
-3, mais n’est pas encore installée ni validée sur cette Philips. Les candidates
-intermédiaires `0.3.1` / code 4 et `0.3.2` / code 5 ont uniquement été
-construites hors matériel.
+découverte DNS-SD avec manifeste ECDSA P-256. Elle a été installée par
+`adb install -r` sur cette Philips sans perte des données privées du build
+debug. Son démarrage, son rendu, son focus D-pad et les activations de sources
+décrites ci-dessous ont été observés. Les candidats intermédiaires `0.3.1` /
+code 4 et `0.3.2` / code 5 ont uniquement été construits hors matériel.
 
 ## HDMI et sources
 
@@ -264,8 +267,25 @@ construites hors matériel.
 
 Le relevé ADB expose quatre services `HdmiInputService`, associés aux ports 1
 à 4. HDMI-CEC est activé et chaque port est déclaré compatible CEC ; HDMI 2
-est déclaré ARC. Ce relevé confirme l’existence des interfaces système, pas
-la commutation, la détection d’un signal réel ni le retour automatique.
+est déclaré ARC. Sur le profil strict `TPV` / `Philips` / `PH1M_WW_9972`,
+RoomFrame utilise `TvContract.buildChannelUriForPassthroughInput` et
+`TvInputManager` : l'activation du bouton HDMI a réellement ouvert l'entrée
+HDMI 1 (`HW2`) dans le lecteur TV natif. Aucun câble n'était connecté pendant
+le test, et l'écran natif a donc signalé l'absence de signal. La détection du
+signal, le choix HDMI 1 à 4 depuis la politique serveur et le retour
+automatique restent à valider.
+
+Le même chemin Android public ouvre l'entrée
+`com.mediatek.AirplayAPK/.AirPlayTvInputService`. Le bouton AirPlay RoomFrame
+a réellement basculé vers l'écran d'attente AirPlay natif. Une diffusion
+depuis un iPhone ou un Mac et le retour après sa fin restent à observer.
+
+Android 12 masque les paquets qui ne sont pas déclarés dans les requêtes du
+manifeste. RoomFrame déclare donc uniquement le paquet système Chromecast
+intégré nécessaire à ce contrôle. Le bouton Cast confirme sa présence et
+invite l'utilisateur à choisir le téléviseur depuis son appareil ; il ne
+prétend pas démarrer lui-même une session Cast. Une vraie session depuis un
+client reste requise avant de classer la capacité comme compatible.
 
 ## Veille et réveil
 

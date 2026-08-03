@@ -3,7 +3,7 @@
   "defaults": {
     "organizationName": "",
     "roomName": "Salle de réunion 1",
-    "displayGreeting": "Bonjour, bienvenue en salle de réunion 1",
+    "displayGreeting": "Bonjour,\nBienvenue en salle de réunion 1",
     "logoPlacement": "bottom-right",
     "networkLabel": "",
     "weatherLocation": "",

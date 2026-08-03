@@ -116,5 +116,6 @@ récupération administrateur, consulter :
 
 - [Installation complète](INSTALLATION.md)
 - [Réseau et découverte locale](NETWORKING.md)
+- [Installation et rattachement d’une TV](TV_PROVISIONING.md)
 - [Sécurité](SECURITY.md)
 - [Mises à jour](UPDATES.md)

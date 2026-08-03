@@ -36,7 +36,9 @@ class HttpAppUpdateCoordinator(
     private val runtime = context.getSharedPreferences(RUNTIME_PREFERENCES, Context.MODE_PRIVATE)
     private val verifier = ApkArtifactVerifier(context, updateRoot)
 
-    fun checkAndApply(): String {
+    fun checkAndApply(
+        installDecision: () -> UpdateInstallDecision,
+    ): String {
         flushInstallerResult()?.let { return it }
         val response = requestJson("GET", "/api/v1/tv/update")
         if (!response.optBoolean("available", false)) return "up-to-date"
@@ -96,6 +98,15 @@ class HttpAppUpdateCoordinator(
         if (adapter.probeCapabilities().silentInstall != CapabilityState.SUPPORTED) {
             recordState("downloaded:device-owner-required")
             return "downloaded:device-owner-required"
+        }
+        val decision = installDecision()
+        require(decision.reason.matches(Regex("^[a-z0-9-]{1,40}$"))) {
+            "Motif de mise à jour différée invalide"
+        }
+        if (!decision.allowed) {
+            val state = "downloaded:${decision.reason}"
+            recordState(state)
+            return state
         }
 
         report(deploymentId, "installing", releaseVersion)

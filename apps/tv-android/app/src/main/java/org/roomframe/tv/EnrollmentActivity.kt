@@ -13,9 +13,11 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.text.InputFilter
 import java.util.concurrent.Executors
 import org.roomframe.tv.sync.DeviceCredentialStore
 import org.roomframe.tv.sync.DiscoveryCandidate
+import org.roomframe.tv.sync.EnrollmentCodePolicy
 import org.roomframe.tv.sync.RoomFrameDiscovery
 import org.roomframe.tv.sync.TvEnrollmentClient
 
@@ -24,11 +26,12 @@ class EnrollmentActivity : Activity() {
     private lateinit var discovery: RoomFrameDiscovery
     private var discoveredCandidate: DiscoveryCandidate? = null
     private lateinit var serverUrl: EditText
-    private lateinit var deviceId: EditText
-    private lateinit var enrollmentKey: EditText
+    private lateinit var enrollmentCode: EditText
     private lateinit var discover: Button
+    private lateinit var manual: Button
     private lateinit var submit: Button
     private lateinit var status: TextView
+    private var manualEntryRequested = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +42,7 @@ class EnrollmentActivity : Activity() {
         }
         discovery = RoomFrameDiscovery(this)
         setContentView(buildView())
+        status.post { discoverLocalServer() }
     }
 
     override fun onDestroy() {
@@ -65,38 +69,52 @@ class EnrollmentActivity : Activity() {
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
         }, row(top = 12, bottom = 24))
 
+        status = TextView(this).apply {
+            setTextColor(Color.LTGRAY)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            gravity = Gravity.CENTER
+        }
+        root.addView(status, row(bottom = 12))
+
         discover = Button(this).apply {
             text = getString(R.string.enrollment_discover)
             setOnClickListener { discoverLocalServer() }
         }
-        root.addView(discover, row(bottom = 12))
+        manual = Button(this).apply {
+            text = getString(R.string.enrollment_manual)
+            setOnClickListener {
+                manualEntryRequested = true
+                showManualServerEntry(requestFocus = true)
+            }
+        }
+        root.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            addView(discover, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(8)
+            })
+            addView(manual, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(8)
+            })
+        }, row(bottom = 12))
         serverUrl = field(
             hint = getString(R.string.enrollment_server_url),
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
-        )
-        deviceId = field(
-            hint = getString(R.string.enrollment_device_id),
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
-        )
-        enrollmentKey = field(
-            hint = getString(R.string.enrollment_key),
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
-        )
+        ).apply { visibility = View.GONE }
+        enrollmentCode = field(
+            hint = getString(R.string.enrollment_code),
+            inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
+        ).apply { filters = arrayOf(InputFilter.LengthFilter(19)) }
         root.addView(serverUrl, row(bottom = 12))
-        root.addView(deviceId, row(bottom = 12))
-        root.addView(enrollmentKey, row(bottom = 20))
+        root.addView(enrollmentCode, row(bottom = 20))
 
         submit = Button(this).apply {
             text = getString(R.string.enrollment_submit)
             setOnClickListener { enroll() }
         }
         root.addView(submit, row(bottom = 12))
-        status = TextView(this).apply {
-            setTextColor(Color.LTGRAY)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            gravity = Gravity.CENTER
-        }
-        root.addView(status, row())
         return root
     }
 
@@ -123,21 +141,30 @@ class EnrollmentActivity : Activity() {
                     when (candidates.size) {
                         0 -> {
                             discoveredCandidate = null
+                            showManualServerEntry(requestFocus = false)
                             status.setTextColor(Color.rgb(255, 186, 105))
                             status.text = getString(R.string.enrollment_discovery_empty)
                         }
                         1 -> {
                             discoveredCandidate = candidates.single()
-                            serverUrl.setText(candidates.single().descriptor.origin)
+                            if (!manualEntryRequested || serverUrl.text.isBlank()) {
+                                serverUrl.setText(candidates.single().descriptor.origin)
+                            }
                             status.setTextColor(Color.rgb(91, 208, 139))
                             status.text = getString(
                                 R.string.enrollment_discovery_found,
                                 candidates.single().descriptor.host,
                             )
-                            deviceId.requestFocus()
+                            if (manualEntryRequested) {
+                                serverUrl.visibility = View.VISIBLE
+                            } else {
+                                serverUrl.visibility = View.GONE
+                                enrollmentCode.requestFocus()
+                            }
                         }
                         else -> {
                             discoveredCandidate = null
+                            showManualServerEntry(requestFocus = false)
                             status.setTextColor(Color.rgb(255, 186, 105))
                             status.text = getString(
                                 R.string.enrollment_discovery_multiple,
@@ -148,6 +175,7 @@ class EnrollmentActivity : Activity() {
                     }
                 }.onFailure { error ->
                     discoveredCandidate = null
+                    showManualServerEntry(requestFocus = false)
                     status.setTextColor(Color.rgb(255, 126, 105))
                     status.text = getString(
                         R.string.enrollment_discovery_error,
@@ -157,6 +185,7 @@ class EnrollmentActivity : Activity() {
             }
         }.onFailure { error ->
             discover.isEnabled = true
+            showManualServerEntry(requestFocus = false)
             status.setTextColor(Color.rgb(255, 126, 105))
             status.text = getString(
                 R.string.enrollment_discovery_error,
@@ -165,13 +194,30 @@ class EnrollmentActivity : Activity() {
         }
     }
 
+    private fun showManualServerEntry(requestFocus: Boolean) {
+        serverUrl.visibility = View.VISIBLE
+        if (requestFocus) serverUrl.requestFocus()
+    }
+
     private fun enroll() {
         submit.isEnabled = false
         status.setTextColor(Color.LTGRAY)
         status.text = getString(R.string.enrollment_in_progress)
-        val url = serverUrl.text.toString()
-        val id = deviceId.text.toString()
-        val key = enrollmentKey.text.toString()
+        val url = runCatching {
+            EnrollmentCodePolicy.manualServerUrl(
+                serverUrl.text.toString(),
+            )
+        }.getOrElse { error ->
+            submit.isEnabled = true
+            status.setTextColor(Color.rgb(255, 126, 105))
+            status.text = getString(
+                R.string.enrollment_error,
+                error.message ?: getString(R.string.enrollment_unknown_error),
+            )
+            serverUrl.requestFocus()
+            return
+        }
+        val code = enrollmentCode.text.toString()
         val candidate = discoveredCandidate
         val usesDiscoveredCandidate = candidate != null && runCatching {
             DeviceCredentialStore.validateServerUrl(url) == candidate.descriptor.origin
@@ -184,10 +230,9 @@ class EnrollmentActivity : Activity() {
         }
         executor.execute {
             runCatching {
-                val credentials = TvEnrollmentClient().enroll(
+                val credentials = TvEnrollmentClient().enrollWithCode(
                     enrollmentOrigins,
-                    id,
-                    key,
+                    code,
                     candidate
                         ?.takeIf { usesDiscoveredCandidate }
                         ?.descriptor
@@ -196,7 +241,7 @@ class EnrollmentActivity : Activity() {
                 DeviceCredentialStore(this).save(credentials)
             }.onSuccess {
                 runOnUiThread {
-                    enrollmentKey.text.clear()
+                    enrollmentCode.text.clear()
                     status.setTextColor(Color.rgb(91, 208, 139))
                     status.text = getString(R.string.enrollment_success)
                     startActivity(
@@ -208,14 +253,14 @@ class EnrollmentActivity : Activity() {
                 }
             }.onFailure { error ->
                 runOnUiThread {
-                    enrollmentKey.text.clear()
+                    enrollmentCode.text.clear()
                     status.setTextColor(Color.rgb(255, 126, 105))
                     status.text = getString(
                         R.string.enrollment_error,
                         error.message?.take(120) ?: getString(R.string.enrollment_unknown_error),
                     )
                     submit.isEnabled = true
-                    enrollmentKey.requestFocus()
+                    enrollmentCode.requestFocus()
                 }
             }
         }

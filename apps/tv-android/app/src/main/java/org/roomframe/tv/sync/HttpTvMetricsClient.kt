@@ -15,6 +15,7 @@ data class TvMetricSnapshot(
     val syncRevision: Long?,
     val syncDurationMs: Long,
     val updateState: String,
+    val silentUpdateCapable: Boolean,
     val errorCode: String?,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -26,6 +27,7 @@ data class TvMetricSnapshot(
         syncRevision?.let { put("syncRevision", it) }
         put("syncDurationMs", syncDurationMs)
         put("updateState", updateState)
+        put("silentUpdateCapable", silentUpdateCapable)
         errorCode?.let { put("errorCode", it) }
     }
 }

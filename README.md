@@ -11,6 +11,8 @@ En bref :
 
 - un serveur Debian local avec administration HTTPS ;
 - un Studio visuel pour composer et programmer l’accueil ;
+- une météo par scène, choisie par autocomplétion de commune et conservée en
+  cache pour les TV hors ligne ;
 - une application Android TV native qui démarre depuis son cache hors ligne ;
 - des interfaces prévues pour HDMI, Cast, AirPlay et l’alimentation, sans
   annoncer de compatibilité matérielle avant validation sur le téléviseur.
@@ -90,7 +92,9 @@ HTTPS. Caddy est le seul service publié sur le LAN.
 
 Voir le [guide de démarrage rapide](docs/QUICKSTART.md),
 [docs/INSTALLATION.md](docs/INSTALLATION.md) et
-[docs/NETWORKING.md](docs/NETWORKING.md).
+[docs/NETWORKING.md](docs/NETWORKING.md). Le premier APK, le secours manuel
+et le provisionnement Device Owner sont détaillés dans
+[docs/TV_PROVISIONING.md](docs/TV_PROVISIONING.md).
 
 ## Première configuration
 
@@ -135,6 +139,9 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - Studio de régie relié aux flux réels de bootstrap, session, scènes, médias,
   messages et releases, avec glisser-déposer, redimensionnement, calques,
   propriétés, clavier et historique ;
+- proposition des couleurs principale et d’accent depuis le logo sélectionné,
+  avec comparaison et confirmation explicite avant de remplacer les couleurs
+  saisies manuellement ;
 - règles AirPlay, Cast, HDMI, application privée, retour accueil et horaires
   configurables par instance, groupe ou TV sans prétendre exécuter le matériel ;
 - bibliothèque de scènes, copie de brouillon et affectation publiée par
@@ -146,7 +153,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - upload image/vidéo avec contrôle du type réel, stockage par SHA-256 et
   traitement asynchrone par Sharp/FFmpeg, dont une variante transparente
   prudente pour les logos sur fond clair uniforme ;
-- enrôlement TV à clé temporaire, clé TLS RSA non exportable dans Android
+- enrôlement TV par code à usage unique avec détection locale et saisie HTTPS
+  manuelle toujours disponible, clé TLS RSA non exportable dans Android
   Keystore, appairage chiffré de la CA HTTPS, certificat client individuel,
   mTLS, rotation automatique à deux phases, renouvellement, révocation et
   réenrôlement administrés ;
@@ -154,6 +162,8 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
   ECDSA P-256 signé et validation finale de la CA liée au ticket, avec saisie
   manuelle du FQDN ou de l’IP toujours disponible ;
 - synchronisation par révision avec hashes des documents et médias ;
+- recherche de commune et météo courante via une passerelle Open-Meteo isolée,
+  sans ville imposée à une nouvelle instance et avec cache serveur ;
 - simulateur IndexedDB : staging vérifié, activation transactionnelle,
   révision précédente conservée et interrupteur de coupure API ;
 - import `.rfupdate` avec validation Ed25519, compatibilité, chemins, tailles,
@@ -184,7 +194,7 @@ Les commandes installées sont :
 
 ```bash
 sudo roomframe-compose ps
-sudo roomframe-compose logs --tail=200 api worker update-poller
+sudo roomframe-compose logs --tail=200 api worker weather-gateway update-poller
 sudo roomframe-diagnose
 sudo roomframe-backup
 sudo roomframe-backup --without-media

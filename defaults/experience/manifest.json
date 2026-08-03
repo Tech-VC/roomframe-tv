@@ -17,8 +17,8 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "1362dd7309109d8253c9fe6d562b7a55bce1d1d0f849a6ccf381747293bf174d",
-      "size": 603
+      "sha256": "aa88e641d11fb0d89a968724208dbfe8345db5c7d0618fedf4b44af12f479104",
+      "size": 709
     },
     {
       "path": "assets/background-default.jpg",
@@ -42,8 +42,8 @@
     },
     {
       "path": "layout.json",
-      "sha256": "e8f074e53938dbcf3a7605d72a37322e95f592850f29636fb82bb77bcac03bb8",
-      "size": 2469
+      "sha256": "97a98d885eed5e95cfab809f19721888ec6e21f45a56519141a950f69cf59e7b",
+      "size": 2495
     },
     {
       "path": "preview.png",
@@ -57,8 +57,8 @@
     },
     {
       "path": "settings.json",
-      "sha256": "10f033e12d43ffec340547008400d5aebd8ab9c92a1171da10fdaf4141324d88",
-      "size": 416
+      "sha256": "55ad64864f787a3a816388c272bc5cf562250a30ad6d198bae0d29ba2cddea7d",
+      "size": 417
     }
   ]
 }

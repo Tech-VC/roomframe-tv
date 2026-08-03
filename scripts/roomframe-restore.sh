@@ -127,7 +127,7 @@ wait_for_stack() {
   local service_name container_id status all_healthy
   for _ in $(seq 1 90); do
     all_healthy=1
-    for service_name in postgres api worker update-poller caddy; do
+    for service_name in postgres api worker weather-gateway update-poller caddy; do
       container_id="$("$COMPOSE_COMMAND" ps -q "$service_name" 2>/dev/null || true)"
       if [[ -z "$container_id" ]]; then
         all_healthy=0

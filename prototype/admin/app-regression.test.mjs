@@ -4,6 +4,7 @@ import test from "node:test";
 
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 const markup = await readFile(new URL("./index.html", import.meta.url), "utf8");
+const styles = await readFile(new URL("./styles.css", import.meta.url), "utf8");
 
 test("les formulaires asynchrones conservent leur référence après un await", () => {
   assert.doesNotMatch(source, /event\.currentTarget\.reset\(\)/);
@@ -38,10 +39,13 @@ test("les règles de salle utilisent des formulaires structurés et l’API atom
   assert.match(markup, /id="sourceSettingsForm"/);
   assert.match(markup, /id="powerSettingsForm"/);
   assert.match(markup, /id="powerWeekdaysEnabled"/);
-  assert.match(markup, /son adaptateur confirme la capacité/);
+  assert.match(markup, /si la TV confirme qu’elle le prend en charge/);
   assert.match(source, /api\.put\("settings\/sources"/);
   assert.match(source, /api\.put\("settings\/power"/);
   assert.doesNotMatch(markup, /textarea[^>]*id="(?:source|power)/);
+  assert.match(styles, /\.source-settings-form,[\s\S]*grid-template-columns: repeat\(2, minmax\(280px, 1fr\)\)/);
+  assert.match(styles, /\.source-settings-form legend,[\s\S]*float: left;[\s\S]*width: 100%/);
+  assert.doesNotMatch(source, /source-action|↗/);
 });
 
 test("la bibliothèque de scènes sépare chargement, copie et affectation publiée", () => {
@@ -52,13 +56,13 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(source, /api\.post\("scenes", \{ name, scene \}\)/);
   assert.match(source, /api\.put\("scene-assignments"/);
   assert.match(source, /studio\?sceneId=/);
-  assert.match(markup, /abandonne les modifications non enregistrées/);
+  assert.match(markup, /les modifications non enregistrées seront perdues/);
   assert.match(markup, /id="automaticReleaseSource"/);
   assert.match(source, /state\.releaseSource = payload\.source \?\? null/);
   assert.match(source, /Aucun déploiement n’a été lancé automatiquement/);
   assert.match(markup, /id="serverUpdateForm"/);
-  assert.match(markup, /Retaper la version/);
-  assert.match(markup, /sans donner root au web/);
+  assert.match(markup, /Confirmer en saisissant la version/);
+  assert.match(markup, /Installer une version vérifiée/);
   assert.match(source, /server-update-requests/);
   assert.match(source, /state\.serverUpdateRequests/);
 });
@@ -71,18 +75,63 @@ test("l’automatisation serveur reste un opt-in éditorial et explicite", () =>
   assert.match(markup, /id="serverUpdatePolicyError" role="alert"/);
   assert.match(source, /api\.put\("settings\/server-updates"/);
   assert.match(source, /state\.serverUpdatePolicy = payload\.policy/);
-  assert.match(source, /Un échec exige ensuite une décision humaine/);
+  assert.match(source, /Après un échec, une confirmation manuelle est obligatoire/);
 });
 
 test("les scènes programmées gardent un retour explicite vers l’affectation habituelle", () => {
   assert.match(markup, /id="sceneScheduleForm"/);
   assert.match(markup, /Programmer une scène temporaire/);
-  assert.match(markup, /À la fin, l’affectation habituelle revient automatiquement/);
-  assert.match(markup, /Deux créneaux d’une même cible ne peuvent pas se chevaucher/);
+  assert.match(markup, /À la fin du créneau, la scène habituelle reviendra automatiquement/);
+  assert.match(markup, /Deux créneaux ne peuvent pas se chevaucher pour une même cible/);
   assert.match(markup, /id="sceneScheduleError" role="alert"/);
   assert.match(source, /api\.post\("scene-schedules"/);
   assert.match(source, /scene-schedules\/\$\{encodeURIComponent\(scheduleId\)\}\/cancel/);
-  assert.match(source, /Le worker activera la révision à l’heure prévue/);
+  assert.match(source, /Elle sera affichée automatiquement à l’heure prévue/);
+});
+
+test("les pages principales utilisent un français clair sans dépasser leur colonne", () => {
+  assert.match(markup, /Composer<br>l’écran d’accueil/);
+  assert.match(markup, /Les TV,<br>salle par<br>salle/);
+  assert.match(markup, /Gérer les<br>mises à<br>jour/);
+  assert.match(markup, /Accès à<br>la régie/);
+  assert.doesNotMatch(markup, /constellation|Chaque<br>accès laisse|Mettre à<br>jour sans|Table<br>de composition/i);
+  assert.doesNotMatch(markup, /sans donner root au web|Ouvrir une voie de distribution/i);
+  assert.match(source, /untrusted_update_key: "la clé de signature de cette version n’est pas approuvée"/);
+  assert.match(styles, /\.panel-index \{[^}]*overflow: hidden/);
+  assert.match(styles, /\.console-index \{ min-width: 0; \}/);
+  assert.match(styles, /@media \(max-width: 1050px\)[\s\S]*grid-template-columns: 1fr/);
+});
+
+test("la météo utilise une autocomplétion serveur et exige une suggestion", () => {
+  assert.match(markup, /id="weatherLocation"[^>]*role="combobox"/);
+  assert.match(markup, /Ville ou code postal/);
+  assert.match(markup, /Données météo : Open-Meteo/);
+  assert.match(source, /api\.get\(`weather\/locations\?\$\{parameters\}`/);
+  assert.match(source, /api\.get\(`weather\/current\?\$\{parameters\}`/);
+  assert.match(source, /delete node\.props\.locationKey/);
+  assert.match(styles, /\.weather-suggestions/);
+});
+
+test("l’horloge et les actualités suivent la composition TV demandée", () => {
+  assert.match(markup, /id="clockShowDate"/);
+  assert.match(markup, /24 heures · 18h15/);
+  assert.match(source, /activeMessagesForNode\(/);
+  assert.match(source, /node\.kind === "message" && messages\.length === 0/);
+  assert.match(styles, /\.node\.kind-clock \{[^}]*1\.55cqw/);
+});
+
+test("le logo ne remplace les couleurs manuelles qu’après confirmation", () => {
+  assert.match(markup, /id="brandPaletteDialog"/);
+  assert.match(markup, /Vos couleurs manuelles restent inchangées tant que vous ne confirmez pas/);
+  assert.match(markup, /Garder mes couleurs/);
+  assert.match(markup, /Remplacer les deux couleurs/);
+  assert.match(source, /paletteFromRgba\(await rgbaForLogo\(url\)\)/);
+  assert.match(source, /brandPaletteForm"\)\.addEventListener\("submit"/);
+  assert.match(source, /brandLogoAsset"\)\.addEventListener\("change", \(\) => \{[\s\S]*previewBrandForm\(\);[\s\S]*proposeBrandPalette\(\);/);
+  assert.doesNotMatch(
+    source,
+    /brandLogoAsset"\)\.addEventListener\("change"[\s\S]{0,240}brandPrimaryText"\)\.value\s*=/,
+  );
 });
 
 test("le cycle d’identité TV exige une confirmation et conserve le cache local", () => {
@@ -96,8 +145,10 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /L’ancienne clé ne fonctionne plus/);
   assert.match(source, /if \(event\.key === "Escape"\)/);
   assert.match(source, /state\.tvCredentialReturnFocus/);
-  assert.match(source, /trustBootstrap\?\.mode !== "encrypted-server-ca"/);
-  assert.match(source, /La TV appaire l’autorité HTTPS avant d’envoyer la clé/);
+  assert.match(source, /ticket\.trustBootstrap\?\.mode === "encrypted-server-ca"/);
+  assert.match(source, /ticket\.simplifiedEnrollment\?\.mode === "encrypted-code-bootstrap"/);
+  assert.match(source, /La TV vérifie le serveur avant de récupérer les paramètres techniques/);
+  assert.match(styles, /\.enrollment-ticket input \{[^}]*color: var\(--ink\);[^}]*background: #fff;/);
   assert.match(source, /server_ca_not_ready/);
   assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
 });

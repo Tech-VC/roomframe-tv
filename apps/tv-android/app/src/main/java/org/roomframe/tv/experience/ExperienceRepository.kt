@@ -12,6 +12,7 @@ data class ExperienceSnapshot(
     val scene: SceneDocument,
     val branding: BrandingDocument,
     val messages: List<MessageDocument>,
+    val weather: WeatherDocument,
     val assets: ExperienceAssetIndex,
     val bundled: Boolean,
 )
@@ -122,6 +123,7 @@ class ExperienceRepository(
         val sceneBytes = readBounded(File(active.directory, "scene.json"), "scene")
         val brandingFile = File(active.directory, "branding.json")
         val messagesFile = File(active.directory, "messages.json")
+        val weatherFile = File(active.directory, "weather.json")
         val manifestBytes = readBounded(File(active.directory, "manifest.json"), "manifest")
         return ExperienceSnapshot(
             revisionId = active.revisionId,
@@ -131,6 +133,9 @@ class ExperienceRepository(
             ),
             messages = ExperienceDocumentParser.parseMessages(
                 messagesFile.takeIf(File::isFile)?.let { readBounded(it, "messages") },
+            ),
+            weather = ExperienceDocumentParser.parseWeather(
+                weatherFile.takeIf(File::isFile)?.let { readBounded(it, "weather") },
             ),
             assets = ExperienceAssetIndex.fromRevision(active.directory, manifestBytes),
             bundled = false,
@@ -145,6 +150,7 @@ class ExperienceRepository(
             scene = ExperienceDocumentParser.parseScene(sceneBytes),
             branding = BrandingDocument(),
             messages = ExperienceDocumentParser.parseMessages(messageBytes),
+            weather = WeatherDocument(),
             assets = ExperienceAssetIndex.empty(),
             bundled = true,
         )

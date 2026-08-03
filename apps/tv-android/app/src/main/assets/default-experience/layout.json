@@ -25,29 +25,30 @@
       "zIndex": 20,
       "props": {
         "role": "greeting",
-        "text": "Bonjour, bienvenue en salle de réunion 1",
+        "text": "Bonjour,\nBienvenue en salle de réunion 1",
         "fontScale": 1.0,
-        "maxLines": 1
+        "maxLines": 2
       }
     },
     {
       "id": "clock-weather",
       "kind": "clock",
-      "x": 1320,
-      "y": 58,
-      "width": 500,
-      "height": 90,
+      "x": 1210,
+      "y": 50,
+      "width": 610,
+      "height": 110,
       "zIndex": 20,
       "props": {
-        "showDate": false,
-        "showWeather": true
+        "showDate": true,
+        "showWeather": true,
+        "format": "24h"
       }
     },
     {
       "id": "airplay",
       "kind": "source",
       "x": 90,
-      "y": 485,
+      "y": 420,
       "width": 410,
       "height": 125,
       "zIndex": 20,
@@ -60,7 +61,7 @@
       "id": "cast",
       "kind": "source",
       "x": 90,
-      "y": 625,
+      "y": 560,
       "width": 410,
       "height": 125,
       "zIndex": 20,
@@ -73,7 +74,7 @@
       "id": "hdmi",
       "kind": "source",
       "x": 90,
-      "y": 765,
+      "y": 700,
       "width": 410,
       "height": 125,
       "zIndex": 20,
@@ -87,9 +88,9 @@
       "id": "messages",
       "kind": "message",
       "x": 1160,
-      "y": 195,
+      "y": 285,
       "width": 610,
-      "height": 430,
+      "height": 400,
       "zIndex": 20,
       "props": {
         "title": "ACTUALITÉS",

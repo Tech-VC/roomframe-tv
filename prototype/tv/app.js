@@ -1,5 +1,7 @@
 import { activateStagingRevision, getActiveRevision, openCache, putStagingRevision, seedBundledRevision } from "./cache-store.js?v=0.3.0-ui9";
 import { bytesToHex, createAssetResolver, normalizeSyncPayload, stableStringify } from "./sync-format.js?v=0.3.0-ui9";
+import { weatherDisplayLocation, weatherIconForCode } from "./weather-format.js?v=0.3.0-ui11";
+import { activeMessagesForNode, formatClockText } from "./presentation.js?v=0.3.0-ui17";
 
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
@@ -28,12 +30,12 @@ const bundledRevision = {
       background: { type: "image", asset: "assets/background-default.webp", color: "#132323", mode: "cover", focusX: .5, focusY: .5, blur: 0 },
     },
     nodes: [
-      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour, bienvenue en salle de réunion 1", role: "greeting", fontScale: 1, maxLines: 1 } },
-      { id: "clock", kind: "clock", x: 1320, y: 58, width: 500, height: 90, zIndex: 20, focusOrder: 0, props: { showDate: false, showWeather: true, format: "24h" } },
-      { id: "airplay", kind: "source", x: 90, y: 485, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
-      { id: "cast", kind: "source", x: 90, y: 625, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
-      { id: "hdmi", kind: "source", x: 90, y: 765, width: 410, height: 125, zIndex: 20, focusOrder: 3, props: { source: "hdmi", label: "HDMI" } },
-      { id: "messages", kind: "message", x: 1160, y: 195, width: 610, height: 430, zIndex: 20, focusOrder: 0, props: { title: "ACTUALITÉS", feed: "default", maximumItems: 3 } },
+      { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { text: "Bonjour,\nBienvenue en salle de réunion 1", role: "greeting", fontScale: 1, maxLines: 2 } },
+      { id: "clock", kind: "clock", x: 1210, y: 50, width: 610, height: 110, zIndex: 20, focusOrder: 0, props: { showDate: true, showWeather: true, format: "24h" } },
+      { id: "airplay", kind: "source", x: 90, y: 420, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
+      { id: "cast", kind: "source", x: 90, y: 560, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
+      { id: "hdmi", kind: "source", x: 90, y: 700, width: 410, height: 125, zIndex: 20, focusOrder: 3, props: { source: "hdmi", label: "HDMI" } },
+      { id: "messages", kind: "message", x: 1160, y: 285, width: 610, height: 400, zIndex: 20, focusOrder: 0, props: { title: "ACTUALITÉS", feed: "default", maximumItems: 3 } },
       { id: "network", kind: "network", x: 90, y: 970, width: 700, height: 45, zIndex: 20, focusOrder: 0, props: { label: "RÉSEAU", value: "MODE LOCAL-FIRST" } },
       { id: "logo", kind: "logo", x: 1505, y: 850, width: 285, height: 145, zIndex: 30, focusOrder: 0, props: { asset: "assets/logo-placeholder.png", fit: "contain", anchor: "bottom-right", alt: "Logo" } },
     ],
@@ -66,12 +68,24 @@ const assetResolver = (revision) => {
   return indexed.resolve;
 };
 
-const nodeText = (node) => {
+const weatherReading = (node, weatherDocument) => (
+  weatherDocument?.items?.find((item) => item.key === node.props?.locationKey) ?? null
+);
+
+const nodeText = (node, weatherDocument = null) => {
   if (node.kind === "text") return node.props?.text ?? "";
   if (node.kind === "message") return node.props?.title ?? "MESSAGES";
   if (node.kind === "network") return [node.props?.label, node.props?.value].filter(Boolean).join(" · ");
-  if (node.kind === "clock") return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit", hour12: node.props?.format === "12h" }).format(new Date());
-  if (node.kind === "weather") return node.props?.label ?? "Météo";
+  if (node.kind === "clock") return formatClockText(node.props);
+  if (node.kind === "weather") {
+    const location = node.props?.location?.trim();
+    const displayLocation = weatherDisplayLocation(location) || "Météo";
+    if (!node.props?.locationKey) return location ? `${displayLocation}\nConfiguration incomplète` : "Météo à configurer";
+    const reading = weatherReading(node, weatherDocument);
+    const resolvedLocation = weatherDisplayLocation(location || reading?.location) || "Météo";
+    if (!reading || reading.temperature == null) return `${resolvedLocation}\nDonnées indisponibles`;
+    return `${resolvedLocation}\n${weatherIconForCode(reading.weatherCode)} ${Math.round(Number(reading.temperature))} ${reading.temperatureUnit} · ${reading.condition}`;
+  }
   return node.props?.label ?? node.kind;
 };
 
@@ -93,6 +107,8 @@ const renderRevision = (revision) => {
   const backgroundUrl = resolveAsset(background.assetId ?? background.asset);
   const backgroundElement = $("#background");
   const branding = revision.documents?.branding ?? {};
+  const weatherDocument = revision.documents?.weather ?? null;
+  const messagesDocument = revision.documents?.messages ?? null;
   if (/^#[0-9a-f]{6}$/i.test(branding.accent ?? "")) {
     document.documentElement.style.setProperty("--signal", branding.accent);
   }
@@ -105,9 +121,14 @@ const renderRevision = (revision) => {
   backgroundElement.style.transform = `scale(${1 + blur / 240})`;
 
   const nodes = [...(scene.nodes ?? [])].sort((a, b) => a.zIndex - b.zIndex).map((node) => {
+    const messageItems = node.kind === "message"
+      ? activeMessagesForNode(node, messagesDocument)
+      : [];
+    if (node.kind === "message" && messageItems.length === 0) return null;
     const interactive = ["source", "app"].includes(node.kind);
     const roleClass = node.props?.role === "greeting" ? " role-greeting" : "";
     const element = make(interactive ? "button" : "div", `node kind-${node.kind}${roleClass}`);
+    element.dataset.nodeId = node.id;
     if (interactive) {
       element.type = "button";
       element.dataset.adapter = node.props?.source ?? node.props?.applicationId ?? "unsupported";
@@ -151,17 +172,30 @@ const renderRevision = (revision) => {
       }
     } else if (node.kind === "message") {
       element.append(make("strong", "", node.props?.title ?? "MESSAGES"));
+      const list = make("div", "message-list");
+      for (const message of messageItems) {
+        const entry = make("article", "message-entry");
+        if (message.title) entry.append(make("b", "", message.title));
+        if (message.body) entry.append(make("p", "", message.body));
+        list.append(entry);
+      }
+      element.append(list);
+    } else if (node.kind === "weather") {
+      element.append(make("span", "node-text", nodeText(node, weatherDocument)));
+      element.setAttribute(
+        "aria-label",
+        `${nodeText(node, weatherDocument)}. ${weatherDocument?.attribution?.label ?? "Données météo : Open-Meteo"}`,
+      );
     } else if (node.kind === "source") {
       element.append(
         sourceGlyph(node.props?.source),
         make("span", "node-text", nodeText(node)),
-        make("span", "source-action", "↗"),
       );
     } else {
-      element.append(make("span", "node-text", nodeText(node)));
+      element.append(make("span", "node-text", nodeText(node, weatherDocument)));
     }
     return element;
-  });
+  }).filter(Boolean);
   $("#nodeLayer").replaceChildren(...nodes);
   $("#revisionLabel").textContent = `${scene.name ?? "Scène"} · ${revision.id}`;
   setStatus("ok", revision.id.startsWith("bundled-") ? "Expérience embarquée affichée, synchronisation en arrière-plan possible." : "Dernière révision validée affichée.", revision.manifestHash ?? "");
@@ -172,6 +206,16 @@ const loadActive = async () => {
   const active = await getActiveRevision(database);
   renderRevision(active);
   return active;
+};
+
+const refreshClocks = () => {
+  for (const node of currentRevision?.scene?.nodes ?? []) {
+    if (node.kind !== "clock") continue;
+    const text = document.querySelector(
+      `[data-node-id="${CSS.escape(node.id)}"] .node-text`,
+    );
+    if (text) text.textContent = formatClockText(node.props);
+  }
 };
 
 const downloadAndVerify = async (asset) => {
@@ -262,5 +306,6 @@ $("#offlineToggle").addEventListener("change", () => {
   else synchronize();
 });
 window.addEventListener("beforeunload", revokeObjectUrls);
+setInterval(refreshClocks, 15_000);
 
 start();
