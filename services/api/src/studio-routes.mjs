@@ -1543,6 +1543,24 @@ export const registerStudioRoutes = ({
               screen.client_certificate_pending_fingerprint,
               screen.client_certificate_pending_expires_at,
               screen.client_certificate_pending_required_at,
+              CASE
+                WHEN screen.enrollment_state <> 'active' THEN NULL
+                WHEN screen.last_seen_at >= now() - interval '2 minutes' THEN true
+                ELSE false
+              END AS online,
+              CASE WHEN metric.id IS NULL THEN NULL ELSE jsonb_build_object(
+                'recordedAt', metric.recorded_at,
+                'startupMs', metric.startup_ms,
+                'resumeMs', metric.resume_ms,
+                'memoryBytes', metric.memory_bytes,
+                'storageFreeBytes', metric.storage_free_bytes,
+                'networkState', metric.network_state,
+                'syncRevision', metric.sync_revision,
+                'syncDurationMs', metric.sync_duration_ms,
+                'updateState', metric.update_state,
+                'silentUpdateCapable', metric.silent_update_capable,
+                'errorCode', metric.error_code
+              ) END AS latest_metric,
               CASE WHEN update_target.deployment_id IS NULL THEN NULL ELSE jsonb_build_object(
                 'deploymentId', update_target.deployment_id,
                 'state', update_target.status,
@@ -1551,6 +1569,13 @@ export const registerStudioRoutes = ({
                 'errorCode', update_target.error_code
               ) END AS latest_update
        FROM screens AS screen
+       LEFT JOIN LATERAL (
+         SELECT *
+         FROM device_metrics
+         WHERE screen_id = screen.id
+         ORDER BY recorded_at DESC, id DESC
+         LIMIT 1
+       ) AS metric ON true
        LEFT JOIN LATERAL (
          SELECT target.deployment_id, target.status, target.updated_at,
                 target.error_code, release.version
@@ -1563,7 +1588,18 @@ export const registerStudioRoutes = ({
        ) AS update_target ON true
        ORDER BY screen.display_name`,
     );
-    return { tvs: result.rows };
+    const tvs = result.rows.map((row) => ({
+      ...row,
+      active_revision: row.active_revision === null ? null : Number(row.active_revision),
+    }));
+    return {
+      tvs,
+      measuredMetrics: {
+        totalScreens: tvs.length,
+        onlineScreens: tvs.filter((row) => row.online === true).length,
+        reportingScreens: tvs.filter((row) => row.latest_metric !== null).length,
+      },
+    };
   });
 
   app.post('/api/v1/tvs/enrollment', {

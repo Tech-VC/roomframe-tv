@@ -186,6 +186,8 @@ const refs = {
 let toastTimer;
 let weatherSearchTimer;
 let weatherSearchController;
+let fleetRefreshInFlight = false;
+const FLEET_REFRESH_INTERVAL_MS = 30_000;
 const toast = (message, error = false) => {
   clearTimeout(toastTimer);
   refs.toast.textContent = message;
@@ -276,6 +278,7 @@ const switchView = (view, { focus = false } = {}) => {
     panel.querySelector("h1, h2")?.focus({ preventScroll: true });
     panel.scrollTo?.({ top: 0, behavior: "instant" });
   }
+  if (view === "fleet") void refreshFleetState({ reportError: true });
 };
 
 const applyBranding = (instanceOrIdentity = {}) => {
@@ -1100,13 +1103,7 @@ const renderHome = () => {
     : `${verifiedReleases} version${verifiedReleases > 1 ? "s" : ""} vérifiée${verifiedReleases > 1 ? "s" : ""}`;
 };
 
-const renderCollections = () => {
-  const mediaRows = state.media.map((item) => ledgerRow(item.name ?? item.originalFilename ?? item.originalName ?? item.id, [item.kind ?? item.mimeType ?? item.mediaType, item.status].filter(Boolean).join(" · ")));
-  $("#mediaList").replaceChildren(...(mediaRows.length ? mediaRows : [make("p", "empty-copy", "Aucun média.")]));
-
-  const messageRows = state.messages.map((item) => ledgerRow(item.title ?? "Message", [item.startsAt, item.endsAt].filter(Boolean).map((date) => new Date(date).toLocaleString("fr-FR")).join(" → ")));
-  $("#messageList").replaceChildren(...(messageRows.length ? messageRows : [make("p", "empty-copy", "Aucun message programmé.")]));
-
+const renderFleet = () => {
   const tvRows = state.televisions.map((tv) => {
     const card = make("article", "tv-cell");
     const enrollmentState = tv.enrollmentState ?? tv.enrollment_state;
@@ -1228,9 +1225,49 @@ const renderCollections = () => {
     ...(fleetSummary ? [fleetSummary] : []),
     ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
   );
+};
+
+const renderCollections = () => {
+  const mediaRows = state.media.map((item) => ledgerRow(item.name ?? item.originalFilename ?? item.originalName ?? item.id, [item.kind ?? item.mimeType ?? item.mediaType, item.status].filter(Boolean).join(" · ")));
+  $("#mediaList").replaceChildren(...(mediaRows.length ? mediaRows : [make("p", "empty-copy", "Aucun média.")]));
+
+  const messageRows = state.messages.map((item) => ledgerRow(item.title ?? "Message", [item.startsAt, item.endsAt].filter(Boolean).map((date) => new Date(date).toLocaleString("fr-FR")).join(" → ")));
+  $("#messageList").replaceChildren(...(messageRows.length ? messageRows : [make("p", "empty-copy", "Aucun message programmé.")]));
+
+  renderFleet();
   renderSceneManagement();
   renderOperationalSettings();
   renderHome();
+};
+
+const fleetRefreshAllowed = () => (
+  state.studioLoaded
+  && sessionHasPermission("fleet:read")
+  && !document.hidden
+  && $("#view-fleet").classList.contains("on")
+  && !$("#tvCredentialDialog").open
+);
+
+const refreshFleetState = async ({ reportError = false } = {}) => {
+  if (fleetRefreshInFlight || !fleetRefreshAllowed()) return;
+  fleetRefreshInFlight = true;
+  try {
+    const payload = await api.get("tvs");
+    if (!Array.isArray(payload.tvs)) throw new Error("État du parc incomplet.");
+    if (!fleetRefreshAllowed()) return;
+    state.televisions = payload.tvs;
+    state.measuredMetrics = payload.measuredMetrics ?? {
+      totalScreens: payload.tvs.length,
+      onlineScreens: payload.tvs.filter((tv) => tv.online === true).length,
+      reportingScreens: payload.tvs.filter((tv) => tv.latestMetric ?? tv.latest_metric).length,
+    };
+    renderFleet();
+    renderHome();
+  } catch (error) {
+    if (reportError) toast(`Actualisation du parc impossible : ${error.message}`, true);
+  } finally {
+    fleetRefreshInFlight = false;
+  }
 };
 
 const validEnrollmentTicket = (ticket) => (
@@ -3899,4 +3936,5 @@ $("#releaseBoard").addEventListener("click", async (event) => {
 });
 
 setInterval(refreshStudioClocks, 15_000);
+setInterval(() => { void refreshFleetState(); }, FLEET_REFRESH_INTERVAL_MS);
 boot();

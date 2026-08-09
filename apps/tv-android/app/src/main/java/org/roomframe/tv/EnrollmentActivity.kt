@@ -25,6 +25,7 @@ import java.util.concurrent.Executors
 import org.roomframe.tv.sync.DeviceCredentialStore
 import org.roomframe.tv.sync.DiscoveryCandidate
 import org.roomframe.tv.sync.EnrollmentCodePolicy
+import org.roomframe.tv.sync.EnrollmentFailureReason
 import org.roomframe.tv.sync.RoomFrameDiscovery
 import org.roomframe.tv.sync.TvEnrollmentClient
 import org.roomframe.tv.ui.EnrollmentCodeInputFormatter
@@ -439,7 +440,7 @@ class EnrollmentActivity : Activity() {
                     status.setTextColor(Color.rgb(255, 126, 105))
                     status.text = getString(
                         R.string.enrollment_error,
-                        error.message?.take(120) ?: getString(R.string.enrollment_unknown_error),
+                        EnrollmentFailureReason.describe(error),
                     )
                     submit.isEnabled = true
                     enrollmentCode.requestFocus()

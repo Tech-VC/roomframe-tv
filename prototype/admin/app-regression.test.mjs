@@ -158,6 +158,29 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
 });
 
+test("le parc se rafraîchit sans réécrire les formulaires ni le brouillon", () => {
+  const start = source.indexOf("const fleetRefreshAllowed");
+  const end = source.indexOf("const validEnrollmentTicket", start);
+  assert.ok(start > 0 && end > start, "la fonction de rafraîchissement ciblé existe");
+  const refreshSource = source.slice(start, end);
+
+  assert.match(source, /const FLEET_REFRESH_INTERVAL_MS = 30_000/);
+  assert.match(source, /view === "fleet"[\s\S]{0,80}refreshFleetState\(\{ reportError: true \}\)/);
+  assert.match(source, /setInterval\(\(\) => \{ void refreshFleetState\(\); \}, FLEET_REFRESH_INTERVAL_MS\)/);
+  assert.match(refreshSource, /fleetRefreshInFlight/);
+  assert.match(refreshSource, /sessionHasPermission\("fleet:read"\)/);
+  assert.match(refreshSource, /!document\.hidden/);
+  assert.match(refreshSource, /#view-fleet/);
+  assert.match(refreshSource, /#tvCredentialDialog/);
+  assert.match(refreshSource, /api\.get\("tvs"\)/);
+  assert.match(refreshSource, /renderFleet\(\)/);
+  assert.match(refreshSource, /renderHome\(\)/);
+  assert.doesNotMatch(
+    refreshSource,
+    /loadStudio|renderStudio|renderCollections|renderSceneManagement|renderOperationalSettings|populate[A-Z]/,
+  );
+});
+
 test("les passkeys et les sessions restent des parcours API vérifiés", () => {
   assert.match(markup, /id="loginPasskeyButton"/);
   assert.match(markup, /id="passkeyRegistrationDialog"/);

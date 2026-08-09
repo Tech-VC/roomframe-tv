@@ -37,6 +37,7 @@ import org.roomframe.tv.sync.TvCredentialRotationClient
 import org.roomframe.tv.sync.TvCertificateProvisioningClient
 import org.roomframe.tv.sync.TvCertificateProvisioningResult
 import org.roomframe.tv.sync.TvMetricSnapshot
+import org.roomframe.tv.sync.TvSyncSchedule
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
 import org.roomframe.tv.update.SafeUpdateInstallPolicy
@@ -62,7 +63,7 @@ class MainActivity : Activity() {
     private val periodicSync = object : Runnable {
         override fun run() {
             synchronizeInBackground()
-            scheduler.postDelayed(this, SYNC_INTERVAL_MILLIS)
+            scheduler.postDelayed(this, TvSyncSchedule.PERIODIC_INTERVAL_MILLIS)
         }
     }
     private lateinit var store: FileExperienceStore
@@ -402,7 +403,6 @@ class MainActivity : Activity() {
 
     private companion object {
         const val ADMIN_HOLD_MILLIS = 8_000L
-        const val SYNC_INTERVAL_MILLIS = 5L * 60L * 1_000L
         const val MAX_LOCAL_BRANDING_DOCUMENT_BYTES = 64L * 1024
         const val MAX_LOCAL_BRANDING_BYTES = 25L * 1024 * 1024
         const val MAX_LOCAL_BRANDING_DIMENSION = 4096

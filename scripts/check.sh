@@ -222,13 +222,19 @@ grep -Fq 'strict_sni_host insecure_off' infra/Caddyfile || {
   echo "Caddy doit accepter le fallback IP sans SNI malgré client_auth." >&2
   exit 1
 }
-grep -Fq 'header_up -X-RoomFrame-TLS-Client-Fingerprint' infra/Caddyfile || {
-  echo "Caddy doit supprimer toute empreinte TLS fournie par le client." >&2
+api_proxy_block="$(sed -n '/handle \/api\/\*/,/^  }/p' infra/Caddyfile)"
+if grep -Fq 'header_up -X-RoomFrame-TLS-Client-' <<<"$api_proxy_block"; then
+  echo "Caddy ne doit pas supprimer après remplacement ses attestations TLS." >&2
+  exit 1
+fi
+grep -Fq \
+  'header_up X-RoomFrame-TLS-Client-Fingerprint {http.request.tls.client.fingerprint}' \
+  <<<"$api_proxy_block" || {
+  echo "Caddy doit transmettre uniquement l'empreinte TLS qu'il a vérifiée." >&2
   exit 1
 }
-grep -Fq 'header_up X-RoomFrame-TLS-Client-Fingerprint {tls_client_fingerprint}' \
-  infra/Caddyfile || {
-  echo "Caddy doit transmettre uniquement l'empreinte TLS qu'il a vérifiée." >&2
+grep -Fq 'header_up X-RoomFrame-TLS-Client-Verified 1' <<<"$api_proxy_block" || {
+  echo "Caddy doit attester la vérification TLS auprès de l'API." >&2
   exit 1
 }
 if rg --fixed-strings --line-number \

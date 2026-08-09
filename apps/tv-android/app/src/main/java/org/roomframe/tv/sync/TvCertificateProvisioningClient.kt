@@ -40,13 +40,24 @@ class TvCertificateProvisioningClient(
         response: JSONObject,
     ): TvCertificateProvisioningResult {
         val fingerprint = response.getString("fingerprintSha256")
-        if (certificateStore.currentFingerprintSha256() != fingerprint) {
+        val currentFingerprint = certificateStore.currentFingerprintSha256()
+        val plan = TvCertificateProvisioningPolicy.plan(
+            currentFingerprintSha256 = currentFingerprint,
+            expectedFingerprintSha256 = fingerprint,
+            activationRequired = response.optBoolean(
+                "activationRequired",
+                currentFingerprint != fingerprint,
+            ),
+        )
+        if (plan.install) {
             certificateStore.install(
                 deviceId = credentials.deviceId,
                 certificatePem = response.getString("certificatePem"),
                 caCertificatePem = response.getString("caCertificatePem"),
                 expectedFingerprintSha256 = fingerprint,
             )
+        }
+        if (plan.activate) {
             request(
                 credentials,
                 "POST",
@@ -113,7 +124,16 @@ class TvCertificateProvisioningClient(
                 connection.errorStream
             }
             val bytes = source?.use { readBounded(it, MAX_RESPONSE_BYTES) } ?: ByteArray(0)
-            require(status in acceptedStatuses) { "Certificat TV refusé (HTTP $status)" }
+            if (status !in acceptedStatuses) {
+                val serverReason = TvCertificateHttpFailure.safeReason(
+                    status = status,
+                    responseBody = bytes.toString(StandardCharsets.UTF_8),
+                    clientCertificatePresented = runCatching {
+                        connection.localCertificates?.isNotEmpty() == true
+                    }.getOrDefault(false),
+                )
+                throw IllegalStateException(serverReason)
+            }
             val contentType = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
             require(contentType == "application/json") { "Réponse de certificat TV invalide" }
             return JSONObject(bytes.toString(StandardCharsets.UTF_8))

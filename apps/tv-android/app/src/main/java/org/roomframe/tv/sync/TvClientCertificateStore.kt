@@ -127,23 +127,33 @@ class TvClientCertificateStore {
     }
 
     private fun generateKeyPair() {
-        KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEY_STORE).run {
-            initialize(
-                KeyGenParameterSpec.Builder(
-                    KEY_ALIAS,
-                    KeyProperties.PURPOSE_SIGN,
-                )
-                    .setKeySize(2048)
-                    .setDigests(KeyProperties.DIGEST_SHA256)
-                    .setSignaturePaddings(
-                        KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
-                        KeyProperties.SIGNATURE_PADDING_RSA_PSS,
+        try {
+            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEY_STORE).run {
+                initialize(
+                    KeyGenParameterSpec.Builder(
+                        KEY_ALIAS,
+                        KeyProperties.PURPOSE_SIGN,
                     )
-                    .setCertificateSubject(X500Principal("CN=RoomFrame TV bootstrap"))
-                    .setCertificateSerialNumber(BigInteger.ONE)
-                    .build(),
-            )
-            generateKeyPair()
+                        .setKeySize(2048)
+                        .setDigests(*TvClientTlsKeyPolicy.authorizedDigests())
+                        .setSignaturePaddings(
+                            KeyProperties.SIGNATURE_PADDING_RSA_PKCS1,
+                            KeyProperties.SIGNATURE_PADDING_RSA_PSS,
+                        )
+                        .setEncryptionPaddings(
+                            *TvClientTlsKeyPolicy.authorizedEncryptionPaddings(),
+                        )
+                        .setRandomizedEncryptionRequired(
+                            TvClientTlsKeyPolicy.randomizedEncryptionRequired(),
+                        )
+                        .setCertificateSubject(X500Principal("CN=RoomFrame TV bootstrap"))
+                        .setCertificateSerialNumber(BigInteger.ONE)
+                        .build(),
+                )
+                generateKeyPair()
+            }
+        } catch (error: Exception) {
+            throw TvTlsKeyGenerationException(error)
         }
     }
 

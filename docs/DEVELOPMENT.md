@@ -318,9 +318,12 @@ des métriques techniques minimales est codée et testée hors matériel. Le
 provisionnement Device Owner et l’installation silencieuse réelle restent
 également à valider sur la TV.
 
-La candidate courante est `0.3.5` / `versionCode 8`. Elle inclut le cache,
+La candidate courante est `0.3.8` / `versionCode 11`. Elle inclut le cache,
 la synchronisation, la distribution APK, l’appairage chiffré de la CA,
-la rotation de credential, le mTLS et la découverte locale signée. Son APK
-debug a été installé et contrôlé sur la Philips sans perte des données privées
-de test. La candidate intermédiaire `0.3.1` / code 4 a seulement été construite
-hors matériel.
+la rotation de credential, le mTLS et la découverte locale signée. La présence
+est rafraîchie toutes les 60 secondes, sous la fenêtre serveur de deux minutes.
+Le Parc relit uniquement la liste des TV toutes les 30 secondes lorsqu’il est
+visible, sans recharger le Studio ni écraser les formulaires ou le brouillon.
+Son APK debug a été installé et contrôlé sur la Philips sans perte des données
+privées de test. La candidate intermédiaire `0.3.1` / code 4 a seulement été
+construite hors matériel.

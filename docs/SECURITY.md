@@ -234,11 +234,13 @@ le certificat public à PostgreSQL. La clé privée de la CA n’est montée dan
 aucun conteneur. L’API, le worker et Caddy ne peuvent pas la lire.
 
 Caddy utilise `verify_if_given` car le navigateur d’administration et les TV
-partagent volontairement la même origine TLS. Il supprime tout en-tête
-d’empreinte reçu du LAN et transmet seulement l’empreinte SHA-256 d’un
-certificat réellement vérifié contre la CA TV. L’API exige ensuite que cette
-empreinte appartienne à l’UUID et à la clé rotative présentés. Après activation
-par la TV, une requête sans le certificat individuel est refusée.
+partagent volontairement la même origine TLS. Il remplace tout en-tête
+d’attestation reçu du LAN par l’empreinte SHA-256 du certificat qu’il a
+réellement vérifié contre la CA TV. Le remplacement doit rester une unique
+opération Caddy : une suppression configurée en parallèle serait appliquée
+après le remplacement et effacerait l’attestation. L’API exige ensuite que
+cette empreinte appartienne à l’UUID et à la clé rotative présentés. Après
+activation par la TV, une requête sans le certificat individuel est refusée.
 
 Le renouvellement commence 30 jours avant l’expiration et conserve l’ancien
 certificat actif jusqu’à la confirmation du nouveau. La révocation
@@ -370,8 +372,11 @@ et le rôle actif/en attente sont liés comme données authentifiées. Le lecteu
 reste compatible avec les credentials 0.3.0/0.3.1, puis les réécrit dans la
 nouvelle enveloppe lors de la première rotation. Cette protection locale et la
 rotation sont complétées par une seconde clé RSA non exportable, distincte de
-l’enveloppe AES. Elle porte le certificat mTLS et autorise PKCS#1 et RSA-PSS
-pour rester compatible avec TLS 1.2 et TLS 1.3.
+l’enveloppe AES. Elle porte le certificat mTLS et autorise PKCS#1 et RSA-PSS.
+La politique Android Keystore autorise aussi le digest `NONE` et le padding
+RSA brut `NONE` : Conscrypt pré-hache la transcription TLS puis délègue cette
+opération privée au Keystore. Ces autorisations servent uniquement à la
+signature TLS et ne rendent jamais la clé exportable.
 
 ## Sauvegardes
 

@@ -2309,6 +2309,19 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(measuredScreen.latest_metric.networkState, 'ethernet');
   assert.equal(measuredScreen.latest_metric.storageFreeBytes, 2_147_483_648);
   assert.equal(measuredScreen.latest_metric.syncDurationMs, 245);
+  const fleet = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tvs',
+    headers: { cookie },
+  });
+  assert.equal(fleet.statusCode, 200, fleet.body);
+  const fleetState = fleet.json();
+  assert.deepEqual(fleetState.measuredMetrics, studioState.measuredMetrics);
+  const refreshedScreen = fleetState.tvs.find((screen) => screen.id === pendingDevice.id);
+  assert.equal(refreshedScreen.online, true);
+  assert.equal(refreshedScreen.latest_metric.networkState, 'ethernet');
+  assert.equal(refreshedScreen.latest_metric.storageFreeBytes, 2_147_483_648);
+  assert.equal(refreshedScreen.latest_metric.syncDurationMs, 245);
   const seededGreeting = studioState.scene.document.nodes.find(
     (node) => node.kind === 'text' && node.props?.role === 'greeting',
   );
