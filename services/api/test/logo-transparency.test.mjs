@@ -48,6 +48,86 @@ test('retire seulement le fond clair relié aux bords du logo', async (t) => {
   assert.ok(alphaAt(Math.floor(info.width / 2), Math.floor(info.height / 2)) > 245);
 });
 
+test('reconstruit les bords anti-crénelés sans amincir un logotype gris', async (t) => {
+  const directory = await makeTemporaryDirectory(t);
+  const output = path.join(directory, 'logo.webp');
+  const width = 80;
+  const height = 40;
+  const pixels = Buffer.alloc(width * height * 3, 255);
+  for (let y = 10; y < 30; y += 1) {
+    for (let x = 20; x < 60; x += 1) {
+      const offset = ((y * width) + x) * 3;
+      const grey = x === 20 || x === 59 || y === 10 || y === 29 ? 220 : 128;
+      pixels[offset] = grey;
+      pixels[offset + 1] = grey;
+      pixels[offset + 2] = grey;
+    }
+  }
+
+  const result = await generateTransparentLogoVariant(
+    await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer(),
+    output,
+  );
+  assert.equal(result.generated, true);
+  assert.equal(result.backgroundRemoved, true);
+
+  const { data, info } = await sharp(output)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const pixelAt = (x, y) => {
+    const offset = ((y * info.width) + x) * 4;
+    return {
+      red: data[offset],
+      green: data[offset + 1],
+      blue: data[offset + 2],
+      alpha: data[offset + 3],
+    };
+  };
+  const edge = pixelAt(20, 20);
+  const centre = pixelAt(40, 20);
+  assert.ok(edge.alpha >= 55 && edge.alpha <= 90);
+  assert.ok(edge.red >= 110 && edge.red <= 150);
+  assert.ok(Math.abs(edge.red - edge.green) <= 3);
+  assert.ok(Math.abs(edge.green - edge.blue) <= 3);
+  assert.ok(centre.alpha > 245);
+  assert.ok(centre.red >= 110 && centre.red <= 150);
+  assert.equal(pixelAt(0, 0).alpha, 0);
+});
+
+test('retire aussi les petits fonds enfermés dans les lettres', async (t) => {
+  const directory = await makeTemporaryDirectory(t);
+  const output = path.join(directory, 'logo.webp');
+  const width = 100;
+  const height = 80;
+  const pixels = Buffer.alloc(width * height * 3, 255);
+  for (let y = 18; y < 62; y += 1) {
+    for (let x = 26; x < 74; x += 1) {
+      const offset = ((y * width) + x) * 3;
+      const isCounter = x >= 46 && x < 54 && y >= 35 && y < 45;
+      const grey = isCounter ? 255 : 112;
+      pixels[offset] = grey;
+      pixels[offset + 1] = grey;
+      pixels[offset + 2] = grey;
+    }
+  }
+
+  const result = await generateTransparentLogoVariant(
+    await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer(),
+    output,
+  );
+  assert.equal(result.generated, true);
+  assert.equal(result.backgroundRemoved, true);
+
+  const { data, info } = await sharp(output)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const alphaAt = (x, y) => data[(((y * info.width) + x) * 4) + 3];
+  assert.equal(alphaAt(50, 40), 0);
+  assert.ok(alphaAt(40, 40) > 245);
+});
+
 test('ne crée pas de variante transparente quand le fond est ambigu', async (t) => {
   const directory = await makeTemporaryDirectory(t);
   const output = path.join(directory, 'logo.webp');

@@ -6,7 +6,12 @@ const MAX_HEIGHT = 1080;
 const MIN_LIGHT_LUMINANCE = 210;
 const CORNER_CLUSTER_DISTANCE = 32;
 const BACKGROUND_DISTANCE = 72;
+const MATTE_BACKGROUND_DISTANCE = 180;
 const TRANSPARENT_DISTANCE = 14;
+const EDGE_FOREGROUND_SEARCH_RADIUS = 4;
+const MIN_FOREGROUND_CHANNEL_DISTANCE = 16;
+const ENCLOSED_BACKGROUND_SEED_DISTANCE = 28;
+const MAX_ENCLOSED_BACKGROUND_COMPONENT_RATIO = 0.025;
 const MIN_BORDER_MATCH_RATIO = 0.62;
 const MIN_REMOVED_PIXEL_RATIO = 0.08;
 
@@ -26,6 +31,8 @@ const median = (values) => {
 };
 
 const pixelOffset = (width, x, y) => ((y * width) + x) * 4;
+
+const clampUnit = (value) => Math.max(0, Math.min(1, value));
 
 const sampleCorner = (pixels, width, height, startX, startY, size) => {
   const red = [];
@@ -135,6 +142,80 @@ const hasUsefulSourceTransparency = (pixels, width, height) => {
   );
 };
 
+const nearestForegroundPixel = (
+  pixels,
+  visited,
+  width,
+  height,
+  x,
+  y,
+  background,
+) => {
+  for (let radius = 1; radius <= EDGE_FOREGROUND_SEARCH_RADIUS; radius += 1) {
+    let nearest = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    const minX = Math.max(0, x - radius);
+    const maxX = Math.min(width - 1, x + radius);
+    const minY = Math.max(0, y - radius);
+    const maxY = Math.min(height - 1, y + radius);
+    for (let candidateY = minY; candidateY <= maxY; candidateY += 1) {
+      for (let candidateX = minX; candidateX <= maxX; candidateX += 1) {
+        if (
+          candidateX !== minX
+          && candidateX !== maxX
+          && candidateY !== minY
+          && candidateY !== maxY
+        ) {
+          continue;
+        }
+        const index = (candidateY * width) + candidateX;
+        if (visited[index]) continue;
+        const offset = index * 4;
+        const distanceFromBackground = colourDistance(
+          pixels[offset],
+          pixels[offset + 1],
+          pixels[offset + 2],
+          background,
+        );
+        if (
+          pixels[offset + 3] === 0
+          || (
+            distanceFromBackground <= MATTE_BACKGROUND_DISTANCE
+            && luminance(pixels[offset], pixels[offset + 1], pixels[offset + 2])
+              >= MIN_LIGHT_LUMINANCE - 55
+          )
+        ) {
+          continue;
+        }
+        const distance = ((candidateX - x) ** 2) + ((candidateY - y) ** 2);
+        if (distance >= nearestDistance) continue;
+        nearestDistance = distance;
+        nearest = {
+          red: pixels[offset],
+          green: pixels[offset + 1],
+          blue: pixels[offset + 2],
+        };
+      }
+    }
+    if (nearest) return nearest;
+  }
+  return null;
+};
+
+const compositeOpacity = (red, green, blue, background, foreground) => {
+  const source = [red, green, blue];
+  const backdrop = [background.red, background.green, background.blue];
+  const subject = [foreground.red, foreground.green, foreground.blue];
+  const estimates = [];
+  for (let channel = 0; channel < source.length; channel += 1) {
+    const denominator = subject[channel] - backdrop[channel];
+    if (Math.abs(denominator) < MIN_FOREGROUND_CHANNEL_DISTANCE) continue;
+    estimates.push(clampUnit((source[channel] - backdrop[channel]) / denominator));
+  }
+  if (estimates.length === 0) return 0;
+  return median(estimates);
+};
+
 const removeConnectedBackground = (pixels, width, height, background) => {
   const pixelCount = width * height;
   const visited = new Uint8Array(pixelCount);
@@ -152,7 +233,7 @@ const removeConnectedBackground = (pixels, width, height, background) => {
         pixels[offset + 1],
         pixels[offset + 2],
         background,
-      ) <= BACKGROUND_DISTANCE
+      ) <= MATTE_BACKGROUND_DISTANCE
     );
   };
   const enqueue = (index) => {
@@ -181,25 +262,101 @@ const removeConnectedBackground = (pixels, width, height, background) => {
     if (y + 1 < height) enqueue(index + width);
   }
 
+  const enclosedScanned = new Uint8Array(pixelCount);
+  const enclosedQueue = new Int32Array(pixelCount);
+  const maxEnclosedPixels = Math.max(
+    1,
+    Math.floor(pixelCount * MAX_ENCLOSED_BACKGROUND_COMPONENT_RATIO),
+  );
+  const scanEnclosed = (startIndex) => {
+    let enclosedHead = 0;
+    let enclosedTail = 1;
+    enclosedQueue[0] = startIndex;
+    enclosedScanned[startIndex] = 1;
+    while (enclosedHead < enclosedTail) {
+      const index = enclosedQueue[enclosedHead];
+      enclosedHead += 1;
+      const x = index % width;
+      const y = Math.floor(index / width);
+      const inspect = (candidate) => {
+        if (
+          visited[candidate]
+          || enclosedScanned[candidate]
+          || !matchesBackground(candidate)
+        ) {
+          return;
+        }
+        enclosedScanned[candidate] = 1;
+        enclosedQueue[enclosedTail] = candidate;
+        enclosedTail += 1;
+      };
+      if (x > 0) inspect(index - 1);
+      if (x + 1 < width) inspect(index + 1);
+      if (y > 0) inspect(index - width);
+      if (y + 1 < height) inspect(index + width);
+    }
+    if (enclosedTail > maxEnclosedPixels) return;
+    for (let index = 0; index < enclosedTail; index += 1) {
+      const candidate = enclosedQueue[index];
+      visited[candidate] = 1;
+      queue[tail] = candidate;
+      tail += 1;
+    }
+  };
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (visited[index] || enclosedScanned[index]) continue;
+    const offset = index * 4;
+    if (
+      pixels[offset + 3] === 0
+      || colourDistance(
+        pixels[offset],
+        pixels[offset + 1],
+        pixels[offset + 2],
+        background,
+      ) > ENCLOSED_BACKGROUND_SEED_DISTANCE
+    ) {
+      continue;
+    }
+    scanEnclosed(index);
+  }
+
   const removedPixelRatio = tail / pixelCount;
   if (removedPixelRatio < MIN_REMOVED_PIXEL_RATIO) {
     return { applied: false, removedPixelRatio };
   }
 
   for (let index = 0; index < tail; index += 1) {
-    const offset = queue[index] * 4;
+    const pixelIndex = queue[index];
+    const offset = pixelIndex * 4;
     const distance = colourDistance(
       pixels[offset],
       pixels[offset + 1],
       pixels[offset + 2],
       background,
     );
-    const opacity = Math.max(
-      0,
-      Math.min(1, (distance - TRANSPARENT_DISTANCE) / (
-        BACKGROUND_DISTANCE - TRANSPARENT_DISTANCE
-      )),
-    );
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    const foreground = distance > TRANSPARENT_DISTANCE
+      ? nearestForegroundPixel(pixels, visited, width, height, x, y, background)
+      : null;
+    const opacity = foreground
+      ? compositeOpacity(
+        pixels[offset],
+        pixels[offset + 1],
+        pixels[offset + 2],
+        background,
+        foreground,
+      )
+      : 0;
+    if (opacity === 0) {
+      pixels[offset] = 0;
+      pixels[offset + 1] = 0;
+      pixels[offset + 2] = 0;
+    } else if (opacity < 1) {
+      pixels[offset] = foreground.red;
+      pixels[offset + 1] = foreground.green;
+      pixels[offset + 2] = foreground.blue;
+    }
     pixels[offset + 3] = Math.min(
       pixels[offset + 3],
       Math.round(pixels[offset + 3] * opacity),
