@@ -731,6 +731,18 @@ const referencedAssetUsages = (scene) => {
 
 const referencedAssetIds = (scene) => [...referencedAssetUsages(scene).keys()];
 
+const sceneForMediaDelivery = (scene, instanceConfig) => {
+  const brandingLogoId = instanceConfig?.branding?.logoAssetId;
+  if (!brandingLogoId) return scene;
+  return {
+    ...scene,
+    nodes: [
+      ...(scene.nodes ?? []),
+      { kind: 'logo', props: { assetId: brandingLogoId } },
+    ],
+  };
+};
+
 const referencedDefaultAssets = (scene) => {
   const paths = new Set();
   const add = (value) => {
@@ -1480,8 +1492,18 @@ export const registerStudioRoutes = ({
     });
     const assetId = optionalUuid(request.params.assetId);
     if (!session) {
-      const assignedScene = await sceneForScreen(pool, screen);
-      if (!referencedAssetIds(assignedScene.document).includes(assetId)) {
+      const [assignedScene, instanceResult] = await Promise.all([
+        sceneForScreen(pool, screen),
+        pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
+      ]);
+      if (!instanceResult.rows[0]) {
+        throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
+      }
+      const deliveryScene = sceneForMediaDelivery(
+        assignedScene.document,
+        instanceResult.rows[0].config,
+      );
+      if (!referencedAssetIds(deliveryScene).includes(assetId)) {
         return reply.code(404).send({ error: 'media_not_found' });
       }
     }
@@ -3441,16 +3463,7 @@ export const registerStudioRoutes = ({
       jsonDocument('weather.json', documents.weather),
     ];
 
-    const brandingLogoId = instanceConfig.branding?.logoAssetId;
-    const deliveryScene = brandingLogoId
-      ? {
-        ...sceneRecord.document,
-        nodes: [
-          ...(sceneRecord.document.nodes ?? []),
-          { kind: 'logo', props: { assetId: brandingLogoId } },
-        ],
-      }
-      : sceneRecord.document;
+    const deliveryScene = sceneForMediaDelivery(sceneRecord.document, instanceConfig);
     const uploadedAssets = await assertSceneAssetsAvailable(
       pool,
       deliveryScene,

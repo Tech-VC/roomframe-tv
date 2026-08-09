@@ -1424,6 +1424,20 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(deviceSync.statusCode, 200);
+  const brandingLogoAsset = deviceSync.json().manifest.assets.find(
+    (asset) => asset.assetId === queuedAsset.id,
+  );
+  assert.ok(brandingLogoAsset, 'the global branding logo must be offered to the TV');
+  const deliveredBrandingLogo = await app.inject({
+    method: 'GET',
+    url: brandingLogoAsset.url,
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(deliveredBrandingLogo.statusCode, 200, deliveredBrandingLogo.body);
+  assert.equal(deliveredBrandingLogo.headers['content-type'], brandingLogoAsset.mime);
 
   const certificateEnrollment = await app.inject({
     method: 'POST',
