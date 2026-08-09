@@ -17,8 +17,9 @@ La découverte locale publie une annonce DNS-SD minimale et un manifeste HTTPS
 signé en ECDSA P-256. Elle ne devient authentifiée qu’avec l’étape suivante :
 la CA chiffrée par le ticket doit correspondre à la chaîne TLS observée et à
 l’empreinte du manifeste avant tout envoi du secret. WebAuthn, les certificats
-individuels TV et le mTLS sont également implémentés. Les parcours propres à la
-TV restent à observer sur le firmware Philips réel.
+individuels TV et le mTLS sont également implémentés. La découverte DNS-SD,
+l’appairage de la CA, l’enrôlement et l’activation mTLS ont été observés sur la
+Philips Android TV 12 de validation.
 
 ## Secrets de l’instance
 
@@ -255,11 +256,8 @@ ni HTML, ni script. Les cibles groupe/TV exigent `fleet:write` en plus de
 transition ou annulation laisse une trace d’audit. Le worker ne modifie que le
 statut fermé de la programmation et la révision de synchronisation.
 
-Limites avant production :
+Limite restante avant production :
 
-- réception DNS-SD et parcours de découverte non encore observés sur la Philips ;
-- appairage CA Android non encore observé sur le firmware Philips ;
-- activation Android Keystore/mTLS non encore observée sur la Philips ;
 - pas encore de CRL distribuée à Caddy ; la révocation est autoritative dans
   l’API après la validation cryptographique du handshake.
 

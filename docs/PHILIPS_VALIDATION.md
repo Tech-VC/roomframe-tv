@@ -246,15 +246,26 @@ provisionne pas Device Owner et ne valide pas encore l’installation silencieus
 depuis l’administration. Une clé de release durable, conservée hors dépôt,
 devra remplacer la clé debug avant tout vrai canal de mise à jour.
 
-La candidate courante `0.3.5` (`versionCode` 8) ajoute le renderer alimenté par
-le cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
+La candidate `0.3.5` (`versionCode` 8) a introduit le renderer alimenté par le
+cache, l’enrôlement HTTPS, la distribution APK vérifiée, l’envoi borné des
 mesures techniques, l’appairage chiffré de la CA serveur, la rotation de
 credential en deux phases, le certificat client mTLS individuel et la
-découverte DNS-SD avec manifeste ECDSA P-256. Elle a été installée par
-`adb install -r` sur cette Philips sans perte des données privées du build
-debug. Son démarrage, son rendu, son focus D-pad et les activations de sources
-décrites ci-dessous ont été observés. Les candidats intermédiaires `0.3.1` /
-code 4 et `0.3.2` / code 5 ont uniquement été construits hors matériel.
+découverte DNS-SD avec manifeste ECDSA P-256. Son démarrage, son rendu, son
+focus D-pad et les activations de sources décrites ci-dessous ont été observés.
+
+La candidate courante `0.3.8` (`versionCode` 11) a ensuite été installée par
+`adb install -r`. La découverte DNS-SD, l’appairage de la CA, l’enrôlement par
+code numérique de 16 chiffres, la synchronisation, l’envoi des mesures et
+l’activation du certificat mTLS ont tous été observés sur cette Philips. Un
+réenrôlement contrôlé a été nécessaire une seule fois pour remplacer la clé
+Android Keystore créée avant la politique TLS complète. Après la mise à jour
+du serveur, un simple redémarrage de l’application, sans effacement des données,
+a conservé l’identité et remonté les états `active`, `up-to-date` et `accepted`.
+La synchronisation périodique est maintenant de 60 secondes, sous la fenêtre
+serveur de présence de deux minutes.
+
+Les candidats intermédiaires `0.3.1` / code 4 et `0.3.2` / code 5 ont
+uniquement été construits hors matériel.
 
 ## HDMI et sources
 
