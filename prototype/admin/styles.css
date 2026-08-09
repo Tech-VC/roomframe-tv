@@ -100,6 +100,7 @@ textarea { min-height: 58px; resize: vertical; }
 .stage-tools { display: flex; gap: 7px; }
 .tool { border: 1px solid var(--ink); background: var(--paper); min-height: 30px; padding: 0 10px; font-size: 10px; font-weight: 900; text-transform: uppercase; }
 .tool.primary, .next { background: var(--signal); color: white; border-color: var(--signal); }
+.tool.danger { background: var(--danger); color: white; border-color: var(--danger); }
 .tool[disabled], .next[disabled] { opacity: .48; cursor: wait; }
 .monitor {
   position: absolute; left: 50%; top: 51%; transform: translate(-50%, -50%);
@@ -369,7 +370,7 @@ textarea { min-height: 58px; resize: vertical; }
 .tv-cell h3 { font-family: Georgia, serif; font-size: 22px; margin: 26px 0 8px; }
 .tv-cell p { color: var(--muted); font-size: 10px; line-height: 1.5; white-space: pre-line; }
 .tv-credential-actions {
-  display: flex; align-items: center; gap: 14px; margin-top: 16px; padding-top: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 .credential-dialog {

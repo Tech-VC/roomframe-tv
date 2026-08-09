@@ -98,6 +98,7 @@ const api = {
   get(path, options = {}) { return this.request(path, { ...options, authenticated: false }); },
   post(path, body, authenticated = true) { return this.request(path, { method: "POST", body, authenticated }); },
   put(path, body, authenticated = true) { return this.request(path, { method: "PUT", body, authenticated }); },
+  delete(path, body, authenticated = true) { return this.request(path, { method: "DELETE", body, authenticated }); },
 };
 
 const state = {
@@ -1073,12 +1074,22 @@ const renderOperationalSettings = () => {
   populatePowerSettings();
 };
 
+const activeFleetMetrics = (televisions) => {
+  const activeTelevisions = televisions.filter(
+    (tv) => (tv.enrollmentState ?? tv.enrollment_state) === "active",
+  );
+  return {
+    totalScreens: activeTelevisions.length,
+    onlineScreens: activeTelevisions.filter((tv) => tv.online === true).length,
+    reportingScreens: activeTelevisions.filter(
+      (tv) => tv.latestMetric ?? tv.latest_metric,
+    ).length,
+  };
+};
+
 const renderHome = () => {
-  const totalScreens = state.measuredMetrics?.totalScreens ?? state.televisions.length;
-  const onlineScreens = state.measuredMetrics?.onlineScreens
-    ?? state.televisions.filter((tv) => tv.online === true).length;
-  const reportingScreens = state.measuredMetrics?.reportingScreens
-    ?? state.televisions.filter((tv) => tv.latestMetric ?? tv.latest_metric).length;
+  const fleetMetrics = state.measuredMetrics ?? activeFleetMetrics(state.televisions);
+  const { totalScreens, onlineScreens, reportingScreens } = fleetMetrics;
   const publishedScenes = state.scenes.filter(
     (scene) => (scene.publishedRevision ?? scene.published_revision) != null,
   ).length;
@@ -1210,19 +1221,29 @@ const renderFleet = () => {
         `Réenrôler ${tv.displayName ?? tv.display_name ?? tv.id}`,
       );
       actions.append(reenroll);
+      if (enrollmentState === "revoked") {
+        const remove = make("button", "danger-link", "Supprimer définitivement");
+        remove.type = "button";
+        remove.dataset.tvCredentialAction = "delete";
+        remove.dataset.tvId = tv.id;
+        remove.setAttribute(
+          "aria-label",
+          `Supprimer définitivement ${tv.displayName ?? tv.display_name ?? tv.id}`,
+        );
+        actions.append(remove);
+      }
       card.append(actions);
     }
     return card;
   });
-  const fleetSummary = state.measuredMetrics
-    ? make(
-      "p",
-      "fleet-summary",
-      `${state.measuredMetrics.onlineScreens}/${state.measuredMetrics.totalScreens} en ligne · ${state.measuredMetrics.reportingScreens} avec mesures`,
-    )
-    : null;
+  const fleetMetrics = state.measuredMetrics ?? activeFleetMetrics(state.televisions);
+  const fleetSummary = make(
+    "p",
+    "fleet-summary",
+    `${fleetMetrics.onlineScreens}/${fleetMetrics.totalScreens} en ligne · ${fleetMetrics.reportingScreens} avec mesures`,
+  );
   $("#fleetList").replaceChildren(
-    ...(fleetSummary ? [fleetSummary] : []),
+    fleetSummary,
     ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
   );
 };
@@ -1256,11 +1277,7 @@ const refreshFleetState = async ({ reportError = false } = {}) => {
     if (!Array.isArray(payload.tvs)) throw new Error("État du parc incomplet.");
     if (!fleetRefreshAllowed()) return;
     state.televisions = payload.tvs;
-    state.measuredMetrics = payload.measuredMetrics ?? {
-      totalScreens: payload.tvs.length,
-      onlineScreens: payload.tvs.filter((tv) => tv.online === true).length,
-      reportingScreens: payload.tvs.filter((tv) => tv.latestMetric ?? tv.latest_metric).length,
-    };
+    state.measuredMetrics = payload.measuredMetrics ?? activeFleetMetrics(payload.tvs);
     renderFleet();
     renderHome();
   } catch (error) {
@@ -1326,13 +1343,14 @@ const setEnrollmentTicket = (ticket) => {
   }, delay);
 };
 
-const enrollmentErrorMessage = (error) => (
-  error?.message === "server_ca_not_ready"
-    ? "L’autorité HTTPS locale n’est pas encore prête. Exécutez le diagnostic serveur puis réessayez."
-    : error?.message === "server_ca_invalid"
-      ? "L’autorité HTTPS locale est invalide ou désynchronisée. Corrigez le diagnostic serveur avant l’enrôlement."
-      : error?.message
-);
+const enrollmentErrorMessage = (error) => ({
+  server_ca_not_ready: "L’autorité HTTPS locale n’est pas encore prête. Exécutez le diagnostic serveur puis réessayez.",
+  server_ca_invalid: "L’autorité HTTPS locale est invalide ou désynchronisée. Corrigez le diagnostic serveur avant l’enrôlement.",
+  tv_deletion_confirmation_required: "La phrase de confirmation de suppression est incorrecte.",
+  tv_must_be_revoked_before_deletion: "Révoquez d’abord cette TV avant de supprimer définitivement sa fiche.",
+  simulator_deletion_not_allowed: "Le simulateur local ne peut pas être supprimé.",
+  tv_not_found: "Cette TV n’existe plus dans le Parc.",
+}[error?.message] ?? error?.message);
 
 const tvCredentialActionSpec = {
   revoke: {
@@ -1353,6 +1371,15 @@ const tvCredentialActionSpec = {
       + "ne sera affichée que dans cette session et expirera après 30 minutes."
     ),
   },
+  delete: {
+    title: "Supprimer cette ancienne TV",
+    phrase: "SUPPRIMER LA TV",
+    submit: "Supprimer définitivement",
+    description: (name) => (
+      `${name} disparaîtra définitivement du Parc. Sa fiche, ses mesures et ses réglages `
+      + "ciblés seront effacés. Le journal d’audit restera conservé. Cette action est irréversible."
+    ),
+  },
 };
 
 const openTvCredentialDialog = (tv, action) => {
@@ -1365,6 +1392,8 @@ const openTvCredentialDialog = (tv, action) => {
   $("#tvCredentialDialogDescription").textContent = spec.description(name);
   $("#tvCredentialConfirmationPhrase").textContent = spec.phrase;
   $("#tvCredentialSubmit").textContent = spec.submit;
+  $("#tvCredentialSubmit").classList.toggle("primary", action !== "delete");
+  $("#tvCredentialSubmit").classList.toggle("danger", action === "delete");
   $("#tvCredentialConfirmation").value = "";
   formError("tvCredentialError");
   $("#tvCredentialDialog").showModal();
@@ -3522,12 +3551,12 @@ $("#tvCredentialForm").addEventListener("submit", async (event) => {
   submit.disabled = true;
   formError("tvCredentialError");
   try {
-    const payload = await api.post(
-      `tvs/${encodeURIComponent(pending.tvId)}/${
-        pending.action === "revoke" ? "revoke" : "reenrollment"
-      }`,
-      { confirmation },
-    );
+    const payload = pending.action === "delete"
+      ? await api.delete(`tvs/${encodeURIComponent(pending.tvId)}`, { confirmation })
+      : await api.post(
+          `tvs/${encodeURIComponent(pending.tvId)}/${pending.action === "revoke" ? "revoke" : "reenrollment"}`,
+          { confirmation },
+        );
     if (pending.action === "revoke") {
       state.televisions = state.televisions.map((tv) => (
         tv.id === pending.tvId
@@ -3544,6 +3573,9 @@ $("#tvCredentialForm").addEventListener("submit", async (event) => {
           : tv
       ));
       toast("Accès TV révoqué. Son cache local n’a pas été effacé.");
+    } else if (pending.action === "delete") {
+      state.televisions = state.televisions.filter((tv) => tv.id !== pending.tvId);
+      toast("Ancienne TV supprimée définitivement du Parc.");
     } else {
       if (!validEnrollmentTicket(payload)) {
         throw new Error("Réponse de nouvel enrôlement incomplète.");
@@ -3565,8 +3597,10 @@ $("#tvCredentialForm").addEventListener("submit", async (event) => {
       setEnrollmentTicket(payload);
       toast("Nouvel enrôlement créé. L’ancienne clé ne fonctionne plus.");
     }
+    state.measuredMetrics = activeFleetMetrics(state.televisions);
     $("#tvCredentialDialog").close();
-    renderCollections();
+    renderFleet();
+    renderHome();
   } catch (error) {
     formError("tvCredentialError", enrollmentErrorMessage(error));
   } finally {

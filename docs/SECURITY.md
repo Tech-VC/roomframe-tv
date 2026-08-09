@@ -276,6 +276,13 @@ l’historique. Elle ne prétend pas effacer le cache local de la TV : ce cache
 reste nécessaire au fonctionnement hors ligne et cesse seulement de se
 synchroniser.
 
+La suppression définitive d’une fiche TV exige une seconde action explicite,
+la même permission, le CSRF et la phrase exacte `SUPPRIMER LA TV`. L’API la
+refuse tant que la TV n’est pas déjà révoquée, ainsi que pour le simulateur.
+Elle retire la fiche, ses certificats, mesures, déploiements directs et réglages
+ciblés afin de ne laisser aucune cible orpheline. Le journal d’audit append-only
+conserve néanmoins la trace de la suppression, sans secret ni clé brute.
+
 ## Conteneurs et base
 
 - seul Caddy publie un port applicatif TCP (`443`) ; Avahi peut publier

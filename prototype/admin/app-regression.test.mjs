@@ -140,6 +140,11 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(markup, /id="tvCredentialConfirmation"[^>]*required/);
   assert.match(source, /REVOQUER LA TV/);
   assert.match(source, /REINITIALISER L ENROLEMENT/);
+  assert.match(source, /SUPPRIMER LA TV/);
+  assert.match(source, /if \(enrollmentState === "revoked"\)[\s\S]{0,500}remove\.dataset\.tvCredentialAction = "delete"/);
+  assert.match(source, /api\.delete\(`tvs\/\$\{encodeURIComponent\(pending\.tvId\)\}`/);
+  assert.match(source, /Ancienne TV supprimée définitivement du Parc/);
+  assert.match(source, /Le journal d’audit restera conservé/);
   assert.match(source, /api\.post\([\s\S]*tvs\/\$\{encodeURIComponent\(pending\.tvId\)\}/);
   assert.match(source, /Son cache local n’a pas été effacé/);
   assert.match(source, /L’ancienne clé ne fonctionne plus/);
@@ -156,6 +161,7 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(styles, /\.enrollment-code-field input \{[^}]*font-variant-numeric: tabular-nums;/);
   assert.match(source, /server_ca_not_ready/);
   assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
+  assert.match(styles, /\.tool\.danger \{[^}]*background: var\(--danger\);/);
 });
 
 test("le parc se rafraîchit sans réécrire les formulaires ni le brouillon", () => {
@@ -173,6 +179,9 @@ test("le parc se rafraîchit sans réécrire les formulaires ni le brouillon", (
   assert.match(refreshSource, /#view-fleet/);
   assert.match(refreshSource, /#tvCredentialDialog/);
   assert.match(refreshSource, /api\.get\("tvs"\)/);
+  assert.match(source, /const activeFleetMetrics = \(televisions\)/);
+  assert.match(source, /enrollmentState \?\? tv\.enrollment_state\) === "active"/);
+  assert.match(refreshSource, /activeFleetMetrics\(payload\.tvs\)/);
   assert.match(refreshSource, /renderFleet\(\)/);
   assert.match(refreshSource, /renderHome\(\)/);
   assert.doesNotMatch(

@@ -53,9 +53,23 @@ const deviceKeyPattern = /^[A-Za-z0-9_-]{32,200}$/;
 const serverUpdateAutomaticConfirmation = 'ACTIVER LES MISES A JOUR AUTOMATIQUES';
 const tvRevokeConfirmation = 'REVOQUER LA TV';
 const tvReenrollmentConfirmation = 'REINITIALISER L ENROLEMENT';
+const tvDeletionConfirmation = 'SUPPRIMER LA TV';
 const tvCredentialPendingLifetimeMs = 24 * 60 * 60 * 1000;
 const tvCertificateRenewalWindowMs = 30 * 24 * 60 * 60 * 1000;
 const clientCertificateFingerprintPattern = /^[a-f0-9]{64}$/;
+
+const activeFleetMetrics = (screens) => {
+  const activeScreens = screens.filter(
+    (screen) => screen.enrollment_state === 'active',
+  );
+  return {
+    totalScreens: activeScreens.length,
+    onlineScreens: activeScreens.filter((screen) => screen.online === true).length,
+    reportingScreens: activeScreens.filter(
+      (screen) => screen.latest_metric !== null,
+    ).length,
+  };
+};
 
 const cleanText = (value, field, maximum, minimum = 1) => {
   const text = String(value ?? '').trim();
@@ -1060,11 +1074,9 @@ export const registerStudioRoutes = ({
       releaseSource: can('releases:read') ? releaseSource : null,
       serverUpdatePolicy: can('releases:read') ? serverUpdatePolicy : null,
       syncRevision: Number(syncResult.rows[0]?.revision ?? 1),
-      measuredMetrics: can('fleet:read') ? {
-        totalScreens: screensResult.rows.length,
-        onlineScreens: screensResult.rows.filter((row) => row.online === true).length,
-        reportingScreens: screensResult.rows.filter((row) => row.latest_metric !== null).length,
-      } : null,
+      measuredMetrics: can('fleet:read')
+        ? activeFleetMetrics(screensResult.rows)
+        : null,
       weather,
     };
   });
@@ -1594,11 +1606,7 @@ export const registerStudioRoutes = ({
     }));
     return {
       tvs,
-      measuredMetrics: {
-        totalScreens: tvs.length,
-        onlineScreens: tvs.filter((row) => row.online === true).length,
-        reportingScreens: tvs.filter((row) => row.latest_metric !== null).length,
-      },
+      measuredMetrics: activeFleetMetrics(tvs),
     };
   });
 
@@ -2251,6 +2259,61 @@ export const registerStudioRoutes = ({
           credentialsRevokedAt: updated.rows[0].credentials_revoked_at,
         },
       };
+    });
+  });
+
+  app.delete('/api/v1/tvs/:tvId', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request) => {
+    if (request.body?.confirmation !== tvDeletionConfirmation) {
+      throw Object.assign(new Error('tv_deletion_confirmation_required'), {
+        statusCode: 400,
+      });
+    }
+    const tvId = optionalUuid(request.params.tvId);
+    return withTransaction(pool, async (client) => {
+      const current = await client.query(
+        'SELECT id, enrollment_state, credential_generation FROM screens WHERE id = $1 FOR UPDATE',
+        [tvId],
+      );
+      const screen = current.rows[0];
+      if (!screen) throw Object.assign(new Error('tv_not_found'), { statusCode: 404 });
+      if (screen.enrollment_state === 'simulated') {
+        throw Object.assign(new Error('simulator_deletion_not_allowed'), {
+          statusCode: 409,
+        });
+      }
+      if (screen.enrollment_state !== 'revoked') {
+        throw Object.assign(new Error('tv_must_be_revoked_before_deletion'), {
+          statusCode: 409,
+        });
+      }
+
+      const relatedRecords = {};
+      for (const [name, table] of [
+        ['sceneAssignments', 'scene_assignments'],
+        ['sceneSchedules', 'scene_schedules'],
+        ['messages', 'messages'],
+        ['sourceSettings', 'source_settings'],
+        ['powerSchedules', 'power_schedules'],
+        ['directDeployments', 'deployments'],
+      ]) {
+        const deleted = await client.query(
+          `DELETE FROM ${table}
+           WHERE target_type = 'tv' AND target_id = $1
+           RETURNING id`,
+          [tvId],
+        );
+        relatedRecords[name] = deleted.rowCount;
+      }
+
+      await client.query('DELETE FROM screens WHERE id = $1', [tvId]);
+      await writeAudit(client, request, 'tv.deleted', 'tv', tvId, {
+        previousState: screen.enrollment_state,
+        credentialGeneration: Number(screen.credential_generation),
+        relatedRecords,
+      });
+      return { deleted: true, id: tvId };
     });
   });
 

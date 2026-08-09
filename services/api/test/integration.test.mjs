@@ -2291,6 +2291,33 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(rejectedMetricDetail.statusCode, 400, rejectedMetricDetail.body);
   assert.equal(rejectedMetricDetail.json().error, 'unsupported_metric_error_code');
 
+  const archivedEnrollment = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tvs/enrollment',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      displayName: 'TV archivée',
+      roomName: 'Ancienne salle',
+    },
+  });
+  assert.equal(archivedEnrollment.statusCode, 201, archivedEnrollment.body);
+  const archivedClaim = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/enroll',
+    payload: {
+      deviceId: archivedEnrollment.json().id,
+      enrollmentKey: archivedEnrollment.json().enrollmentKey,
+    },
+  });
+  assert.equal(archivedClaim.statusCode, 201, archivedClaim.body);
+  const archivedRevocation = await app.inject({
+    method: 'POST',
+    url: `/api/v1/tvs/${archivedEnrollment.json().id}/revoke`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'REVOQUER LA TV' },
+  });
+  assert.equal(archivedRevocation.statusCode, 200, archivedRevocation.body);
+
   const studio = await app.inject({
     method: 'GET',
     url: '/api/v1/studio',
@@ -2300,10 +2327,15 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   const studioState = studio.json();
   assert.equal(studioState.scene.currentRevision, 1);
   assert.deepEqual(studioState.measuredMetrics, {
-    totalScreens: 3,
+    totalScreens: 2,
     onlineScreens: 2,
     reportingScreens: 1,
   });
+  const archivedScreen = studioState.tvs.find(
+    (screen) => screen.id === archivedEnrollment.json().id,
+  );
+  assert.equal(archivedScreen.enrollment_state, 'revoked');
+  assert.equal(archivedScreen.online, null);
   const measuredScreen = studioState.tvs.find((screen) => screen.id === pendingDevice.id);
   assert.equal(measuredScreen.online, true);
   assert.equal(measuredScreen.latest_metric.networkState, 'ethernet');
@@ -2322,6 +2354,133 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(refreshedScreen.latest_metric.networkState, 'ethernet');
   assert.equal(refreshedScreen.latest_metric.storageFreeBytes, 2_147_483_648);
   assert.equal(refreshedScreen.latest_metric.syncDurationMs, 245);
+
+  const archivedDeletionWithoutCsrf = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${archivedEnrollment.json().id}`,
+    headers: { cookie },
+    payload: { confirmation: 'SUPPRIMER LA TV' },
+  });
+  assert.equal(archivedDeletionWithoutCsrf.statusCode, 403);
+  const archivedDeletionWrongPhrase = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${archivedEnrollment.json().id}`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'SUPPRIMER' },
+  });
+  assert.equal(archivedDeletionWrongPhrase.statusCode, 400);
+  assert.equal(
+    archivedDeletionWrongPhrase.json().error,
+    'tv_deletion_confirmation_required',
+  );
+  const activeDeletion = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${pendingDevice.id}`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'SUPPRIMER LA TV' },
+  });
+  assert.equal(activeDeletion.statusCode, 409, activeDeletion.body);
+  assert.equal(activeDeletion.json().error, 'tv_must_be_revoked_before_deletion');
+  const simulator = studioState.tvs.find(
+    (screen) => screen.enrollment_state === 'simulated',
+  );
+  assert.ok(simulator);
+  const simulatorDeletion = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${simulator.id}`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'SUPPRIMER LA TV' },
+  });
+  assert.equal(simulatorDeletion.statusCode, 409, simulatorDeletion.body);
+  assert.equal(simulatorDeletion.json().error, 'simulator_deletion_not_allowed');
+
+  await Promise.all([
+    pool.query(
+      `INSERT INTO scene_assignments (id, scene_id, target_type, target_id)
+       VALUES ($1, $2, 'tv', $3)`,
+      [crypto.randomUUID(), studioState.scene.id, archivedEnrollment.json().id],
+    ),
+    pool.query(
+      `INSERT INTO scene_schedules (
+         id, scene_id, target_type, target_id, starts_at, ends_at
+       ) VALUES ($1, $2, 'tv', $3, now() + interval '1 day', now() + interval '2 days')`,
+      [crypto.randomUUID(), studioState.scene.id, archivedEnrollment.json().id],
+    ),
+    pool.query(
+      `INSERT INTO messages (id, title, body, target_type, target_id)
+       VALUES ($1, 'Archive', 'À supprimer', 'tv', $2)`,
+      [crypto.randomUUID(), archivedEnrollment.json().id],
+    ),
+    pool.query(
+      `INSERT INTO source_settings (
+         id, target_type, target_id, source_kind, label, configuration
+       ) VALUES ($1, 'tv', $2, 'hdmi', 'Archive', '{}'::jsonb)`,
+      [crypto.randomUUID(), archivedEnrollment.json().id],
+    ),
+    pool.query(
+      `INSERT INTO power_schedules (id, target_type, target_id, timezone, rules)
+       VALUES ($1, 'tv', $2, 'Europe/Paris', '[]'::jsonb)`,
+      [crypto.randomUUID(), archivedEnrollment.json().id],
+    ),
+    pool.query(
+      `INSERT INTO device_metrics (screen_id, payload)
+       VALUES ($1, '{}'::jsonb)`,
+      [archivedEnrollment.json().id],
+    ),
+  ]);
+
+  const archivedDeletion = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${archivedEnrollment.json().id}`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'SUPPRIMER LA TV' },
+  });
+  assert.equal(archivedDeletion.statusCode, 200, archivedDeletion.body);
+  assert.deepEqual(archivedDeletion.json(), {
+    deleted: true,
+    id: archivedEnrollment.json().id,
+  });
+  const repeatedArchivedDeletion = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/tvs/${archivedEnrollment.json().id}`,
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { confirmation: 'SUPPRIMER LA TV' },
+  });
+  assert.equal(repeatedArchivedDeletion.statusCode, 404);
+  assert.equal(repeatedArchivedDeletion.json().error, 'tv_not_found');
+
+  const fleetAfterDeletion = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tvs',
+    headers: { cookie },
+  });
+  assert.equal(fleetAfterDeletion.statusCode, 200, fleetAfterDeletion.body);
+  assert.equal(
+    fleetAfterDeletion.json().tvs.some((screen) => screen.id === archivedEnrollment.json().id),
+    false,
+  );
+  assert.deepEqual(fleetAfterDeletion.json().measuredMetrics, studioState.measuredMetrics);
+
+  const deletedTvReferences = await pool.query(
+    `SELECT
+       (SELECT count(*)::integer FROM scene_assignments WHERE target_type = 'tv' AND target_id = $1) AS scene_assignments,
+       (SELECT count(*)::integer FROM scene_schedules WHERE target_type = 'tv' AND target_id = $1) AS scene_schedules,
+       (SELECT count(*)::integer FROM messages WHERE target_type = 'tv' AND target_id = $1) AS messages,
+       (SELECT count(*)::integer FROM source_settings WHERE target_type = 'tv' AND target_id = $1) AS source_settings,
+       (SELECT count(*)::integer FROM power_schedules WHERE target_type = 'tv' AND target_id = $1) AS power_schedules,
+       (SELECT count(*)::integer FROM device_metrics WHERE screen_id = $1) AS device_metrics,
+       (SELECT count(*)::integer FROM audit_log WHERE action = 'tv.deleted' AND target_id = $1::text) AS audit_entries`,
+    [archivedEnrollment.json().id],
+  );
+  assert.deepEqual(deletedTvReferences.rows[0], {
+    scene_assignments: 0,
+    scene_schedules: 0,
+    messages: 0,
+    source_settings: 0,
+    power_schedules: 0,
+    device_metrics: 0,
+    audit_entries: 1,
+  });
   const seededGreeting = studioState.scene.document.nodes.find(
     (node) => node.kind === 'text' && node.props?.role === 'greeting',
   );
@@ -2773,7 +2932,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.deepEqual(
     Object.fromEntries(credentialAudit.rows.map((row) => [row.action, row.count])),
     {
-      'tv.credential.revoked': 1,
+      'tv.credential.revoked': 2,
       'tv.credential.rotation.confirmed': 1,
       'tv.credential.rotation.prepared': 1,
       'tv.reenrollment.created': 1,
