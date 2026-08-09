@@ -34,41 +34,60 @@ const decrypt = ({ encrypted, enrollmentCode }) => {
   ]).toString('utf8'));
 };
 
-test('le code installation est lisible, normalise et conserve 80 bits aleatoires', () => {
+test('les nouveaux codes installation contiennent 16 chiffres', () => {
   const generated = randomEnrollmentCode();
-  assert.match(generated, /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{16}$/);
+  assert.match(generated, /^\d{16}$/);
   const formatted = formatEnrollmentCode(generated);
-  assert.match(formatted, /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){3}$/);
-  assert.equal(normalizeEnrollmentCode(`  ${formatted.toLowerCase()}  `), generated);
+  assert.match(formatted, /^\d{4}(?:-\d{4}){3}$/);
+  assert.equal(normalizeEnrollmentCode(`  ${formatted}  `), generated);
+  assert.equal(normalizeEnrollmentCode('0123 4567 8901 2345'), '0123456789012345');
+  assert.equal(
+    enrollmentCodeLookupId('0123-4567-8901-2345'),
+    'bcfca4eee7bcc8aa874bf2336a8e0d4afe4b1a2fe441a2efd56c058f651bf37f',
+  );
+});
+
+test('les codes alphanumeriques deja emis restent valides pendant leur ticket', () => {
+  assert.equal(
+    normalizeEnrollmentCode('2345-6789-abcd-efgh'),
+    '23456789ABCDEFGH',
+  );
   assert.equal(
     enrollmentCodeLookupId('2345-6789-ABCD-EFGH'),
     '805ffeb0f1d0771fc4926c0812fc53ae9329110a493135bc05c90dc6df3cfdf9',
   );
+  assert.equal(formatEnrollmentCode('23456789ABCDEFGH'), '2345-6789-ABCD-EFGH');
+  assert.throws(() => normalizeEnrollmentCode('0123-4567-89AB-CDEF'), /invalid_enrollment_code/);
   assert.throws(() => normalizeEnrollmentCode('AAAA-AAAA-AAAA-AAA1'), /invalid_enrollment_code/);
 });
 
-test('le code dechiffre la cle longue et la CA sans les exposer en clair', () => {
-  const enrollmentCode = '2345-6789-ABCD-EFGH';
-  const enrollmentKey = crypto.randomBytes(32).toString('base64url');
-  const certificatePem = `-----BEGIN CERTIFICATE-----\n${'A'.repeat(600)}\n-----END CERTIFICATE-----\n`;
-  const encrypted = encryptEnrollmentCodeBootstrap({
-    certificatePem,
-    certificateFingerprintSha256: 'a'.repeat(64),
-    deviceId: '11111111-1111-4111-8111-111111111111',
-    enrollmentKey,
-    enrollmentCode,
-    salt: Buffer.alloc(32, 7),
-    iv: Buffer.alloc(12, 9),
-  });
-  assert.deepEqual(decrypt({ encrypted, enrollmentCode }), {
-    version: 1,
-    deviceId: '11111111-1111-4111-8111-111111111111',
-    enrollmentKey,
-    certificatePem,
-    certificateFingerprintSha256: 'a'.repeat(64),
-  });
-  assert.throws(
-    () => decrypt({ encrypted, enrollmentCode: '2345-6789-ABCD-EFGJ' }),
-    /authenticate data|bad decrypt|Unsupported state/i,
-  );
+test('les codes numeriques et historiques dechiffrent uniquement leur enveloppe', () => {
+  const cases = [
+    ['0123-4567-8901-2345', '0123-4567-8901-2346'],
+    ['2345-6789-ABCD-EFGH', '2345-6789-ABCD-EFGJ'],
+  ];
+  for (const [enrollmentCode, wrongCode] of cases) {
+    const enrollmentKey = crypto.randomBytes(32).toString('base64url');
+    const certificatePem = `-----BEGIN CERTIFICATE-----\n${'A'.repeat(600)}\n-----END CERTIFICATE-----\n`;
+    const encrypted = encryptEnrollmentCodeBootstrap({
+      certificatePem,
+      certificateFingerprintSha256: 'a'.repeat(64),
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      enrollmentKey,
+      enrollmentCode,
+      salt: Buffer.alloc(32, 7),
+      iv: Buffer.alloc(12, 9),
+    });
+    assert.deepEqual(decrypt({ encrypted, enrollmentCode }), {
+      version: 1,
+      deviceId: '11111111-1111-4111-8111-111111111111',
+      enrollmentKey,
+      certificatePem,
+      certificateFingerprintSha256: 'a'.repeat(64),
+    });
+    assert.throws(
+      () => decrypt({ encrypted, enrollmentCode: wrongCode }),
+      /authenticate data|bad decrypt|Unsupported state/i,
+    );
+  }
 });

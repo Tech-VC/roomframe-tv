@@ -35,14 +35,11 @@ data class ResolvedEnrollment(
 )
 
 object EnrollmentCodePolicy {
-    private const val ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
-
     fun normalize(value: String): String {
         val normalized = value
-            .uppercase()
             .filterNot { it == '-' || it.isWhitespace() }
         require(
-            normalized.length == 16 && normalized.all(ALPHABET::contains),
+            normalized.length == 16 && normalized.all { it in '0'..'9' },
         ) { "Code d’installation invalide" }
         return normalized
     }

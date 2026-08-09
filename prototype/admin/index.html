@@ -6,7 +6,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
   <link rel="stylesheet" href="/styles.css?v=0.3.0-ui19">
-  <script type="module" src="/app.js?v=0.3.0-ui19"></script>
+  <script type="module" src="/app.js?v=0.3.0-ui20"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller à la scène</a>
@@ -344,7 +344,7 @@
         <aside class="panel-index"><div class="eyebrow">Parc des écrans</div><h1 class="editorial-title" id="fleetTitle">Les TV,<br>salle par<br>salle.</h1><p class="note">Préparez chaque TV, choisissez sa scène et suivez son état depuis cette page.</p></aside>
         <div class="panel-content fleet-workbench">
           <section class="enrollment-console" aria-labelledby="enrollmentTitle">
-            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La TV détecte normalement le serveur. Vous ne saisirez qu’un code valable 30 minutes ; l’adresse HTTPS reste disponible si la détection échoue.</p></div>
+            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La TV trouve normalement le serveur. Créez un code valable 30 minutes, puis saisissez uniquement ses 16 chiffres avec la télécommande. Les tirets s’ajoutent automatiquement sur la TV.</p></div>
             <form id="enrollmentForm">
               <label for="enrollmentDisplayName">Nom de la TV<input id="enrollmentDisplayName" name="displayName" maxlength="100" required placeholder="Écran salle 1"></label>
               <label for="enrollmentRoomName">Salle<input id="enrollmentRoomName" name="roomName" maxlength="100" required placeholder="Salle de réunion 1"></label>
@@ -354,14 +354,14 @@
           </section>
           <section class="enrollment-ticket hidden" id="enrollmentTicket" aria-live="polite" aria-labelledby="enrollmentTicketTitle">
             <div><span>USAGE UNIQUE</span><h2 id="enrollmentTicketTitle">Code à saisir sur la TV</h2><p id="enrollmentExpiry"></p></div>
-            <label class="enrollment-code-field" for="enrollmentCode">Code d’installation<input id="enrollmentCode" readonly autocomplete="off" spellcheck="false"></label>
+            <label class="enrollment-code-field" for="enrollmentCode"><span id="enrollmentCodeLabel">Code à 16 chiffres</span><input id="enrollmentCode" readonly inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="enrollmentExpiry"></label>
             <div class="ticket-actions">
-              <button class="tool primary" id="copyEnrollmentButton" type="button">Copier le code</button>
+              <button class="tool primary" id="copyEnrollmentButton" type="button">Copier les chiffres</button>
               <button class="tool" id="hideEnrollmentButton" type="button">Masquer maintenant</button>
             </div>
             <details class="enrollment-advanced">
-              <summary>Dépannage · saisie complète</summary>
-              <p>À utiliser uniquement avec une ancienne application TV ou pour un diagnostic manuel.</p>
+              <summary>Ancienne application ou dépannage</summary>
+              <p>Ces valeurs techniques ne sont jamais à saisir dans l’application TV actuelle.</p>
               <div>
                 <label for="enrollmentServer">Serveur HTTPS<input id="enrollmentServer" readonly></label>
                 <label for="enrollmentDeviceId">Identifiant TV<input id="enrollmentDeviceId" readonly></label>

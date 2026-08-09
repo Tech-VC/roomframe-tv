@@ -200,7 +200,9 @@ contextuels sont stockés.
 
 Avant cet échange, le serveur chiffre dans une enveloppe AES-256-GCM sa CA
 HTTPS publique, l’UUID et la clé longue. La clé AES est dérivée par
-HKDF-SHA256 depuis le code à 80 bits et un sel propre au ticket. La TV ne
+HKDF-SHA256 depuis le code numérique de 16 chiffres (environ 53,15 bits) et un
+sel propre au ticket. Le ticket expire après 30 minutes et le bootstrap est
+limité à 10 essais par adresse IP toutes les 15 minutes. La TV ne
 transmet que l’identifiant SHA-256 du code, déchiffre l’enveloppe localement,
 puis vérifie que la chaîne TLS réellement rencontrée aboutit à cette CA et que
 le nom ou l’IP correspond à l’URL saisie. Elle épingle ensuite la CA avant la

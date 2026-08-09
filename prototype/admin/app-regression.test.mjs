@@ -147,8 +147,13 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /state\.tvCredentialReturnFocus/);
   assert.match(source, /ticket\.trustBootstrap\?\.mode === "encrypted-server-ca"/);
   assert.match(source, /ticket\.simplifiedEnrollment\?\.mode === "encrypted-code-bootstrap"/);
-  assert.match(source, /La TV vérifie le serveur avant de récupérer les paramètres techniques/);
+  assert.match(markup, /saisissez uniquement ses 16 chiffres/);
+  assert.match(markup, /Les tirets s’ajoutent automatiquement sur la TV/);
+  assert.match(markup, /Ces valeurs techniques ne sont jamais à saisir dans l’application TV actuelle/);
+  assert.match(source, /enrollmentCodePresentation\(ticket\.enrollmentCode\)\.valid/);
+  assert.match(source, /16 chiffres copiés sans les tirets/);
   assert.match(styles, /\.enrollment-ticket input \{[^}]*color: var\(--ink\);[^}]*background: #fff;/);
+  assert.match(styles, /\.enrollment-code-field input \{[^}]*font-variant-numeric: tabular-nums;/);
   assert.match(source, /server_ca_not_ready/);
   assert.match(source, /L’autorité HTTPS locale n’est pas encore prête/);
 });

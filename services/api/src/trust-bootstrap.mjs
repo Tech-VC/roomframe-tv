@@ -4,15 +4,21 @@ import { readFile } from 'node:fs/promises';
 export const SERVER_TRUST_BOOTSTRAP_CONTEXT = 'roomframe-server-ca-bootstrap-v1';
 export const ENROLLMENT_CODE_BOOTSTRAP_CONTEXT = 'roomframe-enrollment-code-bootstrap-v1';
 
-const enrollmentCodeAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const numericEnrollmentCodeAlphabet = '0123456789';
+const legacyEnrollmentCodeAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+const enrollmentCodeLength = 16;
 
 export const normalizeEnrollmentCode = (value) => {
   const normalized = String(value ?? '')
     .toUpperCase()
     .replaceAll(/[-\s]/g, '');
+  const numericCode = [...normalized]
+    .every((character) => numericEnrollmentCodeAlphabet.includes(character));
+  const legacyCode = [...normalized]
+    .every((character) => legacyEnrollmentCodeAlphabet.includes(character));
   if (
-    normalized.length !== 16
-    || [...normalized].some((character) => !enrollmentCodeAlphabet.includes(character))
+    normalized.length !== enrollmentCodeLength
+    || (!numericCode && !legacyCode)
   ) {
     throw new Error('invalid_enrollment_code');
   }
@@ -24,9 +30,10 @@ export const formatEnrollmentCode = (value) => (
 );
 
 export const randomEnrollmentCode = () => {
-  const random = crypto.randomBytes(16);
-  return [...random]
-    .map((value) => enrollmentCodeAlphabet[value & 31])
+  return Array.from({ length: enrollmentCodeLength })
+    .map(() => numericEnrollmentCodeAlphabet[
+      crypto.randomInt(numericEnrollmentCodeAlphabet.length)
+    ])
     .join('');
 };
 

@@ -24,9 +24,10 @@ parcours normal.
    son URL HTTPS ou son URL IP de secours, puis le même code.
 
 Le mode manuel est toujours disponible, même lorsque la détection est en
-cours ou a réussi. Le code comporte 16 caractères, expire après 30 minutes et
-ne fonctionne qu’une fois. La TV n’envoie pas le code lisible lors du premier
-contact TLS : elle envoie seulement un identifiant SHA-256 dérivé, déchiffre
+cours ou a réussi. Le code comporte 16 chiffres groupés automatiquement par
+quatre, expire après 30 minutes et ne fonctionne qu’une fois. La TV n’envoie
+pas le code lisible lors du premier contact TLS : elle envoie seulement un
+identifiant SHA-256 dérivé, déchiffre
 localement la CA et la clé longue contenues dans l’enveloppe, puis vérifie que
 la chaîne TLS observée dépend bien de cette CA avant l’enrôlement.
 

@@ -1319,7 +1319,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.match(
     pendingDevice.enrollmentCode,
-    /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){3}$/,
+    /^\d{4}(?:-\d{4}){3}$/,
   );
   const codeBootstrap = await app.inject({
     method: 'POST',
@@ -2035,6 +2035,10 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     mode: 'encrypted-code-bootstrap',
     version: 1,
   });
+  assert.match(
+    reenrollment.json().enrollmentCode,
+    /^\d{4}(?:-\d{4}){3}$/,
+  );
   const reenrollmentCodeBootstrap = await app.inject({
     method: 'POST',
     url: '/api/v1/tv/enrollment-bootstrap',

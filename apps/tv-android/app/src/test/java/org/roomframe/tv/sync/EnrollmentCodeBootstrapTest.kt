@@ -17,16 +17,16 @@ class EnrollmentCodeBootstrapTest {
     @Test
     fun `normalise le code affiche par la regie`() {
         assertEquals(
-            "23456789ABCDEFGH",
-            EnrollmentCodePolicy.normalize(" 2345-6789-abcd-efgh "),
+            "1234567890123456",
+            EnrollmentCodePolicy.normalize(" 1234-5678-9012-3456 "),
         )
         assertEquals(
-            "2345-6789-ABCD-EFGH",
-            EnrollmentCodePolicy.format("23456789abcdefgh"),
+            "1234-5678-9012-3456",
+            EnrollmentCodePolicy.format("1234567890123456"),
         )
         assertEquals(
-            "805ffeb0f1d0771fc4926c0812fc53ae9329110a493135bc05c90dc6df3cfdf9",
-            EnrollmentCodeBootstrapCrypto.lookupId("2345-6789-ABCD-EFGH"),
+            "35c99472017cccc4a1245364596895c4f63f3f50b8f28881ff3e23fb0a469f9e",
+            EnrollmentCodeBootstrapCrypto.lookupId("1234-5678-9012-3456"),
         )
         assertEquals(
             "https://roomframe.example.local",
@@ -37,13 +37,13 @@ class EnrollmentCodeBootstrapTest {
             EnrollmentCodePolicy.manualServerUrl(" https://192.0.2.20 "),
         )
         assertThrows(IllegalArgumentException::class.java) {
-            EnrollmentCodePolicy.normalize("2345-6789-ABCD-EFG1")
+            EnrollmentCodePolicy.normalize("1234-5678-9012-345A")
         }
     }
 
     @Test
     fun `dechiffre le paquet produit pour un code installation`() {
-        val code = "2345-6789-ABCD-EFGH"
+        val code = "1234-5678-9012-3456"
         val certificate = "-----BEGIN CERTIFICATE-----\n" +
             "A".repeat(600) +
             "\n-----END CERTIFICATE-----\n"
@@ -58,7 +58,7 @@ class EnrollmentCodeBootstrapTest {
         assertEquals(certificate, resolved.certificatePem)
         assertEquals("a".repeat(64), resolved.certificateFingerprintSha256)
         assertThrows(AEADBadTagException::class.java) {
-            EnrollmentCodeBootstrapCrypto.decrypt(payload, "2345-6789-ABCD-EFGJ")
+            EnrollmentCodeBootstrapCrypto.decrypt(payload, "1234-5678-9012-3457")
         }
     }
 

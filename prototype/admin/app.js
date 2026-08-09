@@ -15,6 +15,7 @@ import {
 } from "./scene-model.js?v=0.3.0-ui19";
 import { paletteFromRgba } from "./logo-palette.js?v=0.3.0-ui19";
 import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui15";
+import { enrollmentCodePresentation } from "./enrollment-code.js?v=0.3.0-ui20";
 import {
   creationOptionsFromJSON,
   credentialToJSON,
@@ -1236,7 +1237,7 @@ const validEnrollmentTicket = (ticket) => (
   /^[0-9a-f-]{36}$/i.test(String(ticket?.id || ""))
   && typeof ticket?.enrollmentKey === "string"
   && ticket.enrollmentKey.length >= 20
-  && /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){3}$/.test(String(ticket.enrollmentCode || ""))
+  && enrollmentCodePresentation(ticket.enrollmentCode).valid
   && Boolean(ticket.expiresAt)
   && ticket.trustBootstrap?.mode === "encrypted-server-ca"
   && ticket.trustBootstrap?.version === 1
@@ -1249,20 +1250,28 @@ const renderEnrollmentTicket = () => {
   $("#enrollmentTicket").classList.toggle("hidden", !ticket);
   if (!ticket) {
     $("#enrollmentCode").value = "";
+    $("#enrollmentCodeLabel").textContent = "Code à 16 chiffres";
+    $("#copyEnrollmentButton").textContent = "Copier les chiffres";
     $("#enrollmentServer").value = "";
     $("#enrollmentDeviceId").value = "";
     $("#enrollmentSecret").value = "";
     $("#enrollmentExpiry").textContent = "";
     return;
   }
-  $("#enrollmentCode").value = ticket.enrollmentCode;
+  const code = enrollmentCodePresentation(ticket.enrollmentCode);
+  $("#enrollmentCode").value = code.formatted;
+  $("#enrollmentCodeLabel").textContent = code.numeric
+    ? "Code à 16 chiffres"
+    : "Ancien code d’installation";
+  $("#copyEnrollmentButton").textContent = code.numeric
+    ? "Copier les chiffres"
+    : "Copier le code";
   $("#enrollmentServer").value = location.origin;
   $("#enrollmentDeviceId").value = ticket.id;
   $("#enrollmentSecret").value = ticket.enrollmentKey;
-  $("#enrollmentExpiry").textContent = (
-    `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. `
-    + "La TV vérifie le serveur avant de récupérer les paramètres techniques, puis le code ne fonctionne plus."
-  );
+  $("#enrollmentExpiry").textContent = code.numeric
+    ? `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. Saisissez uniquement les 16 chiffres : les tirets s’ajoutent automatiquement sur la TV. Ce code fonctionne une seule fois.`
+    : `Valable jusqu’au ${new Date(ticket.expiresAt).toLocaleString("fr-FR")}. Ancien format : saisissez les 16 caractères comme ils sont affichés.`;
 };
 
 const setEnrollmentTicket = (ticket) => {
@@ -3424,9 +3433,12 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
 $("#copyEnrollmentButton").addEventListener("click", async () => {
   const ticket = state.enrollmentTicket;
   if (!ticket) return;
+  const code = enrollmentCodePresentation(ticket.enrollmentCode);
   try {
-    await navigator.clipboard.writeText(ticket.enrollmentCode);
-    toast("Code d’installation copié. Effacez le presse-papiers après usage.");
+    await navigator.clipboard.writeText(code.clipboard);
+    toast(code.numeric
+      ? "16 chiffres copiés sans les tirets. Effacez le presse-papiers après usage."
+      : "Ancien code copié. Effacez le presse-papiers après usage.");
   } catch {
     toast("Copie indisponible. Saisissez le code affiché sur la TV.", true);
   }

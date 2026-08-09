@@ -247,8 +247,9 @@ textarea { min-height: 58px; resize: vertical; }
   border-color: rgba(255,255,255,.45);
 }
 .enrollment-code-field input {
-  font: 800 22px/1.1 var(--mono, monospace);
-  letter-spacing: .12em;
+  font: 900 28px/1.1 var(--mono, monospace);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .1em;
   text-align: center;
 }
 .ticket-actions { display: flex; justify-content: flex-end; gap: 10px; }

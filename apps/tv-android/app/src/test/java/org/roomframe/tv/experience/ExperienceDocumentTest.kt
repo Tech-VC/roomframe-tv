@@ -17,6 +17,19 @@ class ExperienceDocumentTest {
     }
 
     @Test
+    fun `canonical JSON matches server escaping for URLs and paths`() {
+        val value = JSONObject()
+            .put("path", "/api/v1/discovery")
+            .put("origin", "https://roomframe.example.local")
+            .put("label", "Ligne 1\n\"Ligne 2\"")
+            .put("key/with/slashes", true)
+        assertEquals(
+            """{"key/with/slashes":true,"label":"Ligne 1\n\"Ligne 2\"","origin":"https://roomframe.example.local","path":"/api/v1/discovery"}""",
+            CanonicalJson.stringify(value),
+        )
+    }
+
+    @Test
     fun `scene parser keeps bounded blur and one logical canvas`() {
         val scene = ExperienceDocumentParser.parseScene(sceneBytes(blur = 18.0))
         assertEquals(18f, scene.background.blur)

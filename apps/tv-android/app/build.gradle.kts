@@ -16,8 +16,8 @@ android {
         applicationId = "org.roomframe.tv"
         minSdk = 29
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.3.5"
+        versionCode = 9
+        versionName = "0.3.6"
     }
 
     buildTypes { release { isMinifyEnabled = true } }

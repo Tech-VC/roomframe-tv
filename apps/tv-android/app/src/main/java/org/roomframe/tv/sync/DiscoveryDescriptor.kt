@@ -164,7 +164,6 @@ object DiscoveryDescriptorPolicy {
         MessageDigest.getInstance("SHA-256").digest(bytes)
             .joinToString("") { "%02x".format(it) }
 
-    const val NSD_SERVICE_TYPE = "_roomframe._tcp."
     const val MANIFEST_SERVICE_TYPE = "_roomframe._tcp"
     const val DISCOVERY_PATH = "/api/v1/discovery"
     private const val SIGNING_ALGORITHM = "ECDSA-P256-SHA256"

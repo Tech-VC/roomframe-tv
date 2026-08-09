@@ -6,6 +6,7 @@ import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.net.Inet4Address
 import java.net.URL
@@ -35,6 +36,9 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
     private var callback: ((Result<List<DiscoveryCandidate>>) -> Unit)? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var active = false
+    private var announcementsSeen = 0
+    private var resolutionFailures = 0
+    private var validationFailures = 0
 
     fun discover(
         timeoutMillis: Long = DEFAULT_TIMEOUT_MS,
@@ -46,6 +50,9 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
         callback = onComplete
         services.clear()
         candidates.clear()
+        announcementsSeen = 0
+        resolutionFailures = 0
+        validationFailures = 0
         multicastLock = runCatching {
             wifiManager?.createMulticastLock(MULTICAST_LOCK_TAG)?.apply {
                 setReferenceCounted(false)
@@ -56,21 +63,25 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
             override fun onDiscoveryStarted(serviceType: String) = Unit
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                if (
-                    serviceInfo.serviceType.equals(
-                        DiscoveryDescriptorPolicy.NSD_SERVICE_TYPE,
-                        ignoreCase = true,
-                    )
-                ) {
-                    services.putIfAbsent(
-                        "${serviceInfo.serviceName}\u0000${serviceInfo.serviceType}",
+                if (RoomFrameNsdServiceType.matches(serviceInfo.serviceType)) {
+                    val previous = services.putIfAbsent(
+                        RoomFrameNsdServiceType.serviceKey(
+                            serviceInfo.serviceName,
+                            serviceInfo.serviceType,
+                        ),
                         serviceInfo,
                     )
+                    if (previous == null) announcementsSeen += 1
                 }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                services.remove("${serviceInfo.serviceName}\u0000${serviceInfo.serviceType}")
+                services.remove(
+                    RoomFrameNsdServiceType.serviceKey(
+                        serviceInfo.serviceName,
+                        serviceInfo.serviceType,
+                    ),
+                )
             }
 
             override fun onDiscoveryStopped(serviceType: String) = Unit
@@ -84,7 +95,7 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
         listener = discoveryListener
         try {
             nsdManager.discoverServices(
-                DiscoveryDescriptorPolicy.NSD_SERVICE_TYPE,
+                RoomFrameNsdServiceType.QUERY,
                 NsdManager.PROTOCOL_DNS_SD,
                 discoveryListener,
             )
@@ -104,7 +115,7 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
         if (!active) return
         val service = queue.removeFirstOrNull()
         if (service == null) {
-            finish(Result.success(candidates.values.sortedBy { it.descriptor.origin }))
+            finish(completedDiscoveryResult())
             return
         }
         runCatching {
@@ -112,18 +123,29 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
                 service,
                 object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                        handler.post { resolveNext(queue) }
+                        handler.post {
+                            resolutionFailures += 1
+                            Log.w(LOG_TAG, "Résolution DNS-SD RoomFrame refusée (code=$errorCode)")
+                            resolveNext(queue)
+                        }
                     }
 
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                         executor.execute {
-                            val candidate = runCatching {
+                            val result = runCatching {
                                 DiscoveryDescriptorClient.fetch(serviceInfo)
-                            }.getOrNull()
+                            }
                             handler.post {
-                                if (candidate != null) {
+                                result.onSuccess { candidate ->
                                     val identity = candidate.descriptor.publicKeyFingerprintSha256
                                     candidates.putIfAbsent(identity, candidate)
+                                }.onFailure { error ->
+                                    validationFailures += 1
+                                    Log.w(
+                                        LOG_TAG,
+                                        "Validation HTTPS du candidat DNS-SD RoomFrame échouée",
+                                        error,
+                                    )
                                 }
                                 resolveNext(queue)
                             }
@@ -131,9 +153,33 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
                     }
                 },
             )
-        }.onFailure {
-            handler.post { resolveNext(queue) }
+        }.onFailure { error ->
+            handler.post {
+                resolutionFailures += 1
+                Log.w(
+                    LOG_TAG,
+                    "Démarrage de la résolution DNS-SD RoomFrame impossible",
+                    error,
+                )
+                resolveNext(queue)
+            }
         }
+    }
+
+    private fun completedDiscoveryResult(): Result<List<DiscoveryCandidate>> {
+        val resolvedCandidates = candidates.values.sortedBy { it.descriptor.origin }
+        if (resolvedCandidates.isNotEmpty() || announcementsSeen == 0) {
+            return Result.success(resolvedCandidates)
+        }
+        val message = when {
+            validationFailures > 0 ->
+                "Annonce RoomFrame détectée, mais le serveur n'a pas pu être validé"
+            resolutionFailures > 0 ->
+                "Annonce RoomFrame détectée, mais son adresse locale n'a pas pu être résolue"
+            else ->
+                "Annonce RoomFrame détectée, mais aucun serveur utilisable n'a été obtenu"
+        }
+        return Result.failure(IllegalStateException(message))
     }
 
     private fun finish(result: Result<List<DiscoveryCandidate>>) {
@@ -157,8 +203,9 @@ class RoomFrameDiscovery(context: Context) : AutoCloseable {
     }
 
     private companion object {
-        const val DEFAULT_TIMEOUT_MS = 5_000L
+        const val DEFAULT_TIMEOUT_MS = 8_000L
         const val MULTICAST_LOCK_TAG = "roomframe-local-discovery"
+        const val LOG_TAG = "RoomFrameDiscovery"
     }
 }
 

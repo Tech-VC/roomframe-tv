@@ -238,12 +238,16 @@ TV. La signature est vérifiée avant que l’APK ne tente le bootstrap chiffré
 
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
 `POST /api/v1/tvs/enrollment`. Le parcours courant affiche un code de 16
-caractères. La TV calcule localement son identifiant SHA-256 contextuel et
+chiffres groupés par quatre (`0000-0000-0000-0000`). La TV calcule localement
+son identifiant SHA-256 contextuel et
 envoie seulement `{ "enrollmentCodeId": "<64 hex>" }` à
 `POST /tv/enrollment-bootstrap`. La réponse AES-256-GCM contient la CA HTTPS,
 l’UUID et la clé longue ; seul le code resté sur la TV permet de la
 déchiffrer. L’APK valide ensuite la chaîne TLS observée et épingle la CA avant
 d’échanger la clé longue une seule fois sur `POST /api/v1/tv/enroll`.
+Les tickets alphanumériques créés par une version antérieure restent
+utilisables jusqu’à leur expiration ; toutes les nouvelles créations et
+réinitialisations utilisent le format numérique.
 
 Le parcours historique reste disponible pour une ancienne APK : celle-ci
 récupère sur `GET /tv/trust-bootstrap` la CA HTTPS chiffrée avec la clé longue
