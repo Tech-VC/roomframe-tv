@@ -18,6 +18,10 @@ import { buildApp } from '../src/app.mjs';
 import { buildTestUpdate } from '../scripts/build-test-update.mjs';
 import { loadConfig } from '../src/config.mjs';
 import { createPool, runMigrations } from '../src/database.mjs';
+import {
+  claimGithubUpdateCheck,
+  completeGithubUpdateCheck,
+} from '../src/github-update-check.mjs';
 import { pollGithubUpdates } from '../src/github-update-poller.mjs';
 import { processOneMediaJob } from '../src/media-worker.mjs';
 import { importReleaseBundle } from '../src/release-importer.mjs';
@@ -25,6 +29,7 @@ import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
 import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
+import { releaseSourceKey } from '../src/update-source.mjs';
 import {
   ENROLLMENT_CODE_BOOTSTRAP_CONTEXT,
   enrollmentCodeLookupId,
@@ -1013,6 +1018,71 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(releasesAfterPoll.json().serverUpdateRequests.length, 1);
   assert.equal(releasesAfterPoll.json().serverUpdateRequests[0].status, 'pending');
   assert.equal(releasesAfterPoll.json().releases[0].has_server_archive, true);
+  const manualGithubCheck = await app.inject({
+    method: 'POST',
+    url: '/api/v1/releases/github-checks',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(manualGithubCheck.statusCode, 202, manualGithubCheck.body);
+  assert.equal(manualGithubCheck.json().alreadyRequested, false);
+  assert.equal(manualGithubCheck.json().check.status, 'pending');
+  const duplicateGithubCheck = await app.inject({
+    method: 'POST',
+    url: '/api/v1/releases/github-checks',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(duplicateGithubCheck.statusCode, 202, duplicateGithubCheck.body);
+  assert.equal(duplicateGithubCheck.json().alreadyRequested, true);
+  assert.equal(
+    duplicateGithubCheck.json().check.id,
+    manualGithubCheck.json().check.id,
+  );
+  const releasesWithPendingCheck = await app.inject({
+    method: 'GET',
+    url: '/api/v1/releases',
+    headers: { cookie },
+  });
+  assert.equal(
+    releasesWithPendingCheck.json().source.state.manualCheck.status,
+    'pending',
+  );
+  const updateSourceKey = releaseSourceKey(
+    config.updateGithubRepository,
+    config.updateGithubChannel,
+  );
+  const claimedGithubCheck = await claimGithubUpdateCheck(pool, updateSourceKey);
+  assert.equal(claimedGithubCheck.id, manualGithubCheck.json().check.id);
+  assert.equal(
+    await completeGithubUpdateCheck(
+      pool,
+      updateSourceKey,
+      claimedGithubCheck.id,
+      { status: 'completed', result: 'not-modified' },
+    ),
+    true,
+  );
+  const releasesWithCompletedCheck = await app.inject({
+    method: 'GET',
+    url: '/api/v1/releases',
+    headers: { cookie },
+  });
+  assert.equal(
+    releasesWithCompletedCheck.json().source.state.manualCheck.status,
+    'completed',
+  );
+  assert.equal(
+    releasesWithCompletedCheck.json().source.state.manualCheck.result,
+    'not-modified',
+  );
+  const rateLimitedGithubCheck = await app.inject({
+    method: 'POST',
+    url: '/api/v1/releases/github-checks',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {},
+  });
+  assert.equal(rateLimitedGithubCheck.statusCode, 429);
   await pool.query(
     `UPDATE server_update_requests
      SET status = 'completed', completed_at = now(), updated_at = now()

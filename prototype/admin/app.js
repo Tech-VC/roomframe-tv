@@ -1550,6 +1550,23 @@ const releaseSourceErrorLabel = (code) => ({
   update_supply_chain_incomplete: "les preuves de provenance de la version sont incomplètes",
 }[code] ?? "la version n’a pas passé tous les contrôles de sécurité");
 
+const githubUpdateCheckActive = (source = state.releaseSource) => (
+  ["pending", "running"].includes(source?.state?.manualCheck?.status)
+);
+
+const githubUpdateCheckLabel = (check) => {
+  if (!check) return null;
+  if (check.status === "pending") return "Recherche demandée…";
+  if (check.status === "running") return "Recherche GitHub en cours…";
+  if (check.status === "failed") {
+    return `Recherche interrompue : ${releaseSourceErrorLabel(check.errorCode)}`;
+  }
+  if (check.completedAt) {
+    return `Recherche terminée : ${releaseSourceResultLabel(check.result)}`;
+  }
+  return null;
+};
+
 const pollingIntervalLabel = (minutes) => {
   const value = Number(minutes);
   if (!Number.isFinite(value) || value <= 0) return "Fréquence de contrôle non communiquée";
@@ -1653,6 +1670,24 @@ const renderReleases = () => {
     sourceTitle,
     make("p", "", sourceDetails.filter(Boolean).join("\n")),
   );
+  if (source?.enabled) {
+    const check = sourceState?.manualCheck ?? null;
+    const actions = make("div", "release-check-controls");
+    const checkButton = make(
+      "button",
+      "tool primary",
+      githubUpdateCheckActive(source) ? "Recherche en cours…" : "Rechercher maintenant",
+    );
+    checkButton.type = "button";
+    checkButton.dataset.githubUpdateCheck = "true";
+    checkButton.disabled = githubUpdateCheckActive(source)
+      || !sessionHasPermission("releases:write");
+    if (githubUpdateCheckActive(source)) checkButton.setAttribute("aria-busy", "true");
+    const status = make("p", "release-source-check-status", githubUpdateCheckLabel(check));
+    status.setAttribute("aria-live", "polite");
+    actions.append(checkButton, status);
+    sourcePanel.append(actions);
+  }
 
   const eligible = state.releases.filter(releaseHasHomeApk);
   const releaseSelect = $("#deploymentRelease");
@@ -1771,6 +1806,38 @@ const refreshReleases = async () => {
   state.releaseSource = payload.source ?? null;
   state.serverUpdatePolicy = payload.policy ?? null;
   renderReleases();
+};
+
+let githubUpdateRefreshTimer = null;
+let githubUpdateRefreshAttempts = 0;
+const scheduleGithubUpdateRefresh = ({ reset = false } = {}) => {
+  if (githubUpdateRefreshTimer) clearTimeout(githubUpdateRefreshTimer);
+  githubUpdateRefreshTimer = null;
+  if (reset) githubUpdateRefreshAttempts = 0;
+  if (!githubUpdateCheckActive()) return;
+  if (githubUpdateRefreshAttempts >= 40) {
+    toast("La recherche continue côté serveur. Revenez dans quelques instants.", true);
+    return;
+  }
+  githubUpdateRefreshAttempts += 1;
+  githubUpdateRefreshTimer = setTimeout(async () => {
+    try {
+      await refreshReleases();
+      if (githubUpdateCheckActive()) {
+        scheduleGithubUpdateRefresh();
+        return;
+      }
+      const check = state.releaseSource?.state?.manualCheck;
+      toast(
+        check?.status === "completed"
+          ? `Recherche terminée : ${releaseSourceResultLabel(check.result)}.`
+          : `Recherche interrompue : ${releaseSourceErrorLabel(check?.errorCode)}.`,
+        check?.status !== "completed",
+      );
+    } catch (error) {
+      toast(`Actualisation des versions impossible : ${error.message}`, true);
+    }
+  }, 2_000);
 };
 
 const updateBrandLogoPreview = (assetId) => {
@@ -3987,6 +4054,31 @@ $("#releaseForm").addEventListener("submit", (event) => {
     refreshReleases().catch((error) => toast(`Version importée, actualisation impossible : ${error.message}`, true));
     toast("Bundle vérifié. Aucun déploiement n’a été lancé automatiquement.");
   });
+});
+$("#automaticReleaseSource").addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-github-update-check]");
+  if (!button) return;
+  setButtonBusy(button, true, "Recherche…");
+  try {
+    const payload = await api.post("releases/github-checks", {});
+    await refreshReleases();
+    scheduleGithubUpdateRefresh({ reset: true });
+    toast(
+      payload.alreadyRequested
+        ? "Une recherche GitHub est déjà en cours."
+        : "Recherche GitHub lancée.",
+    );
+  } catch (error) {
+    toast(
+      error.message === "github_update_check_rate_limited"
+        ? "Une recherche vient déjà de se terminer. Réessayez dans quelques secondes."
+        : `Recherche GitHub impossible : ${error.message}`,
+      true,
+    );
+  } finally {
+    setButtonBusy(button, false);
+    renderReleases();
+  }
 });
 $("#deploymentStrategy").addEventListener("change", updateDeploymentTargetControls);
 $("#deploymentTargetType").addEventListener("change", updateDeploymentTargetControls);

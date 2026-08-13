@@ -31,6 +31,20 @@ export const releaseSourceKey = (repository, channel) => {
     .digest('hex')}`;
 };
 
+export const serializeGithubUpdateCheck = (state) => (
+  state?.manual_request_id
+    ? {
+        id: state.manual_request_id,
+        status: state.manual_status,
+        requestedAt: state.manual_requested_at,
+        startedAt: state.manual_started_at,
+        completedAt: state.manual_completed_at,
+        result: state.manual_result,
+        errorCode: state.manual_error_code,
+      }
+    : null
+);
+
 export const serializeReleaseSource = (config, state = null) => ({
   provider: 'github',
   enabled: Boolean(config.updateGithubRepository),
@@ -49,5 +63,6 @@ export const serializeReleaseSource = (config, state = null) => ({
       ? null
       : Number(state.external_asset_id),
     importedReleaseId: state.imported_release_id,
+    manualCheck: serializeGithubUpdateCheck(state),
   } : null,
 });

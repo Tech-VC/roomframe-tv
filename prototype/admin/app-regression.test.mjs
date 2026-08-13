@@ -91,6 +91,15 @@ test("l’automatisation serveur reste un opt-in éditorial et explicite", () =>
   assert.match(source, /Après un échec, une confirmation manuelle est obligatoire/);
 });
 
+test("la recherche GitHub peut être déclenchée sans donner Internet à la régie", () => {
+  assert.match(source, /dataset\.githubUpdateCheck = "true"/);
+  assert.match(source, /api\.post\("releases\/github-checks", \{\}\)/);
+  assert.match(source, /Recherche GitHub lancée/);
+  assert.match(source, /scheduleGithubUpdateRefresh\(\{ reset: true \}\)/);
+  assert.match(source, /githubUpdateRefreshAttempts >= 40/);
+  assert.match(styles, /\.release-check-controls \{/);
+});
+
 test("les scènes programmées gardent un retour explicite vers l’affectation habituelle", () => {
   assert.match(markup, /id="sceneScheduleForm"/);
   assert.match(markup, /Programmer une scène temporaire/);

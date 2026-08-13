@@ -31,6 +31,7 @@ import {
 } from './release-importer.mjs';
 import {
   releaseSourceKey,
+  serializeGithubUpdateCheck,
   serializeReleaseSource,
 } from './update-source.mjs';
 import {
@@ -352,7 +353,10 @@ const readReleaseSource = async (pool, config) => {
   if (!sourceKey) return serializeReleaseSource(config);
   const result = await pool.query(
     `SELECT last_checked_at, last_success_at, last_result, last_error_code,
-            external_release_id, external_asset_id, imported_release_id
+            external_release_id, external_asset_id, imported_release_id,
+            manual_request_id, manual_status, manual_requested_at,
+            manual_started_at, manual_completed_at, manual_result,
+            manual_error_code
      FROM update_poll_state
      WHERE source_key = $1`,
     [sourceKey],
@@ -2772,6 +2776,93 @@ export const registerStudioRoutes = ({
       source,
       policy,
     };
+  });
+
+  app.post('/api/v1/releases/github-checks', {
+    preHandler: [authenticated, requirePermission('releases:write'), csrf],
+  }, async (request, reply) => {
+    const repository = config.updateGithubRepository;
+    const channel = config.updateGithubChannel;
+    const sourceKey = releaseSourceKey(repository, channel);
+    if (!sourceKey) {
+      throw Object.assign(new Error('github_update_source_disabled'), { statusCode: 409 });
+    }
+    const queued = await withTransaction(pool, async (client) => {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('roomframe-github-update-check-request'))",
+      );
+      const current = await client.query(
+        `SELECT manual_request_id, manual_status, manual_requested_at,
+                manual_started_at, manual_completed_at, manual_result,
+                manual_error_code
+         FROM update_poll_state
+         WHERE source_key = $1
+         FOR UPDATE`,
+        [sourceKey],
+      );
+      const existing = current.rows[0] ?? null;
+      if (existing && ['pending', 'running'].includes(existing.manual_status)) {
+        return {
+          check: serializeGithubUpdateCheck(existing),
+          alreadyRequested: true,
+        };
+      }
+      if (
+        existing?.manual_completed_at
+        && Date.now() - new Date(existing.manual_completed_at).getTime() < 30_000
+      ) {
+        throw Object.assign(new Error('github_update_check_rate_limited'), {
+          statusCode: 429,
+        });
+      }
+      const requestId = crypto.randomUUID();
+      const inserted = await client.query(
+        `INSERT INTO update_poll_state (
+           source_key, provider, repository, channel,
+           manual_request_id, manual_status, manual_requested_by,
+           manual_requested_at, updated_at
+         ) VALUES ($1, 'github', $2, $3, $4, 'pending', $5, now(), now())
+         ON CONFLICT (source_key) DO UPDATE
+         SET repository = EXCLUDED.repository,
+             channel = EXCLUDED.channel,
+             manual_request_id = EXCLUDED.manual_request_id,
+             manual_status = 'pending',
+             manual_requested_by = EXCLUDED.manual_requested_by,
+             manual_requested_at = now(),
+             manual_started_at = NULL,
+             manual_completed_at = NULL,
+             manual_result = NULL,
+             manual_error_code = NULL,
+             updated_at = now()
+         RETURNING manual_request_id, manual_status, manual_requested_at,
+                   manual_started_at, manual_completed_at, manual_result,
+                   manual_error_code`,
+        [
+          sourceKey,
+          repository,
+          channel,
+          requestId,
+          request.roomframeSession.user_id,
+        ],
+      );
+      await writeAudit(
+        client,
+        request,
+        'release.github_check_requested',
+        'release-source',
+        sourceKey,
+        { requestId, repository, channel },
+      );
+      await client.query(
+        "SELECT pg_notify('roomframe_github_update_check', $1)",
+        [sourceKey],
+      );
+      return {
+        check: serializeGithubUpdateCheck(inserted.rows[0]),
+        alreadyRequested: false,
+      };
+    });
+    return reply.code(202).send(queued);
   });
 
   app.post('/api/v1/releases/import', {

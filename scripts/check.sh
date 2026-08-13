@@ -92,6 +92,14 @@ grep -Fq -- '--home-apk "dist/roomframe-tv-android-${GITHUB_REF_NAME}.apk"' \
   echo "La release doit intégrer l'APK Android TV signée au .rfupdate." >&2
   exit 1
 }
+grep -Fq "app.post('/api/v1/releases/github-checks'" services/api/src/studio-routes.mjs || {
+  echo "La régie doit pouvoir demander un contrôle GitHub immédiat." >&2
+  exit 1
+}
+grep -Fq 'LISTEN roomframe_github_update_check' services/api/src/update-poller.mjs || {
+  echo "Le poller isolé doit être réveillé sans exposer de port entrant." >&2
+  exit 1
+}
 grep -Fq 'actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26' \
   .github/workflows/release.yml || {
   echo "La provenance GitHub doit utiliser l'action attest épinglée." >&2

@@ -178,6 +178,12 @@ Le poller ne possède ni accès Docker, ni secret de session/TOTP, ni port
 entrant. Il importe et historise uniquement. Il ne lance pas de déploiement TV
 et n’applique pas le code serveur.
 
+Dans `Versions`, l’action **Rechercher maintenant** crée une demande persistante
+en base puis réveille ce même poller par une notification PostgreSQL. La régie
+web ne reçoit donc aucun accès Internet supplémentaire. Le résultat apparaît
+dans la source GitHub et une limite courte empêche les contrôles répétés. Si le
+poller redémarre après la demande, il reprend la recherche restée en attente.
+
 ## Application automatique opt-in
 
 L’import GitHub et l’application serveur restent deux étapes distinctes. Par

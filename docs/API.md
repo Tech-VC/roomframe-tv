@@ -330,6 +330,7 @@ correspondre à la même TV après activation.
 
 ```text
 GET  /api/v1/releases
+POST /api/v1/releases/github-checks
 POST /api/v1/releases/import
 PUT  /api/v1/settings/server-updates
 POST /api/v1/releases/:releaseId/server-update-requests
@@ -340,6 +341,11 @@ GET  /api/v1/tv/update
 GET  /api/v1/tv/updates/:deploymentId/apk
 POST /api/v1/tv/updates/:deploymentId/status
 ```
+
+`POST /releases/github-checks` exige `releases:write` et le jeton CSRF. Il
+enregistre une demande idempotente, limitée dans le temps, puis réveille le
+poller isolé par PostgreSQL. L’API web ne contacte pas GitHub elle-même et ne
+déploie aucune version en réponse à cette action.
 
 L’import multipart attend un champ `file` portant l’extension `.rfupdate`. Le
 serveur vérifie la signature Ed25519, la structure ZIP, la compatibilité, les
