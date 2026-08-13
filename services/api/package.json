@@ -1,7 +1,7 @@
 {
   "name": "roomframe-api",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.9",
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",

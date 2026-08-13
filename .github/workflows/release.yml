@@ -56,6 +56,7 @@ jobs:
           tag_version="${GITHUB_REF_NAME#v}"
           install_version="$(awk -F'"' '$1 == "ROOMFRAME_VERSION=" {print $2; exit}' install.sh)"
           api_version="$(node -p "require('./services/api/package.json').version")"
+          android_version="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)"/\1/p' apps/tv-android/app/build.gradle.kts)"
           [[ "$GITHUB_REF_NAME" == "v${tag_version}" && -n "$tag_version" ]]
           [[ "$tag_version" == "$install_version" ]] || {
             echo "Le tag et install.sh annoncent des versions différentes." >&2
@@ -65,6 +66,46 @@ jobs:
             echo "Le tag et services/api/package.json annoncent des versions différentes." >&2
             exit 1
           }
+          [[ "$tag_version" == "$android_version" ]] || {
+            echo "Le tag et l'application Android TV annoncent des versions différentes." >&2
+            exit 1
+          }
+      - name: Build and verify signed Android TV application
+        env:
+          ANDROID_SIGNING_STORE_B64: ${{ secrets.ROOMFRAME_ANDROID_SIGNING_STORE_B64 }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ROOMFRAME_ANDROID_SIGNING_STORE_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_SIGNING_STORE_B64" || -z "$ANDROID_SIGNING_STORE_PASSWORD" ]]; then
+            echo "Les secrets de signature Android TV sont requis pour publier." >&2
+            exit 1
+          fi
+          signing_store="$RUNNER_TEMP/roomframe-tv-production-v1.p12"
+          trap 'rm -f "$signing_store"' EXIT
+          umask 077
+          printf '%s' "$ANDROID_SIGNING_STORE_B64" | base64 --decode >"$signing_store"
+          chmod 0600 "$signing_store"
+          export ROOMFRAME_ANDROID_SIGNING_STORE="$signing_store"
+          export ROOMFRAME_ANDROID_SIGNING_STORE_PASSWORD="$ANDROID_SIGNING_STORE_PASSWORD"
+          export ROOMFRAME_ANDROID_SIGNING_KEY_ALIAS="roomframe-tv-production-v1"
+          export ROOMFRAME_ANDROID_SIGNING_KEY_PASSWORD="$ANDROID_SIGNING_STORE_PASSWORD"
+          (
+            cd apps/tv-android
+            ./gradlew --no-daemon --no-configuration-cache \
+              clean :app:testDebugUnitTest :app:assembleRelease
+          )
+          apk="apps/tv-android/app/build/outputs/apk/release/app-release.apk"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          [[ -f "$apk" && -x "$apksigner" ]]
+          verify_output="$("$apksigner" verify --verbose --print-certs "$apk")"
+          grep -Fq 'Verified using v3 scheme (APK Signature Scheme v3): true' <<<"$verify_output"
+          expected_certificate="$(tr -d '[:space:]' < apps/tv-android/signing-certificate-sha256.txt)"
+          actual_certificate="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$verify_output")"
+          [[ "$actual_certificate" == "$expected_certificate" ]] || {
+            echo "Empreinte du certificat Android TV inattendue." >&2
+            exit 1
+          }
+          mkdir -p dist
+          install -m 0644 "$apk" "dist/roomframe-tv-android-${GITHUB_REF_NAME}.apk"
       - name: Create source package
         run: |
           mkdir -p dist
@@ -100,6 +141,8 @@ jobs:
             exit 1
           fi
           version="${GITHUB_REF_NAME#v}"
+          android_version_code="$(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+)/\1/p' apps/tv-android/app/build.gradle.kts)"
+          android_certificate="$(tr -d '[:space:]' < apps/tv-android/signing-certificate-sha256.txt)"
           key_id="${SIGNING_KEY_ID:-release-main}"
           key_file="$RUNNER_TEMP/roomframe-release-private.pem"
           public_key="$RUNNER_TEMP/roomframe-release-public.pem"
@@ -117,6 +160,10 @@ jobs:
             --source-repository "$GITHUB_REPOSITORY" \
             --source-revision "$GITHUB_SHA" \
             --source-ref "$GITHUB_REF" \
+            --home-apk "dist/roomframe-tv-android-${GITHUB_REF_NAME}.apk" \
+            --home-package org.roomframe.tv \
+            --home-version-code "$android_version_code" \
+            --home-signing-cert-sha256 "$android_certificate" \
             --version "$version" \
             --private-key "$key_file" \
             --key-id "$key_id" \
@@ -132,6 +179,7 @@ jobs:
             dist/roomframe-tv-${{ github.ref_name }}.tar.gz
             dist/roomframe-tv-${{ github.ref_name }}.rfupdate
             dist/roomframe-tv-${{ github.ref_name }}.spdx.json
+            dist/roomframe-tv-android-${{ github.ref_name }}.apk
       - name: Attest signed update SBOM
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
@@ -144,6 +192,7 @@ jobs:
             dist/roomframe-tv-*.tar.gz
             dist/roomframe-tv-*.rfupdate
             dist/roomframe-tv-*.spdx.json
+            dist/roomframe-tv-android-*.apk
             dist/roomframe-release-*.pem
             dist/roomframe-release-*.pem.sha256
             bundles/roomframe-default-experience-1.0.0.rfbundle

@@ -32,6 +32,8 @@ openssl pkey -in "$private_key" -pubout -out "$public_key" >/dev/null 2>&1
 revision="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 sbom="$TEST_ROOT/roomframe-0.4.0.spdx.json"
 bundle="$TEST_ROOT/roomframe-0.4.0.rfupdate"
+test_apk="$TEST_ROOT/roomframe-tv.apk"
+printf '%s\n' "APK de test RoomFrame" >"$test_apk"
 python3 "$ROOT/scripts/build-sbom.py" \
   --root "$ROOT" \
   --version 0.4.0 \
@@ -46,6 +48,10 @@ python3 "$ROOT/scripts/build-signed-update.py" \
   --source-repository example/roomframe \
   --source-revision "$revision" \
   --source-ref refs/tags/v0.4.0 \
+  --home-apk "$test_apk" \
+  --home-package org.roomframe.tv \
+  --home-version-code 12 \
+  --home-signing-cert-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --version 0.4.0 \
   --private-key "$private_key" \
   --key-id test-supply-chain \
@@ -74,6 +80,14 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
         if artifact["kind"] == "sbom-spdx"
     ]
     assert len(sboms) == 1
+    apks = [
+        artifact for artifact in manifest["artifacts"]
+        if artifact["kind"] == "home-apk"
+    ]
+    assert len(apks) == 1
+    assert apks[0]["packageName"] == "org.roomframe.tv"
+    assert apks[0]["versionCode"] == 12
+    assert apks[0]["signingCertificateSha256"] == "a" * 64
     sbom = json.loads(archive.read(sboms[0]["path"]))
     assert sbom["spdxVersion"] == "SPDX-2.3"
     assert len(sbom["packages"]) > 10

@@ -108,15 +108,24 @@ Un tag `v*` déclenche `.github/workflows/release.yml`. Le workflow :
 5. produit un SBOM SPDX 2.3 à partir du lockfile npm, des coordonnées Gradle,
    du wrapper et des images OCI épinglées ;
 6. charge la clé Ed25519 depuis le secret GitHub Actions dédié ;
-7. construit puis vérifie le `.rfupdate`, y compris le SBOM et la source ;
-8. demande à GitHub/Sigstore une attestation SLSA de provenance et une
+7. reconstruit l'APK Android TV avec la clé de production conservée dans les
+   secrets de l'environnement protégé, vérifie sa signature v3 et son
+   empreinte épinglée, puis l'intègre au `.rfupdate` ;
+8. construit puis vérifie le `.rfupdate`, y compris le SBOM et la source ;
+9. demande à GitHub/Sigstore une attestation SLSA de provenance et une
    attestation SBOM avec `actions/attest` épinglée par SHA ;
-9. publie les assets, le SBOM, la clé publique et son fichier `.sha256`.
+10. publie l'APK, les assets serveur, le SBOM, la clé publique et son fichier
+    `.sha256`.
 
 La clé privée n’est écrite que dans le répertoire temporaire du runner et est
 supprimée par le trap du job. Le secret CI
 `ROOMFRAME_RELEASE_SIGNING_KEY_B64` et la variable facultative
 `ROOMFRAME_RELEASE_KEY_ID` sont configurés dans GitHub, jamais dans le dépôt.
+Le PKCS#12 Android et son mot de passe sont fournis séparément par
+`ROOMFRAME_ANDROID_SIGNING_STORE_B64` et
+`ROOMFRAME_ANDROID_SIGNING_STORE_PASSWORD`. GitHub ne reçoit ni fichier en
+clair dans le dépôt, ni secret dans les logs ; le runner détruit sa copie
+temporaire à la fin du job.
 L’environnement `release-signing` doit rester protégé par les règles et
 approbateurs du dépôt. Son job reçoit seulement les permissions GitHub
 nécessaires à la publication et aux attestations. La vérification locale

@@ -87,6 +87,11 @@ grep -Fq -- '--source-revision "$GITHUB_SHA"' .github/workflows/release.yml || {
   echo "La release doit lier le .rfupdate au commit Git source." >&2
   exit 1
 }
+grep -Fq -- '--home-apk "dist/roomframe-tv-android-${GITHUB_REF_NAME}.apk"' \
+  .github/workflows/release.yml || {
+  echo "La release doit intégrer l'APK Android TV signée au .rfupdate." >&2
+  exit 1
+}
 grep -Fq 'actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26' \
   .github/workflows/release.yml || {
   echo "La provenance GitHub doit utiliser l'action attest épinglée." >&2
