@@ -2260,6 +2260,34 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(assignedDefaultAsset.statusCode, 200);
   assert.equal(assignedDefaultAsset.headers['content-type'], 'image/webp');
 
+  await pool.query(
+    "UPDATE screens SET last_seen_at = TIMESTAMPTZ '2000-01-01T00:00:00Z' WHERE id = $1",
+    [pendingDevice.id],
+  );
+  const heartbeat = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/heartbeat',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+  });
+  assert.equal(heartbeat.statusCode, 204, heartbeat.body);
+  const heartbeatPresence = await pool.query(
+    'SELECT last_seen_at > now() - interval \'10 seconds\' AS fresh FROM screens WHERE id = $1',
+    [pendingDevice.id],
+  );
+  assert.equal(heartbeatPresence.rows[0].fresh, true);
+  const rejectedHeartbeat = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/heartbeat',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': token(),
+    },
+  });
+  assert.equal(rejectedHeartbeat.statusCode, 401, rejectedHeartbeat.body);
+
   const acceptedMetrics = await app.inject({
     method: 'POST',
     url: '/api/v1/tv/metrics',

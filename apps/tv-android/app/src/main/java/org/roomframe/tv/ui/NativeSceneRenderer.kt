@@ -7,12 +7,14 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -64,9 +66,9 @@ class NativeSceneRenderer(
     private lateinit var snapshot: ExperienceSnapshot
     private lateinit var branding: BrandingDocument
     private var scale = 1f
-    private val focusableViews = mutableListOf<Pair<Int, View>>()
+    private val focusableViews = mutableListOf<FocusableSceneView>()
 
-    fun render(value: ExperienceSnapshot): View {
+    fun render(value: ExperienceSnapshot, preferredFocusNodeId: String? = null): View {
         snapshot = value
         branding = value.branding
         focusableViews.clear()
@@ -95,12 +97,18 @@ class NativeSceneRenderer(
             .sortedBy(SceneNodeDocument::zIndex)
             .forEach { node ->
                 renderNode(node)?.let { view ->
-                    view.elevation = node.zIndex * scale
                     canvas.addView(view, geometry(node))
                 }
             }
         linkDpadFocus()
-        focusableViews.minByOrNull { it.first }?.second?.requestFocus()
+        val initialFocus = focusableViews.firstOrNull { it.target.id == preferredFocusNodeId }
+            ?: initialSpatialFocusTargetId(focusableViews.map(FocusableSceneView::target))
+                ?.let { id -> focusableViews.firstOrNull { it.target.id == id } }
+        canvas.post {
+            if (!activity.isFinishing && initialFocus?.view?.isAttachedToWindow == true) {
+                initialFocus.view.requestFocus()
+            }
+        }
         return viewport
     }
 
@@ -276,7 +284,7 @@ class NativeSceneRenderer(
         val file = snapshot.assets.resolve(reference, "logo")
         return ImageView(activity).apply {
             when {
-                file != null -> setImageURI(Uri.fromFile(file))
+                file != null -> SceneBitmapLoader.load(this, file)
                 debugLogo != null && snapshot.bundled -> setImageDrawable(debugLogo)
                 else -> setImageResource(R.drawable.logo_placeholder)
             }
@@ -294,28 +302,21 @@ class NativeSceneRenderer(
     private fun sourceNode(node: SceneNodeDocument): TextView {
         val source = node.properties.source.orEmpty()
         val adapter = sourceAdapter(source)
+        val brandedIcon = adapter?.brandedIcon()?.mutate()
         return baseText(node).apply {
             text = node.properties.label ?: source.replaceFirstChar(Char::uppercase)
             setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24f))
             typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(scenePx(22f).roundToInt(), 0, scenePx(22f).roundToInt(), 0)
-            val icon = sourceIcon(source, adapter)
+            val icon = brandedIcon ?: sourceIconResource(source).takeIf { it != 0 }
+                ?.let(activity::getDrawable)
+                ?.mutate()
             val iconSize = scenePx(58f).roundToInt()
             icon?.setBounds(0, 0, iconSize, iconSize)
             setCompoundDrawablesRelative(icon, null, null, null)
             compoundDrawablePadding = scenePx(18f).roundToInt()
-            setBackgroundColor(withAlpha(parseColor(branding.primary, Color.BLACK), 0xCC))
-            isFocusable = true
-            id = View.generateViewId()
-            setOnFocusChangeListener { view, focused ->
-                view.setBackgroundColor(
-                    withAlpha(
-                        parseColor(if (focused) branding.accent else branding.primary, Color.DKGRAY),
-                        if (focused) 0xEE else 0xCC,
-                    ),
-                )
-            }
+            applyInteractiveStyle(node, tintIcon = brandedIcon == null)
             setOnClickListener {
                 when (val result = adapter?.activate()) {
                     AdapterResult.Success -> Unit
@@ -325,7 +326,6 @@ class NativeSceneRenderer(
                     null -> toast("Source non prise en charge")
                 }
             }
-            registerFocus(node, this)
         }
     }
 
@@ -335,9 +335,7 @@ class NativeSceneRenderer(
         typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
         gravity = Gravity.CENTER_VERTICAL
         setPadding(scenePx(22f).roundToInt(), 0, scenePx(22f).roundToInt(), 0)
-        setBackgroundColor(withAlpha(parseColor(branding.primary, Color.BLACK), 0xCC))
-        isFocusable = true
-        id = View.generateViewId()
+        applyInteractiveStyle(node, tintIcon = false)
         setOnClickListener {
             val packageName = node.properties.packageName
             val launchIntent = packageName?.let {
@@ -348,7 +346,49 @@ class NativeSceneRenderer(
             else runCatching { activity.startActivity(launchIntent) }
                 .onFailure { toast("Ouverture de l'application impossible") }
         }
+    }
+
+    private fun TextView.applyInteractiveStyle(node: SceneNodeDocument, tintIcon: Boolean) {
+        isFocusable = true
+        isFocusableInTouchMode = false
+        id = View.generateViewId()
+        tag = node.id
+        updateInteractiveSurface(this, focused = false, tintIcon = tintIcon)
+        setOnFocusChangeListener { focusedView, focused ->
+            updateInteractiveSurface(focusedView as TextView, focused, tintIcon)
+            focusedView.animate().cancel()
+            focusedView.animate()
+                .scaleX(if (focused) 1.025f else 1f)
+                .scaleY(if (focused) 1.025f else 1f)
+                .setDuration(120L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+            focusedView.elevation = if (focused) scenePx(14f) else 0f
+        }
         registerFocus(node, this)
+    }
+
+    private fun updateInteractiveSurface(view: TextView, focused: Boolean, tintIcon: Boolean) {
+        val surface = parseColor(
+            if (focused) branding.accent else branding.primary,
+            if (focused) Color.rgb(255, 79, 31) else Color.rgb(21, 21, 17),
+        )
+        val foreground = sceneForegroundColor(surface)
+        view.setTextColor(foreground)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = scenePx(8f)
+            setColor(withAlpha(surface, if (focused) 0xF5 else 0xD8))
+            setStroke(
+                scenePx(if (focused) 4f else 1f).roundToInt().coerceAtLeast(1),
+                withAlpha(foreground, if (focused) 0xFF else 0x78),
+            )
+        }
+        if (tintIcon) {
+            view.compoundDrawablesRelative.filterNotNull().forEach { drawable ->
+                drawable.setTint(foreground)
+            }
+        }
     }
 
     private fun simpleTextNode(node: SceneNodeDocument, value: String): TextView = baseText(node).apply {
@@ -368,16 +408,15 @@ class NativeSceneRenderer(
 
     private fun image(file: File, mode: String, focusX: Float, focusY: Float): ImageView =
         ImageView(activity).apply {
-            setImageURI(Uri.fromFile(file))
             when (mode) {
                 "contain" -> scaleType = ImageView.ScaleType.FIT_CENTER
                 "focus" -> {
                     scaleType = ImageView.ScaleType.MATRIX
-                    addOnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
-                        applyFocusMatrix(view as ImageView, focusX, focusY)
-                    }
                 }
                 else -> scaleType = ImageView.ScaleType.CENTER_CROP
+            }
+            SceneBitmapLoader.load(this, file) { loaded ->
+                if (mode == "focus") applyFocusMatrix(loaded, focusX, focusY)
             }
         }
 
@@ -426,11 +465,6 @@ class NativeSceneRenderer(
         else -> null
     }
 
-    private fun sourceIcon(source: String, adapter: SourceAdapter?): Drawable? =
-        adapter?.brandedIcon()?.mutate() ?: sourceIconResource(source).takeIf { it != 0 }
-            ?.let(activity::getDrawable)
-            ?.mutate()
-
     private fun sourceIconResource(source: String): Int = when (source) {
         "airplay" -> R.drawable.ic_source_airplay
         "cast" -> R.drawable.ic_source_cast
@@ -439,22 +473,34 @@ class NativeSceneRenderer(
     }
 
     private fun registerFocus(node: SceneNodeDocument, view: View) {
-        if (node.focusOrder > 0) focusableViews += node.focusOrder to view
+        focusableViews += FocusableSceneView(
+            target = SpatialFocusTarget(
+                id = node.id,
+                left = node.x,
+                top = node.y,
+                width = node.width,
+                height = node.height,
+                order = node.focusOrder,
+            ),
+            view = view,
+        )
     }
 
     private fun linkDpadFocus() {
-        val ordered = focusableViews.sortedBy { it.first }.map { it.second }
-        ordered.forEachIndexed { index, view ->
-            val previous = ordered.getOrNull(index - 1)
-            val next = ordered.getOrNull(index + 1)
-            if (previous != null) {
-                view.nextFocusUpId = previous.id
-                view.nextFocusLeftId = previous.id
-            }
-            if (next != null) {
-                view.nextFocusDownId = next.id
-                view.nextFocusRightId = next.id
-            }
+        val targets = focusableViews.map(FocusableSceneView::target)
+        val viewsByNodeId = focusableViews.associateBy { it.target.id }
+        focusableViews.forEach { current ->
+            fun viewId(direction: SpatialFocusDirection): Int =
+                spatialFocusNeighborId(targets, current.target.id, direction)
+                    ?.let(viewsByNodeId::get)
+                    ?.view
+                    ?.id
+                    ?: View.NO_ID
+
+            current.view.nextFocusLeftId = viewId(SpatialFocusDirection.LEFT)
+            current.view.nextFocusRightId = viewId(SpatialFocusDirection.RIGHT)
+            current.view.nextFocusUpId = viewId(SpatialFocusDirection.UP)
+            current.view.nextFocusDownId = viewId(SpatialFocusDirection.DOWN)
         }
     }
 
@@ -479,6 +525,11 @@ class NativeSceneRenderer(
     private fun toast(message: String) {
         Toast.makeText(activity, message.take(160), Toast.LENGTH_SHORT).show()
     }
+
+    private data class FocusableSceneView(
+        val target: SpatialFocusTarget,
+        val view: View,
+    )
 
     private companion object {
         const val CANVAS_WIDTH = 1920f

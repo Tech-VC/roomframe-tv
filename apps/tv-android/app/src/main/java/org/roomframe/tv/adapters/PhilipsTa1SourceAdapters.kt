@@ -1,5 +1,6 @@
 package org.roomframe.tv.adapters
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -25,85 +26,150 @@ object PhilipsTa1SourceAdapters {
         val applicationContext = context.applicationContext
         val manager = applicationContext.getSystemService(TvInputManager::class.java) ?: return null
         val launcher = TvInputLauncher(applicationContext)
+        val routes = manager.sourceRoutes(hdmiPort = 1)
+        val castReceiver = applicationContext.castReceiverSnapshot()
         return PhilipsTa1SourceAdapterSet(
-            hdmi = PhilipsTa1HdmiAdapter(manager, launcher, port = 1),
-            cast = PhilipsTa1CastAdapter(applicationContext),
-            airPlay = PhilipsTa1AirPlayAdapter(manager, launcher),
+            hdmi = PhilipsTa1HdmiAdapter(
+                activation = launcher.prepare(
+                    inputId = routes.hdmiInputId,
+                    label = "HDMI 1",
+                    missingReason = "HDMI 1 introuvable",
+                    retryInputId = { manager.sourceRoutes(hdmiPort = 1).hdmiInputId },
+                ),
+            ),
+            cast = PhilipsTa1CastAdapter(castReceiver),
+            airPlay = PhilipsTa1AirPlayAdapter(
+                activation = launcher.prepare(
+                    inputId = routes.airPlayInputId,
+                    label = "AirPlay",
+                    missingReason = "Récepteur AirPlay Philips introuvable",
+                    retryInputId = { manager.sourceRoutes(hdmiPort = 1).airPlayInputId },
+                ),
+            ),
         )
     }
 }
 
 private class TvInputLauncher(private val context: Context) {
-    fun activate(inputId: String, label: String): AdapterResult {
+    fun prepare(
+        inputId: String?,
+        label: String,
+        missingReason: String,
+        retryInputId: () -> String?,
+    ): PreparedTvInputActivation = PreparedTvInputActivation(
+        context = context,
+        intents = RateLimitedFallbackResolver(
+            initialValue = inputId?.let(::explicitIntent),
+            fallback = { retryInputId()?.let(::explicitIntent) },
+        ),
+        label = label,
+        unavailableReason = missingReason,
+    )
+
+    private fun explicitIntent(inputId: String): Intent? {
         val intent = Intent(
             Intent.ACTION_VIEW,
             TvContract.buildChannelUriForPassthroughInput(inputId),
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (context.packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) == null) {
-            return AdapterResult.Unavailable("$label n'est pas accessible sur ce téléviseur")
-        }
-        return runCatching { context.startActivity(intent) }
+        val activityInfo = context.packageManager
+            .resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+            ?: return null
+        intent.component = ComponentName(activityInfo.packageName, activityInfo.name)
+        return intent
+    }
+}
+
+/**
+ * Intent déjà validé et rendu explicite : le chemin nominal ne recherche rien
+ * à l'appui. Une route absente ou devenue invalide est réévaluée à fréquence
+ * bornée par le résolveur.
+ */
+private class PreparedTvInputActivation(
+    private val context: Context,
+    private val intents: RateLimitedFallbackResolver<Intent>,
+    private val label: String,
+    private val unavailableReason: String,
+) {
+    fun activate(): AdapterResult {
+        val launchIntent = intents.resolve()
+            ?: return AdapterResult.Unavailable(unavailableReason)
+        return runCatching { context.startActivity(Intent(launchIntent)) }
             .fold(
                 onSuccess = { AdapterResult.Success },
-                onFailure = { AdapterResult.Failure("Ouverture de $label impossible") },
+                onFailure = {
+                    intents.invalidate()
+                    AdapterResult.Failure("Ouverture de $label impossible")
+                },
             )
     }
 }
 
 private class PhilipsTa1AirPlayAdapter(
-    private val manager: TvInputManager,
-    private val launcher: TvInputLauncher,
+    private val activation: PreparedTvInputActivation,
 ) : AirPlayAdapter {
     override val capability = CapabilityState.EXPERIMENTAL
 
-    override fun activate(): AdapterResult {
-        val inputId = manager.tvInputList
-            .firstOrNull { info -> info.serviceInfo.packageName == PhilipsTa1Profile.AIRPLAY_PACKAGE }
-            ?.id
-            ?: return AdapterResult.Unavailable("Récepteur AirPlay Philips introuvable")
-        return launcher.activate(inputId, "AirPlay")
-    }
+    override fun activate(): AdapterResult = activation.activate()
 }
 
 private class PhilipsTa1HdmiAdapter(
-    private val manager: TvInputManager,
-    private val launcher: TvInputLauncher,
-    private val port: Int,
+    private val activation: PreparedTvInputActivation,
 ) : HdmiAdapter {
     override val capability = CapabilityState.EXPERIMENTAL
 
-    override fun activate(): AdapterResult {
-        val inputId = PhilipsTa1Profile.hdmiInputId(
-            manager.tvInputList
-                .filter { info -> info.type == TvInputInfo.TYPE_HDMI }
-                .map(TvInputInfo::getId),
-            port,
-        ) ?: return AdapterResult.Unavailable("HDMI $port introuvable")
-        return launcher.activate(inputId, "HDMI $port")
-    }
+    override fun activate(): AdapterResult = activation.activate()
 
     override fun signalState(): HdmiSignalState = HdmiSignalState.UNKNOWN
 }
 
-private class PhilipsTa1CastAdapter(private val context: Context) : CastAdapter {
-    override val capability: CapabilityState
-        get() = if (receiverInstalled()) CapabilityState.EXPERIMENTAL else CapabilityState.UNSUPPORTED
+private data class CastReceiverSnapshot(
+    val available: Boolean,
+    val icon: Drawable?,
+)
 
-    override fun activate(): AdapterResult = if (receiverInstalled()) {
+private class PhilipsTa1CastAdapter(
+    private val receiver: CastReceiverSnapshot,
+) : CastAdapter {
+    override val capability: CapabilityState =
+        if (receiver.available) CapabilityState.EXPERIMENTAL else CapabilityState.UNSUPPORTED
+
+    override fun activate(): AdapterResult = if (receiver.available) {
         AdapterResult.Pending(
-            "Chromecast intégré est prêt. Ouvrez Cast sur votre appareil et choisissez ce téléviseur.",
+            "Récepteur Cast détecté. Choisissez ce téléviseur sur votre appareil.",
         )
     } else {
         AdapterResult.Unavailable("Récepteur Cast introuvable")
     }
 
-    override fun brandedIcon(): Drawable? = context.applicationIcon(PhilipsTa1Profile.CAST_PACKAGE)
-
-    @Suppress("DEPRECATION")
-    private fun receiverInstalled(): Boolean = runCatching {
-        context.packageManager.getApplicationInfo(PhilipsTa1Profile.CAST_PACKAGE, 0).enabled
-    }.getOrDefault(false)
+    override fun brandedIcon(): Drawable? = receiver.icon
 }
 
-private fun Context.applicationIcon(packageName: String): Drawable? =
-    runCatching { packageManager.getApplicationIcon(packageName) }.getOrNull()
+@Suppress("DEPRECATION")
+private fun Context.castReceiverSnapshot(): CastReceiverSnapshot {
+    val available = runCatching {
+        packageManager.getApplicationInfo(PhilipsTa1Profile.CAST_PACKAGE, 0).enabled
+    }.getOrDefault(false)
+    return CastReceiverSnapshot(
+        available = available,
+        icon = if (available) {
+            runCatching { packageManager.getApplicationIcon(PhilipsTa1Profile.CAST_PACKAGE) }.getOrNull()
+        } else {
+            null
+        },
+    )
+}
+
+private fun TvInputManager.sourceRoutes(hdmiPort: Int): PhilipsTa1Profile.SourceRoutes {
+    val inputs = runCatching { tvInputList }.getOrDefault(emptyList())
+    return PhilipsTa1Profile.sourceRoutes(
+        inputs.map { info ->
+            PhilipsTa1Profile.InputDescriptor(
+                id = info.id,
+                packageName = info.serviceInfo.packageName,
+                isHdmi = info.type == TvInputInfo.TYPE_HDMI,
+            )
+        },
+        hdmiPort = hdmiPort,
+    )
+}

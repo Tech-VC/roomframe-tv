@@ -1,7 +1,11 @@
 <resources>
-    <style name="Theme.RoomFrame" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.RoomFrameBase" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowFullscreen">true</item>
+        <!-- Avoid a light system starting window before the first RoomFrame frame. -->
+        <item name="android:windowBackground">#101310</item>
         <item name="android:colorAccent">#FF5A1F</item>
     </style>
+
+    <style name="Theme.RoomFrame" parent="@style/Theme.RoomFrameBase" />
 </resources>

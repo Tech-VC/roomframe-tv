@@ -72,6 +72,7 @@ data class ActiveRevision(
 
 interface ExperienceStore {
     fun loadActive(): ActiveRevision?
+    fun loadPreviouslyVerifiedActive(): ActiveRevision? = null
     fun stageAndActivate(revision: RevisionPackage): ActiveRevision
 }
 
@@ -93,16 +94,47 @@ class FileExperienceStore(
     override fun loadActive(): ActiveRevision? {
         loadPointer(activePointer)?.let { revisionId ->
             val directory = File(revisions, revisionId)
-            if (verifyRevisionDirectory(directory)) return ActiveRevision(revisionId, directory)
+            if (verifyRevisionDirectory(directory)) {
+                writeVerificationReceipt(directory, revisionId)
+                return ActiveRevision(revisionId, directory)
+            }
+            deleteVerificationReceipt(directory)
         }
         loadPointer(previousPointer)?.let { revisionId ->
             val directory = File(revisions, revisionId)
             if (verifyRevisionDirectory(directory)) {
+                writeVerificationReceipt(directory, revisionId)
                 writePointer(activePointer, revisionId)
                 return ActiveRevision(revisionId, directory)
             }
+            deleteVerificationReceipt(directory)
         }
         return null
+    }
+
+    /**
+     * Retourne uniquement une révision qui a déjà passé la vérification SHA-256
+     * complète. Cette lecture courte sert au premier rendu ; `loadActive()` est
+     * tout de même relancé en arrière-plan à chaque démarrage.
+     */
+    @Synchronized
+    override fun loadPreviouslyVerifiedActive(): ActiveRevision? {
+        val revisionId = loadPointer(activePointer) ?: return null
+        val directory = File(revisions, revisionId)
+        if (!safeRevisionDirectory(directory)) return null
+        val receipt = File(directory, VERIFICATION_RECEIPT_NAME)
+        val manifestHash = File(directory, "manifest.sha256")
+            .takeIf { it.isFile && it.length() in 64..66 }
+            ?.readText(StandardCharsets.UTF_8)
+            ?.trim()
+            ?: return null
+        val expectedReceipt = verificationReceipt(revisionId, manifestHash)
+        val storedReceipt = receipt
+            .takeIf { it.isFile && it.length() in 1..MAX_VERIFICATION_RECEIPT_BYTES }
+            ?.readText(StandardCharsets.UTF_8)
+            ?.trim()
+            ?: return null
+        return ActiveRevision(revisionId, directory).takeIf { storedReceipt == expectedReceipt }
     }
 
     @Synchronized
@@ -126,6 +158,7 @@ class FileExperienceStore(
         val finalDirectory = File(revisions, revision.revisionId)
         if (finalDirectory.exists()) {
             check(verifyRevisionDirectory(finalDirectory)) { "Révision existante invalide" }
+            writeVerificationReceipt(finalDirectory, revision.revisionId)
             activate(finalDirectory.name)
             pruneRevisions()
             return ActiveRevision(revision.revisionId, finalDirectory)
@@ -144,6 +177,7 @@ class FileExperienceStore(
                 writeAssetDurable(target, asset)
             }
             check(verifyRevisionDirectory(staging)) { "Révision staging invalide" }
+            writeVerificationReceipt(staging, revision.revisionId)
 
             Files.move(staging.toPath(), finalDirectory.toPath(), StandardCopyOption.ATOMIC_MOVE)
             activate(revision.revisionId)
@@ -223,6 +257,42 @@ class FileExperienceStore(
         require(digest.digest().hex() == asset.sha256) { "SHA-256 incorrect pour ${asset.relativePath}" }
     }
 
+    private fun writeVerificationReceipt(directory: File, revisionId: String) {
+        if (!safeRevisionDirectory(directory)) return
+        val manifestHash = File(directory, "manifest.sha256")
+            .takeIf { it.isFile && it.length() in 64..66 }
+            ?.readText(StandardCharsets.UTF_8)
+            ?.trim()
+            ?.takeIf { it.matches(Regex("^[a-f0-9]{64}$")) }
+            ?: return
+        val receiptText = verificationReceipt(revisionId, manifestHash)
+        val receiptFile = File(directory, VERIFICATION_RECEIPT_NAME)
+        if (
+            receiptFile.isFile &&
+            receiptFile.length() in 1..MAX_VERIFICATION_RECEIPT_BYTES &&
+            receiptFile.readText(StandardCharsets.UTF_8).trim() == receiptText
+        ) {
+            return
+        }
+        writeDurable(
+            receiptFile,
+            "$receiptText\n".toByteArray(StandardCharsets.UTF_8),
+        )
+    }
+
+    private fun deleteVerificationReceipt(directory: File) {
+        if (safeRevisionDirectory(directory)) File(directory, VERIFICATION_RECEIPT_NAME).delete()
+    }
+
+    private fun verificationReceipt(revisionId: String, manifestHash: String): String =
+        "roomframe-verified-v1:$revisionId:$manifestHash"
+
+    private fun safeRevisionDirectory(directory: File): Boolean = runCatching {
+        directory.isDirectory &&
+            !Files.isSymbolicLink(directory.toPath()) &&
+            directory.canonicalFile.parentFile == revisions.canonicalFile
+    }.getOrDefault(false)
+
     private fun verifyHash(bytes: ByteArray, expected: String, label: String) {
         require(expected.matches(Regex("^[a-f0-9]{64}$"))) { "SHA-256 invalide pour $label" }
         val actual = MessageDigest.getInstance("SHA-256").digest(bytes).hex()
@@ -281,5 +351,7 @@ class FileExperienceStore(
     private companion object {
         const val MAX_MANIFEST_BYTES = 2L * 1024 * 1024
         const val MAX_MANIFEST_ENTRIES = 1_020
+        const val VERIFICATION_RECEIPT_NAME = ".roomframe-verified"
+        const val MAX_VERIFICATION_RECEIPT_BYTES = 256L
     }
 }

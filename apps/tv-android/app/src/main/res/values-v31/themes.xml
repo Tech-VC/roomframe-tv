@@ -1,0 +1,11 @@
+<resources>
+    <!--
+        Android 12+ owns the cold-start window. Brand that short transition as
+        RoomFrame; it starts only after the immutable OEM/system boot screens.
+    -->
+    <style name="Theme.RoomFrame" parent="@style/Theme.RoomFrameBase">
+        <item name="android:windowSplashScreenBackground">#101310</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#101310</item>
+    </style>
+</resources>

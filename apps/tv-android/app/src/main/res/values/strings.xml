@@ -24,4 +24,7 @@
     <string name="enrollment_error">Connexion impossible : %1$s</string>
     <string name="enrollment_unknown_error">erreur inconnue</string>
     <string name="enrollment_already_done">Cette TV est déjà connectée.</string>
+    <string name="presence_channel_name">Connexion RoomFrame</string>
+    <string name="presence_channel_description">Présence de la TV sur le serveur local</string>
+    <string name="presence_notification">Connexion au serveur local active</string>
 </resources>

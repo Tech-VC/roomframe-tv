@@ -1,0 +1,3 @@
+<resources>
+    <bool name="enable_policy_update_receiver">false</bool>
+</resources>

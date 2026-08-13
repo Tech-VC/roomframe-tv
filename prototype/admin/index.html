@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui21">
-  <script type="module" src="/app.js?v=0.3.0-ui21"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui24">
+  <script type="module" src="/app.js?v=0.3.0-ui24"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main-content">Aller à la scène</a>
+  <a class="skip-link" href="#main-content">Aller au contenu principal</a>
   <div class="noise" aria-hidden="true"></div>
 
   <div class="shell" id="app" aria-busy="true">
@@ -36,12 +36,12 @@
       <button class="text-button hidden" id="retryButton" type="button">Réessayer</button>
     </div>
 
-    <main id="main-content">
+    <main id="main-content" tabindex="-1">
       <section class="workspace-panel full-panel home-panel on" id="view-home" aria-labelledby="homeTitle">
         <aside class="panel-index">
           <div class="eyebrow">Vue d’ensemble</div>
           <h1 class="editorial-title" id="homeTitle">Votre régie<br>en un coup<br>d’œil.</h1>
-          <p class="note">Retrouvez l’état des TV, des scènes, des contenus et des mises à jour.</p>
+          <p class="note">TV, scènes, contenus et versions au même endroit.</p>
         </aside>
         <div class="panel-content home-workbench">
           <header class="home-intro">
@@ -79,7 +79,6 @@
             <div>
               <span class="index-number">ACCUEIL / 02</span>
               <h2 id="homeActionsTitle">Que voulez-vous faire&nbsp;?</h2>
-              <p>Accédez directement aux outils utilisés le plus souvent.</p>
             </div>
             <div class="home-action-grid">
               <button type="button" data-go-view="surface"><b>01</b><span>Modifier la scène d’accueil</span><i aria-hidden="true">→</i></button>
@@ -116,7 +115,7 @@
             <div class="field">
               <label for="greetingInput">Salutation</label>
               <textarea id="greetingInput" maxlength="220" rows="2" autocomplete="off" aria-describedby="greetingHelp"></textarea>
-              <small id="greetingHelp">Deux lignes maximum. Le retour à la ligne saisi ici est repris à l’identique sur la TV.</small>
+              <small id="greetingHelp">Deux lignes maximum, conservées sur la TV.</small>
             </div>
             <fieldset class="field">
               <legend>Fond de scène</legend>
@@ -134,7 +133,7 @@
             <div class="field">
               <label class="asset-trigger" for="backgroundFile">
                 <span class="asset-icon">BG</span>
-                <span><b>Image ou vidéo</b><small>Le serveur valide et adapte le média</small></span>
+                <span><b>Image ou vidéo</b><small>Adaptée par le serveur</small></span>
                 <b aria-hidden="true">＋</b>
               </label>
               <input class="visually-hidden" type="file" id="backgroundFile" accept="image/*,video/*">
@@ -201,7 +200,7 @@
                   <div class="weather-field hidden" id="nodeWeatherField">
                     <label for="weatherLocation">Ville ou code postal</label>
                     <input id="weatherLocation" type="search" maxlength="120" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="weatherSuggestions" aria-expanded="false" aria-describedby="weatherLocationHelp weatherStatus">
-                    <small id="weatherLocationHelp">Saisissez au moins deux caractères, puis choisissez la commune exacte.</small>
+                    <small id="weatherLocationHelp">Saisissez deux caractères puis choisissez la commune.</small>
                     <div class="weather-suggestions hidden" id="weatherSuggestions" role="listbox"></div>
                     <p class="weather-status" id="weatherStatus" role="status"></p>
                     <a class="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noreferrer">Données météo : Open-Meteo</a>
@@ -237,7 +236,7 @@
         <aside class="panel-index">
           <div class="eyebrow">Bibliothèque locale</div>
           <h1 class="editorial-title" id="contentTitle">Médias et<br>messages.</h1>
-          <p class="note">Importez les images et vidéos, puis programmez les messages à afficher sur les TV.</p>
+          <p class="note">Ajoutez les médias et messages affichés sur les TV.</p>
         </aside>
         <div class="panel-content content-columns">
           <section>
@@ -269,7 +268,7 @@
         <aside class="panel-index">
           <div class="eyebrow">Identité visuelle</div>
           <h1 class="editorial-title" id="brandTitle">L’identité<br>de vos<br>écrans.</h1>
-          <p class="note">Choisissez le nom, les couleurs et le logo utilisés dans la régie et sur les TV.</p>
+          <p class="note">Réglez le nom, les couleurs et le logo de la régie.</p>
         </aside>
         <div class="panel-content brand-workbench">
           <form class="brand-form" id="brandForm">
@@ -341,10 +340,10 @@
       </dialog>
 
       <section class="workspace-panel full-panel" id="view-fleet" aria-labelledby="fleetTitle">
-        <aside class="panel-index"><div class="eyebrow">Parc des écrans</div><h1 class="editorial-title" id="fleetTitle">Les TV,<br>salle par<br>salle.</h1><p class="note">Préparez chaque TV, choisissez sa scène et suivez son état depuis cette page.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Parc des écrans</div><h1 class="editorial-title" id="fleetTitle">Les TV,<br>salle par<br>salle.</h1><p class="note">Préparez, affectez et surveillez chaque TV.</p></aside>
         <div class="panel-content fleet-workbench">
           <section class="enrollment-console" aria-labelledby="enrollmentTitle">
-            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>La TV trouve normalement le serveur. Créez un code valable 30 minutes, puis saisissez uniquement ses 16 chiffres avec la télécommande. Les tirets s’ajoutent automatiquement sur la TV.</p></div>
+            <div class="console-index"><span>PARC / 01</span><h2 id="enrollmentTitle">Préparer une TV</h2><p>Créez un code valable 30 minutes et saisissez ses 16 chiffres sur la TV.</p></div>
             <form id="enrollmentForm">
               <label for="enrollmentDisplayName">Nom de la TV<input id="enrollmentDisplayName" name="displayName" maxlength="100" required placeholder="Écran salle 1"></label>
               <label for="enrollmentRoomName">Salle<input id="enrollmentRoomName" name="roomName" maxlength="100" required placeholder="Salle de réunion 1"></label>
@@ -361,7 +360,7 @@
             </div>
             <details class="enrollment-advanced">
               <summary>Ancienne application ou dépannage</summary>
-              <p>Ces valeurs techniques ne sont jamais à saisir dans l’application TV actuelle.</p>
+              <p>Réservé aux anciennes versions et au dépannage.</p>
               <div>
                 <label for="enrollmentServer">Serveur HTTPS<input id="enrollmentServer" readonly></label>
                 <label for="enrollmentDeviceId">Identifiant TV<input id="enrollmentDeviceId" readonly></label>
@@ -373,7 +372,7 @@
             <div class="console-index">
               <span>PARC / 02</span>
               <h2 id="assignmentTitle">Affecter une scène</h2>
-              <p>Choisissez la scène affichée par défaut sur toute l’installation, un groupe ou une TV.</p>
+              <p>Choisissez la scène par défaut de l’installation, d’un groupe ou d’une TV.</p>
             </div>
             <form id="sceneAssignmentForm">
               <label for="sceneAssignmentTarget">Cible<select id="sceneAssignmentTarget"></select></label>
@@ -387,7 +386,7 @@
             <div class="console-index">
               <span>PARC / 03</span>
               <h2 id="sceneScheduleTitle">Programmer une scène temporaire</h2>
-              <p>La scène choisie sera affichée à l’heure prévue. À la fin du créneau, la scène habituelle reviendra automatiquement.</p>
+              <p>Affichez une scène pendant un créneau, puis revenez automatiquement à la scène habituelle.</p>
             </div>
             <form id="sceneScheduleForm">
               <label for="sceneScheduleTarget">Cible<select id="sceneScheduleTarget"></select></label>
@@ -397,14 +396,14 @@
               <button class="tool primary" type="submit">Programmer</button>
               <p class="form-error hidden" id="sceneScheduleError" role="alert"></p>
             </form>
-            <p class="schedule-note">Les heures utilisent le fuseau <b id="sceneScheduleTimezone">local du navigateur</b>. Sans heure de fin, la scène restera affichée jusqu’à son annulation. Deux créneaux ne peuvent pas se chevaucher pour une même cible.</p>
+            <p class="schedule-note">Fuseau : <b id="sceneScheduleTimezone">local du navigateur</b>. Sans fin, la scène reste affichée. Un seul créneau par cible.</p>
             <div class="assignment-ledger" id="sceneScheduleList" aria-live="polite"><p class="empty-copy">Aucune scène programmée.</p></div>
           </section>
           <section class="operations-console" aria-labelledby="operationsTitle">
             <div class="console-index">
               <span>PARC / 04</span>
               <h2 id="operationsTitle">Règles de salle</h2>
-              <p>Définissez les boutons de source et les horaires envoyés aux TV. Chaque fonction dépend des capacités du modèle.</p>
+              <p>Choisissez les sources et horaires de la cible. L’exécution dépend du modèle de TV.</p>
             </div>
             <div class="operations-targets">
               <label for="sourceTargetSelect">Appliquer les sources à<select id="sourceTargetSelect"></select></label>
@@ -457,7 +456,7 @@
               </fieldset>
               <button class="tool primary" type="submit">Enregistrer les horaires</button>
               <p class="form-error hidden" id="powerSettingsError" role="alert"></p>
-              <p class="capability-note">RoomFrame envoie ces réglages aux TV. Une source, une mise en veille ou un réveil ne sera exécuté que si la TV confirme qu’elle le prend en charge.</p>
+              <p class="capability-note">Les actions non prises en charge par la TV sont ignorées.</p>
             </form>
           </section>
           <div class="fleet-map" id="fleetList"><p class="empty-copy">Aucune TV enrôlée.</p></div>
@@ -482,10 +481,10 @@
       </dialog>
 
       <section class="workspace-panel full-panel" id="view-releases" aria-labelledby="releasesTitle">
-        <aside class="panel-index"><div class="eyebrow">Mises à jour</div><h1 class="editorial-title" id="releasesTitle">Gérer les<br>mises à<br>jour.</h1><p class="note">RoomFrame vérifie chaque version avant son installation et conserve vos réglages et vos données.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Mises à jour</div><h1 class="editorial-title" id="releasesTitle">Gérer les<br>mises à<br>jour.</h1><p class="note">Installez uniquement des versions vérifiées, sans perdre vos réglages.</p></aside>
         <div class="panel-content">
           <form class="release-drop" id="releaseForm">
-            <div><h3>Importer une version hors ligne</h3><p>Sélectionnez un fichier signé <b>.rfupdate</b>. Le serveur le contrôle avant de l’ajouter aux versions disponibles.</p></div>
+            <div><h3>Importer une version hors ligne</h3><p>Fichier signé <b>.rfupdate</b>, contrôlé avant import.</p></div>
             <label class="action-label" for="releaseFile">Choisir le fichier<input class="visually-hidden" id="releaseFile" name="file" type="file" accept=".rfupdate" required></label>
             <button class="tool primary" type="submit">Importer et vérifier</button>
           </form>
@@ -517,7 +516,7 @@
             <div class="console-index">
               <span>INSTALLATION DU SERVEUR</span>
               <h2 id="serverUpdateTitle">Installer une version vérifiée</h2>
-              <p>Après confirmation, RoomFrame crée une sauvegarde, installe la version, puis vérifie que le serveur répond correctement.</p>
+              <p>RoomFrame sauvegarde, installe puis vérifie le serveur.</p>
             </div>
             <form id="serverUpdateForm">
               <label for="serverUpdateRelease">Version prête à installer<select id="serverUpdateRelease" name="releaseId" required></select></label>
@@ -530,7 +529,7 @@
             <div class="console-index">
               <span>DÉPLOIEMENT SUR LES TV</span>
               <h2 id="deploymentTitle">Installer une version sur les TV</h2>
-              <p>Commencez par une TV de test, puis poursuivez par groupes après validation de chaque étape.</p>
+              <p>Testez sur une TV, puis étendez l’installation par étapes.</p>
             </div>
             <form id="deploymentForm">
               <label for="deploymentRelease">Version vérifiée<select id="deploymentRelease" name="releaseId" required></select></label>
@@ -547,7 +546,7 @@
       </section>
 
       <section class="workspace-panel full-panel" id="view-security" aria-labelledby="securityTitle">
-        <aside class="panel-index"><div class="eyebrow">Sécurité de la régie</div><h1 class="editorial-title" id="securityTitle">Accès à<br>la régie.</h1><p class="note">Gérez la double validation, les appareils connectés et les comptes pouvant accéder à la régie.</p></aside>
+        <aside class="panel-index"><div class="eyebrow">Sécurité de la régie</div><h1 class="editorial-title" id="securityTitle">Accès à<br>la régie.</h1><p class="note">Gérez la double validation, les sessions et les comptes.</p></aside>
         <div class="panel-content">
           <dl class="security-ledger" id="securityLedger"><dt>Session</dt><dd>Chargement…</dd></dl>
           <section class="security-console" aria-labelledby="passkeysTitle">

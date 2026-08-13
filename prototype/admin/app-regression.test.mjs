@@ -39,7 +39,7 @@ test("les règles de salle utilisent des formulaires structurés et l’API atom
   assert.match(markup, /id="sourceSettingsForm"/);
   assert.match(markup, /id="powerSettingsForm"/);
   assert.match(markup, /id="powerWeekdaysEnabled"/);
-  assert.match(markup, /si la TV confirme qu’elle le prend en charge/);
+  assert.match(markup, /Les actions non prises en charge par la TV sont ignorées/);
   assert.match(source, /api\.put\("settings\/sources"/);
   assert.match(source, /api\.put\("settings\/power"/);
   assert.doesNotMatch(markup, /textarea[^>]*id="(?:source|power)/);
@@ -67,6 +67,19 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(source, /state\.serverUpdateRequests/);
 });
 
+test("les actions longues restent lisibles et un brouillon modifié ne se perd pas sans confirmation", () => {
+  assert.match(source, /const setButtonBusy = \(button, busy, busyLabel = "En cours…"\)/);
+  assert.match(source, /button\.setAttribute\("aria-busy", "true"\)/);
+  assert.match(source, /const hasUnsavedSceneChanges = \(\) =>/);
+  assert.match(source, /window\.confirm\("Les modifications non enregistrées seront perdues\. Continuer \?"\)/);
+  assert.match(source, /reloadStudioButton[\s\S]{0,420}confirmSceneDiscard\(\)/);
+  assert.match(source, /sceneLoadButton[\s\S]{0,420}confirmSceneDiscard\(\)/);
+  assert.match(source, /window\.addEventListener\("beforeunload"/);
+  assert.match(source, /serverUpdateForm[\s\S]{0,700}Programmation…/);
+  assert.match(styles, /button:disabled \{ cursor: not-allowed; \}/);
+  assert.match(styles, /\[aria-busy="true"\][^\n]*cursor: progress/);
+});
+
 test("l’automatisation serveur reste un opt-in éditorial et explicite", () => {
   assert.match(markup, /id="serverUpdatePolicyForm"/);
   assert.match(markup, /Manuel · validation humaine/);
@@ -81,8 +94,8 @@ test("l’automatisation serveur reste un opt-in éditorial et explicite", () =>
 test("les scènes programmées gardent un retour explicite vers l’affectation habituelle", () => {
   assert.match(markup, /id="sceneScheduleForm"/);
   assert.match(markup, /Programmer une scène temporaire/);
-  assert.match(markup, /À la fin du créneau, la scène habituelle reviendra automatiquement/);
-  assert.match(markup, /Deux créneaux ne peuvent pas se chevaucher pour une même cible/);
+  assert.match(markup, /revenez automatiquement à la scène habituelle/);
+  assert.match(markup, /Un seul créneau par cible/);
   assert.match(markup, /id="sceneScheduleError" role="alert"/);
   assert.match(source, /api\.post\("scene-schedules"/);
   assert.match(source, /scene-schedules\/\$\{encodeURIComponent\(scheduleId\)\}\/cancel/);
@@ -100,6 +113,40 @@ test("les pages principales utilisent un français clair sans dépasser leur col
   assert.match(styles, /\.panel-index \{[^}]*overflow: hidden/);
   assert.match(styles, /\.console-index \{ min-width: 0; \}/);
   assert.match(styles, /@media \(max-width: 1050px\)[\s\S]*grid-template-columns: 1fr/);
+});
+
+test("la navigation et l’éditeur restent accessibles au clavier et sur une fenêtre étroite", () => {
+  assert.match(markup, /Aller au contenu principal/);
+  assert.match(markup, /<main id="main-content" tabindex="-1">/);
+  assert.match(source, /heading\.setAttribute\("tabindex", "-1"\);[\s\S]*heading\.focus/);
+  assert.doesNotMatch(styles, /\.right\s*\{\s*display:\s*none/);
+  assert.match(
+    styles,
+    /@media \(max-width: 820px\)[\s\S]*\.workspace\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\)[\s\S]*\.right\s*\{[\s\S]*display: block/,
+  );
+  assert.match(
+    styles,
+    /@media \(max-width: 1180px\)[\s\S]*#view-surface[\s\S]*\.right\s*\{[\s\S]*grid-column: 2/,
+  );
+});
+
+test("le glisser-déposer regroupe les mises à jour secondaires par frame", () => {
+  assert.match(source, /const scheduleInteractionUi = \(node\) => \{[\s\S]*requestAnimationFrame/);
+  const moveBody = source.match(/const moveInteraction = \(event\) => \{([\s\S]*?)\n\};/)?.[1] ?? "";
+  assert.match(moveBody, /scheduleInteractionUi\(node\)/);
+  assert.doesNotMatch(moveBody, /renderProperties\(\)|renderObjectList\(\)/);
+});
+
+test("les actions de Surface ne reconstruisent pas les panneaux sans rapport", () => {
+  assert.match(source, /const renderSurface = \(\) => \{/);
+  assert.match(source, /const renderStudio = \(\) => \{[\s\S]*renderSurface\(\);[\s\S]*renderCollections\(\);/);
+  assert.match(source, /const renderContentCollections = \(\) => \{/);
+  const backgroundMode = source.match(/\$\("#backgroundModes"\)\.addEventListener[\s\S]*?\n\}\);/)?.[0] ?? "";
+  assert.match(backgroundMode, /renderBackground\(\)/);
+  assert.doesNotMatch(backgroundMode, /renderStudio\(\)|renderCollections\(\)/);
+  const mediaUpload = source.match(/\$\("#mediaForm"\)\.addEventListener[\s\S]*?\n\}\);/)?.[0] ?? "";
+  assert.match(mediaUpload, /renderContentCollections\(\)/);
+  assert.doesNotMatch(mediaUpload, /renderCollections\(\)|renderStudio\(\)/);
 });
 
 test("la météo utilise une autocomplétion serveur et exige une suggestion", () => {
@@ -152,9 +199,8 @@ test("le cycle d’identité TV exige une confirmation et conserve le cache loca
   assert.match(source, /state\.tvCredentialReturnFocus/);
   assert.match(source, /ticket\.trustBootstrap\?\.mode === "encrypted-server-ca"/);
   assert.match(source, /ticket\.simplifiedEnrollment\?\.mode === "encrypted-code-bootstrap"/);
-  assert.match(markup, /saisissez uniquement ses 16 chiffres/);
-  assert.match(markup, /Les tirets s’ajoutent automatiquement sur la TV/);
-  assert.match(markup, /Ces valeurs techniques ne sont jamais à saisir dans l’application TV actuelle/);
+  assert.match(markup, /saisissez ses 16 chiffres sur la TV/);
+  assert.match(markup, /Réservé aux anciennes versions et au dépannage/);
   assert.match(source, /enrollmentCodePresentation\(ticket\.enrollmentCode\)\.valid/);
   assert.match(source, /16 chiffres copiés sans les tirets/);
   assert.match(styles, /\.enrollment-ticket input \{[^}]*color: var\(--ink\);[^}]*background: #fff;/);
@@ -184,10 +230,26 @@ test("le parc se rafraîchit sans réécrire les formulaires ni le brouillon", (
   assert.match(refreshSource, /activeFleetMetrics\(payload\.tvs\)/);
   assert.match(refreshSource, /renderFleet\(\)/);
   assert.match(refreshSource, /renderHome\(\)/);
+  assert.match(source, /let fleetRenderSignature = null/);
+  assert.match(source, /if \(signature === fleetRenderSignature\) return/);
   assert.doesNotMatch(
     refreshSource,
     /loadStudio|renderStudio|renderCollections|renderSceneManagement|renderOperationalSettings|populate[A-Z]/,
   );
+});
+
+test("le parc garde l’essentiel visible et replie les mesures techniques", () => {
+  assert.match(source, /make\("dl", "tv-overview"\)/);
+  assert.match(source, /\["État", connectionState\]/);
+  assert.match(source, /\["Source", tv\.activeSource/);
+  assert.match(source, /\["Version", tv\.version/);
+  assert.match(source, /make\("details", "tv-technical"\)/);
+  assert.match(source, /make\("summary", "", "Détails techniques"\)/);
+  assert.match(source, /expandedTechnicalIds\.has\(String\(tv\.id\)\)/);
+  assert.match(source, /focusedFleetKey[\s\S]*focus\(\{ preventScroll: true \}\)/);
+  assert.match(styles, /\.fleet-map \{[\s\S]*gap: 12px; background: transparent/);
+  assert.match(styles, /\.tv-cell \{[\s\S]*border: 1px solid var\(--ink\)/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*\.fleet-map \{ grid-template-columns: 1fr; \}/);
 });
 
 test("les passkeys et les sessions restent des parcours API vérifiés", () => {

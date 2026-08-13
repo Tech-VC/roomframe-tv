@@ -285,9 +285,14 @@ HTTPS n’a pas reçu la CA d’instance par le flux d’enrôlement.
 Le launcher compile un accueil natif sans WebView et contient :
 
 - `cache/FileExperienceStore`, qui vérifie les hashes, écrit un staging,
-  bascule les pointeurs atomiquement et conserve la révision précédente ;
+  bascule les pointeurs atomiquement et conserve la révision précédente. Une
+  attestation locale permet d'afficher immédiatement la dernière révision déjà
+  validée ; la vérification SHA-256 complète est relancée en arrière-plan à
+  chaque démarrage et revient sur la révision précédente ou le bundle embarqué
+  au moindre échec ;
 - `HttpExperienceSyncClient`, le parseur strict des documents et le renderer
-  logique 1920 × 1080 ;
+  logique 1920 × 1080. Les images sont décodées hors du thread UI, à une taille
+  proche de leur surface réelle, puis conservées dans un cache mémoire borné ;
 - l’enrôlement HTTPS, la clé TLS RSA non exportable, le certificat client
   individuel, l’appairage/épinglage de la CA HTTPS et le stockage chiffré de
   la clé TV dans Android Keystore ;
@@ -318,12 +323,24 @@ des métriques techniques minimales est codée et testée hors matériel. Le
 provisionnement Device Owner et l’installation silencieuse réelle restent
 également à valider sur la TV.
 
-La candidate courante est `0.3.8` / `versionCode 11`. Elle inclut le cache,
+La candidate courante est `0.3.9` / `versionCode 12`. Elle inclut le cache,
 la synchronisation, la distribution APK, l’appairage chiffré de la CA,
-la rotation de credential, le mTLS et la découverte locale signée. La présence
-est rafraîchie toutes les 60 secondes, sous la fenêtre serveur de deux minutes.
+la rotation de credential, le mTLS et la découverte locale signée. Un service
+HTTPS minimal maintient la présence même quand HDMI, AirPlay ou Cast passe au
+premier plan. Son intervalle stable par TV est réparti entre 55 et 70 secondes,
+sous la fenêtre serveur de deux minutes, afin d'éviter un réveil simultané du
+parc. La synchronisation complète reste liée à l'accueil RoomFrame : le service
+de présence ne télécharge aucun média et n'installe aucune mise à jour.
 Le Parc relit uniquement la liste des TV toutes les 30 secondes lorsqu’il est
 visible, sans recharger le Studio ni écraser les formulaires ou le brouillon.
-Son APK debug a été installé et contrôlé sur la Philips sans perte des données
-privées de test. La candidate intermédiaire `0.3.1` / code 4 a seulement été
-construite hors matériel.
+Les actions courantes de Surface et de Contenus ne reconstruisent que les
+panneaux concernés. Les routes Philips déjà trouvées restent instantanées ;
+une route absente au démarrage est recherchée au plus une fois toutes les
+15 secondes jusqu'à devenir disponible.
+La politique Device Owner de cette candidate conserve tous les paquets système
+et applique uniquement RoomFrame comme HOME persistant, avec une récupération
+ADB bornée. Elle est construite et signée hors matériel, mais ne doit pas être
+provisionnée avant la seconde sauvegarde indépendante de la clé et le dernier
+accord de réinitialisation. La candidate `0.3.8` / code 11 a été installée et
+contrôlée sur la Philips sans perte des données privées de test. La candidate
+intermédiaire `0.3.1` / code 4 a seulement été construite hors matériel.

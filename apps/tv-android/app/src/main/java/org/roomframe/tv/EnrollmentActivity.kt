@@ -356,24 +356,18 @@ class EnrollmentActivity : Activity() {
                             serverUrl.requestFocus()
                         }
                     }
-                }.onFailure { error ->
+                }.onFailure {
                     discoveredCandidate = null
                     showManualServerEntry(requestFocus = false)
                     status.setTextColor(Color.rgb(255, 126, 105))
-                    status.text = getString(
-                        R.string.enrollment_discovery_error,
-                        error.message?.take(100) ?: getString(R.string.enrollment_unknown_error),
-                    )
+                    status.text = getString(R.string.enrollment_discovery_error)
                 }
             }
-        }.onFailure { error ->
+        }.onFailure {
             discover.isEnabled = true
             showManualServerEntry(requestFocus = false)
             status.setTextColor(Color.rgb(255, 126, 105))
-            status.text = getString(
-                R.string.enrollment_discovery_error,
-                error.message?.take(100) ?: getString(R.string.enrollment_unknown_error),
-            )
+            status.text = getString(R.string.enrollment_discovery_error)
         }
     }
 

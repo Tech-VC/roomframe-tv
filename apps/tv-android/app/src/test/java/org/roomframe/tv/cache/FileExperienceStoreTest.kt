@@ -46,6 +46,35 @@ class FileExperienceStoreTest {
     }
 
     @Test
+    fun `previously verified revision is available without rehashing every asset`() {
+        val root = Files.createTempDirectory("roomframe-store-fast-read").toFile()
+        try {
+            val store = FileExperienceStore(root)
+            store.stageAndActivate(revision("sync-4", "Rapide"))
+
+            assertEquals("sync-4", store.loadPreviouslyVerifiedActive()?.revisionId)
+            assertTrue(File(root, "revisions/sync-4/.roomframe-verified").isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `quick read rejects a revision whose manifest receipt no longer matches`() {
+        val root = Files.createTempDirectory("roomframe-store-fast-read-tamper").toFile()
+        try {
+            val store = FileExperienceStore(root)
+            store.stageAndActivate(revision("sync-5", "Protégée"))
+            File(root, "revisions/sync-5/manifest.sha256").writeText("${"0".repeat(64)}\n")
+
+            assertEquals(null, store.loadPreviouslyVerifiedActive())
+            assertEquals(null, store.loadActive())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `only active and previous verified revisions are retained`() {
         val root = Files.createTempDirectory("roomframe-store-prune").toFile()
         try {

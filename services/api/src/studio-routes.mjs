@@ -3520,6 +3520,17 @@ export const registerStudioRoutes = ({
     };
   });
 
+  app.post('/api/v1/tv/heartbeat', {
+    config: { rateLimit: { max: 120, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const { screen } = await activeTvFromRequest(pool, request);
+    await pool.query(
+      'UPDATE screens SET last_seen_at = now(), updated_at = now() WHERE id = $1',
+      [screen.id],
+    );
+    return reply.code(204).send();
+  });
+
   app.post('/api/v1/tv/metrics', {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, async (request, reply) => {

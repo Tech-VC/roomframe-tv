@@ -111,6 +111,10 @@ class ExperienceRepository(
     private val context: Context,
     private val store: ExperienceStore,
 ) {
+    fun loadPreviouslyVerified(): ExperienceSnapshot? = store
+        .loadPreviouslyVerifiedActive()
+        ?.let { active -> runCatching { loadRevision(active) }.getOrNull() }
+
     fun load(): ExperienceSnapshot {
         val active = store.loadActive()
         if (active != null) {
@@ -142,7 +146,7 @@ class ExperienceRepository(
         )
     }
 
-    private fun loadBundled(): ExperienceSnapshot {
+    fun loadBundled(): ExperienceSnapshot {
         val sceneBytes = context.assets.open("default-experience/layout.json").use { it.readBytes() }
         val messageBytes = context.assets.open("default-experience/content.json").use { it.readBytes() }
         return ExperienceSnapshot(

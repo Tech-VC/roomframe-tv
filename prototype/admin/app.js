@@ -151,6 +151,7 @@ const state = {
   studioLoaded: false,
   pendingBrandPalette: null,
   logoPaletteRequest: 0,
+  savedSceneFingerprint: null,
 };
 
 const refs = {
@@ -188,6 +189,7 @@ let toastTimer;
 let weatherSearchTimer;
 let weatherSearchController;
 let fleetRefreshInFlight = false;
+let fleetRenderSignature = null;
 const FLEET_REFRESH_INTERVAL_MS = 30_000;
 const toast = (message, error = false) => {
   clearTimeout(toastTimer);
@@ -210,6 +212,35 @@ const setBusy = (busy) => {
   $("#saveButton").disabled = busy || Boolean(state.preview);
   $("#publishButton").disabled = busy || Boolean(state.preview);
 };
+
+const setButtonBusy = (button, busy, busyLabel = "En cours…") => {
+  if (!button) return;
+  if (busy) {
+    if (!button.dataset.idleLabel) {
+      button.dataset.idleLabel = button.textContent;
+      button.dataset.idleDisabled = String(button.disabled);
+    }
+    button.setAttribute("aria-busy", "true");
+    button.textContent = busyLabel;
+    button.disabled = true;
+    return;
+  }
+  button.textContent = button.dataset.idleLabel || button.textContent;
+  button.disabled = button.dataset.idleDisabled === "true";
+  delete button.dataset.idleLabel;
+  delete button.dataset.idleDisabled;
+  button.removeAttribute("aria-busy");
+};
+
+const sceneFingerprint = (scene) => (scene ? JSON.stringify(scene) : null);
+const hasUnsavedSceneChanges = () => (
+  Boolean(state.scene)
+  && state.savedSceneFingerprint !== sceneFingerprint(state.scene)
+);
+const confirmSceneDiscard = () => (
+  !hasUnsavedSceneChanges()
+  || window.confirm("Les modifications non enregistrées seront perdues. Continuer ?")
+);
 
 const showGate = (panel) => {
   refs.app.inert = true;
@@ -276,7 +307,11 @@ const switchView = (view, { focus = false } = {}) => {
   });
   $$(".workspace-panel").forEach((item) => item.classList.toggle("on", item === panel));
   if (focus) {
-    panel.querySelector("h1, h2")?.focus({ preventScroll: true });
+    const heading = panel.querySelector("h1, h2");
+    if (heading) {
+      heading.setAttribute("tabindex", "-1");
+      heading.focus({ preventScroll: true });
+    }
     panel.scrollTo?.({ top: 0, behavior: "instant" });
   }
   if (view === "fleet") void refreshFleetState({ reportError: true });
@@ -365,6 +400,7 @@ const loadStudio = async (sceneId = null) => {
     state.persistedIdentity = structuredClone(state.instance);
     const sourceScene = payload.scene?.document ?? payload.scene ?? payload.draft?.scene ?? payload.currentRevision?.scene ?? payload.layout;
     state.scene = normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE));
+    state.savedSceneFingerprint = sceneFingerprint(state.scene);
     state.sceneId = payload.scene?.id ?? state.scene.layoutId;
     state.currentRevisionId = payload.scene?.currentRevision ?? payload.currentRevisionId ?? payload.draft?.revision ?? payload.currentRevision?.revision ?? null;
     state.scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
@@ -407,6 +443,7 @@ const loadStudio = async (sceneId = null) => {
   } catch (error) {
     state.studioLoaded = false;
     state.scene = null;
+    state.savedSceneFingerprint = null;
     state.preview = null;
     state.previewSelection = "";
     renderStudio();
@@ -443,19 +480,15 @@ const applyPreviewMode = () => {
   $("#publishButton").disabled = previewing || refs.app.getAttribute("aria-busy") === "true";
 };
 
-const renderStudio = () => {
+const renderSurface = () => {
   const scene = displayedScene();
   const hasScene = Boolean(scene);
-  populateBrandForm();
   refs.stageEmpty.classList.toggle("hidden", hasScene);
   refs.monitor.classList.toggle("hidden", !hasScene);
   if (!hasScene) {
     refs.objectList.replaceChildren();
     refs.revisionList.replaceChildren(make("p", "empty-copy", "Aucune révision chargée."));
     renderProperties();
-    renderCollections();
-    renderEnrollmentTicket();
-    renderReleases();
     return;
   }
   refs.sceneName.value = scene.name;
@@ -474,10 +507,15 @@ const renderStudio = () => {
   renderNodes();
   renderProperties();
   renderRevisions();
+  applyPreviewMode();
+};
+
+const renderStudio = () => {
+  populateBrandForm();
+  renderSurface();
   renderCollections();
   renderEnrollmentTicket();
   renderReleases();
-  applyPreviewMode();
 };
 
 const renderTargets = () => {
@@ -498,7 +536,7 @@ const loadTargetPreview = async (selection) => {
     state.preview = null;
     state.previewSelection = "";
     state.selectedId = state.scene?.nodes[0]?.id ?? null;
-    renderStudio();
+    renderSurface();
     setStatus("ok", "Brouillon local prêt à être modifié");
     return;
   }
@@ -524,7 +562,7 @@ const loadTargetPreview = async (selection) => {
     };
     state.previewSelection = selection;
     state.selectedId = null;
-    renderStudio();
+    renderSurface();
     const messageCount = state.preview.documents?.messages?.items?.length ?? 0;
     setStatus(
       "ok",
@@ -534,7 +572,7 @@ const loadTargetPreview = async (selection) => {
     state.preview = null;
     state.previewSelection = "";
     state.selectedId = state.scene?.nodes[0]?.id ?? null;
-    renderStudio();
+    renderSurface();
     toast(`Aperçu indisponible : ${error.message}`, true);
     setStatus("error", `Aperçu impossible : ${error.message}`, false);
   } finally {
@@ -1097,7 +1135,7 @@ const renderHome = () => {
   const verifiedReleases = state.releases.filter((release) => release.status === "verified").length;
   const displayName = state.instance?.displayName ?? "RoomFrame";
 
-  $("#homeSummary").textContent = `${displayName} est prêt. Consultez l’état des TV ou choisissez l’action à effectuer.`;
+  $("#homeSummary").textContent = `${displayName} est prêt.`;
   $("#homeTvMetric").textContent = `${onlineScreens}/${totalScreens}`;
   $("#homeTvDetail").textContent = totalScreens === 0
     ? "Aucun écran préparé"
@@ -1115,8 +1153,19 @@ const renderHome = () => {
 };
 
 const renderFleet = () => {
+  const fleetMetrics = state.measuredMetrics ?? activeFleetMetrics(state.televisions);
+  const signature = JSON.stringify({ televisions: state.televisions, fleetMetrics });
+  if (signature === fleetRenderSignature) return;
+  fleetRenderSignature = signature;
+
+  const fleetList = $("#fleetList");
+  const expandedTechnicalIds = new Set(
+    $$(".tv-technical[open]", fleetList).map((details) => details.dataset.tvId),
+  );
+  const focusedFleetKey = document.activeElement?.dataset?.fleetFocusKey;
   const tvRows = state.televisions.map((tv) => {
     const card = make("article", "tv-cell");
+    card.dataset.tvId = tv.id;
     const enrollmentState = tv.enrollmentState ?? tv.enrollment_state;
     const metric = tv.latestMetric ?? tv.latest_metric;
     const latestUpdate = tv.latestUpdate ?? tv.latest_update;
@@ -1183,17 +1232,32 @@ const renderFleet = () => {
         ? [`Révocation : ${new Date(credentialsRevokedAt).toLocaleString("fr-FR")}`]
         : []),
     ];
+    const overview = make("dl", "tv-overview");
+    const overviewRows = [
+      ["État", connectionState],
+      ["Source", tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"],
+      ["Version", tv.version ?? tv.home_version ?? "inconnue"],
+      ...(latestUpdate ? [["Mise à jour", updateStateLabel ?? "état non reconnu"]] : []),
+    ];
+    overviewRows.forEach(([label, value]) => {
+      overview.append(make("dt", "", label), make("dd", "", value));
+    });
+
+    const technical = make("details", "tv-technical");
+    technical.dataset.tvId = tv.id;
+    technical.open = expandedTechnicalIds.has(String(tv.id));
+    const technicalSummary = make("summary", "", "Détails techniques");
+    technicalSummary.dataset.fleetFocusKey = `technical:${tv.id}`;
+    technical.append(
+      technicalSummary,
+      make("p", "", [...credentialLines, ...updateLines, ...metricLines].join("\n")),
+    );
+
     card.append(
       signal,
       make("h3", "", tv.displayName ?? tv.display_name ?? tv.name ?? tv.id),
-      make("p", "", [
-        connectionState,
-        `Source : ${tv.activeSource ?? tv.source_state?.activeSource ?? "inconnue"}`,
-        `Version : ${tv.version ?? tv.home_version ?? "inconnue"}`,
-        ...credentialLines,
-        ...updateLines,
-        ...metricLines,
-      ].join("\n")),
+      overview,
+      technical,
     );
     if (enrollmentState !== "simulated") {
       const actions = make("div", "tv-credential-actions");
@@ -1202,6 +1266,7 @@ const renderFleet = () => {
         revoke.type = "button";
         revoke.dataset.tvCredentialAction = "revoke";
         revoke.dataset.tvId = tv.id;
+        revoke.dataset.fleetFocusKey = `revoke:${tv.id}`;
         revoke.setAttribute(
           "aria-label",
           `Révoquer l’accès de ${tv.displayName ?? tv.display_name ?? tv.id}`,
@@ -1216,6 +1281,7 @@ const renderFleet = () => {
       reenroll.type = "button";
       reenroll.dataset.tvCredentialAction = "reenrollment";
       reenroll.dataset.tvId = tv.id;
+      reenroll.dataset.fleetFocusKey = `reenrollment:${tv.id}`;
       reenroll.setAttribute(
         "aria-label",
         `Réenrôler ${tv.displayName ?? tv.display_name ?? tv.id}`,
@@ -1226,6 +1292,7 @@ const renderFleet = () => {
         remove.type = "button";
         remove.dataset.tvCredentialAction = "delete";
         remove.dataset.tvId = tv.id;
+        remove.dataset.fleetFocusKey = `delete:${tv.id}`;
         remove.setAttribute(
           "aria-label",
           `Supprimer définitivement ${tv.displayName ?? tv.display_name ?? tv.id}`,
@@ -1236,25 +1303,32 @@ const renderFleet = () => {
     }
     return card;
   });
-  const fleetMetrics = state.measuredMetrics ?? activeFleetMetrics(state.televisions);
   const fleetSummary = make(
     "p",
     "fleet-summary",
     `${fleetMetrics.onlineScreens}/${fleetMetrics.totalScreens} en ligne · ${fleetMetrics.reportingScreens} avec mesures`,
   );
-  $("#fleetList").replaceChildren(
+  fleetList.replaceChildren(
     fleetSummary,
     ...(tvRows.length ? tvRows : [make("p", "empty-copy", "Aucune TV enrôlée.")]),
   );
+  if (focusedFleetKey) {
+    $$('[data-fleet-focus-key]', fleetList)
+      .find((element) => element.dataset.fleetFocusKey === focusedFleetKey)
+      ?.focus({ preventScroll: true });
+  }
 };
 
-const renderCollections = () => {
+const renderContentCollections = () => {
   const mediaRows = state.media.map((item) => ledgerRow(item.name ?? item.originalFilename ?? item.originalName ?? item.id, [item.kind ?? item.mimeType ?? item.mediaType, item.status].filter(Boolean).join(" · ")));
   $("#mediaList").replaceChildren(...(mediaRows.length ? mediaRows : [make("p", "empty-copy", "Aucun média.")]));
 
   const messageRows = state.messages.map((item) => ledgerRow(item.title ?? "Message", [item.startsAt, item.endsAt].filter(Boolean).map((date) => new Date(date).toLocaleString("fr-FR")).join(" → ")));
   $("#messageList").replaceChildren(...(messageRows.length ? messageRows : [make("p", "empty-copy", "Aucun message programmé.")]));
+};
 
+const renderCollections = () => {
+  renderContentCollections();
   renderFleet();
   renderSceneManagement();
   renderOperationalSettings();
@@ -2182,6 +2256,32 @@ const beginInteraction = (event) => {
   renderProperties();
 };
 
+let interactionUiFrame = null;
+let interactionUiNode = null;
+
+const renderInteractionUi = (node) => {
+  if (!node || selectedNode()?.id !== node.id) return;
+  $("#nodeX").value = Math.round(node.x);
+  $("#nodeY").value = Math.round(node.y);
+  $("#nodeWidth").value = Math.round(node.width);
+  $("#nodeHeight").value = Math.round(node.height);
+  const position = refs.objectList.querySelector(
+    `[data-select-node="${CSS.escape(node.id)}"] small`,
+  );
+  if (position) position.textContent = `${Math.round(node.x)},${Math.round(node.y)}`;
+};
+
+const scheduleInteractionUi = (node) => {
+  interactionUiNode = node;
+  if (interactionUiFrame != null) return;
+  interactionUiFrame = requestAnimationFrame(() => {
+    interactionUiFrame = null;
+    const pendingNode = interactionUiNode;
+    interactionUiNode = null;
+    renderInteractionUi(pendingNode);
+  });
+};
+
 const moveInteraction = (event) => {
   const interaction = state.interaction;
   if (!interaction || event.pointerId !== interaction.pointerId) return;
@@ -2208,12 +2308,17 @@ const moveInteraction = (event) => {
   }
   const element = refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
   if (element) applyNodeGeometry(element, node);
-  renderProperties();
-  renderObjectList();
+  scheduleInteractionUi(node);
 };
 
 const endInteraction = (event) => {
-  if (state.interaction?.pointerId === event.pointerId) state.interaction = null;
+  if (state.interaction?.pointerId !== event.pointerId) return;
+  const node = state.interaction.node;
+  state.interaction = null;
+  if (interactionUiFrame != null) cancelAnimationFrame(interactionUiFrame);
+  interactionUiFrame = null;
+  interactionUiNode = null;
+  renderInteractionUi(node);
 };
 
 const nudgeSelected = (event) => {
@@ -2348,7 +2453,9 @@ const selectWeatherSuggestion = async (index) => {
 
 const saveRevision = async () => {
   if (!state.scene || state.preview) return;
+  const button = $("#saveButton");
   setBusy(true);
+  setButtonBusy(button, true, "Enregistrement…");
   try {
     state.scene = validateScene(state.scene);
     const payload = await api.post(`scenes/${encodeURIComponent(state.sceneId ?? state.scene.layoutId)}/revisions`, {
@@ -2362,13 +2469,15 @@ const saveRevision = async () => {
       createdAt: new Date().toISOString(),
       status: "brouillon",
     });
-    renderStudio();
+    state.savedSceneFingerprint = sceneFingerprint(state.scene);
+    renderSurface();
     toast(`Brouillon enregistré${state.currentRevisionId ? ` · ${state.currentRevisionId}` : ""}.`);
     setStatus("ok", "Brouillon enregistré par l’API");
   } catch (error) {
     toast(`Enregistrement refusé : ${error.message}`, true);
     setStatus("error", `Enregistrement impossible : ${error.message}`, false);
   } finally {
+    setButtonBusy(button, false);
     setBusy(false);
   }
 };
@@ -2379,7 +2488,9 @@ const publishRevision = async () => {
     toast("Enregistrez d’abord une révision.", true);
     return;
   }
+  const button = $("#publishButton");
   setBusy(true);
+  setButtonBusy(button, true, "Publication…");
   try {
     const payload = await api.post(`scenes/${encodeURIComponent(state.sceneId ?? state.scene.layoutId)}/publish`, {
       revision: state.currentRevisionId,
@@ -2392,6 +2503,7 @@ const publishRevision = async () => {
     toast(`Publication refusée : ${error.message}`, true);
     setStatus("error", `Publication impossible : ${error.message}`, false);
   } finally {
+    setButtonBusy(button, false);
     setBusy(false);
   }
 };
@@ -3145,14 +3257,36 @@ refs.logoutButton.addEventListener("click", async () => {
 });
 
 refs.retryButton.addEventListener("click", boot);
-$("#reloadStudioButton").addEventListener("click", () => loadStudio(state.sceneId));
+$("#reloadStudioButton").addEventListener("click", async (event) => {
+  if (!confirmSceneDiscard()) return;
+  const button = event.currentTarget;
+  setButtonBusy(button, true, "Chargement…");
+  try {
+    await loadStudio(state.sceneId);
+  } finally {
+    setButtonBusy(button, false);
+  }
+});
 $("#saveButton").addEventListener("click", saveRevision);
 $("#publishButton").addEventListener("click", publishRevision);
 $("#deleteNodeButton").addEventListener("click", deleteSelectedNode);
-$("#sceneLoadButton").addEventListener("click", async () => {
+$("#sceneLoadButton").addEventListener("click", async (event) => {
   const sceneId = $("#sceneLibrarySelect").value;
   if (!sceneId || sceneId === state.sceneId) return;
-  await loadStudio(sceneId);
+  if (!confirmSceneDiscard()) return;
+  const button = event.currentTarget;
+  setButtonBusy(button, true, "Chargement…");
+  try {
+    await loadStudio(sceneId);
+  } finally {
+    setButtonBusy(button, false);
+  }
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (!hasUnsavedSceneChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
 });
 $("#sceneCloneButton").addEventListener("click", async () => {
   if (!state.scene || state.preview) return;
@@ -3315,7 +3449,10 @@ $("#backgroundModes").addEventListener("click", (event) => {
   const button = event.target.closest("[data-fit]");
   if (!button || !state.scene || state.preview) return;
   state.scene.canvas.background.mode = button.dataset.fit;
-  renderStudio();
+  $$('[data-fit]').forEach((fitButton) => {
+    fitButton.classList.toggle("on", fitButton.dataset.fit === state.scene.canvas.background.mode);
+  });
+  renderBackground();
 });
 refs.backgroundBlur.addEventListener("input", () => {
   if (!state.scene || state.preview) return;
@@ -3487,7 +3624,8 @@ $("#enrollmentForm").addEventListener("submit", async (event) => {
       });
     }
     form.reset();
-    renderCollections();
+    renderFleet();
+    renderHome();
     setEnrollmentTicket(ticket);
     toast("Code créé. Saisissez-le sur la TV ; il ne sera plus réaffiché après masquage.");
   } catch (error) {
@@ -3615,8 +3753,8 @@ $("#palette").addEventListener("click", (event) => {
   node.zIndex = Math.min(10000, Math.max(0, ...state.scene.nodes.map((item) => item.zIndex)) + 1);
   state.scene.nodes.push(node);
   state.selectedId = node.id;
-  renderStudio();
-  selectNode(node.id, true);
+  renderSurface();
+  refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`)?.focus();
 });
 
 for (const field of ["Primary", "Accent", "Surface", "Ink", "Muted"]) {
@@ -3784,7 +3922,8 @@ $("#backgroundFile").addEventListener("change", async (event) => {
     if (media?.id) state.media.unshift(media);
     state.scene.canvas.background.type = file.type.startsWith("video/") ? "video" : "image";
     state.scene.canvas.background.asset = media.id ?? media.sha256 ?? media.url;
-    renderStudio();
+    renderSurface();
+    renderContentCollections();
     toast("Média validé et associé au brouillon.");
   } catch (error) {
     toast(`Import refusé : ${error.message}`, true);
@@ -3798,7 +3937,7 @@ $("#mediaForm").addEventListener("submit", (event) => {
   uploadForm("media", event.currentTarget, (payload) => {
     const media = payload.media ?? payload;
     if (media?.id) state.media.unshift(media);
-    renderCollections();
+    renderContentCollections();
     toast("Média accepté par le serveur.");
   });
 });
@@ -3820,7 +3959,8 @@ $("#messageForm").addEventListener("submit", async (event) => {
     const message = payload.message ?? payload;
     if (message?.id) state.messages.unshift(message);
     form.reset();
-    renderCollections();
+    renderContentCollections();
+    renderNodes();
     toast("Message programmé par le serveur.");
   } catch (error) {
     toast(`Programmation refusée : ${error.message}`, true);
@@ -3889,7 +4029,7 @@ $("#serverUpdateForm").addEventListener("submit", async (event) => {
   const releaseId = String(data.get("releaseId") || "");
   const confirmVersion = String(data.get("confirmVersion") || "").trim();
   const submit = form.querySelector('button[type="submit"]');
-  submit.disabled = true;
+  setButtonBusy(submit, true, "Programmation…");
   try {
     const request = await api.post(
       `releases/${encodeURIComponent(releaseId)}/server-update-requests`,
@@ -3901,6 +4041,7 @@ $("#serverUpdateForm").addEventListener("submit", async (event) => {
   } catch (error) {
     formError("serverUpdateError", error.message);
   } finally {
+    setButtonBusy(submit, false);
     renderReleases();
   }
 });

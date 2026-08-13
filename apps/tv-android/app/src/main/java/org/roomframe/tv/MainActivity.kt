@@ -15,10 +15,13 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Toast
+import android.widget.VideoView
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,6 +40,7 @@ import org.roomframe.tv.sync.TvCredentialRotationClient
 import org.roomframe.tv.sync.TvCertificateProvisioningClient
 import org.roomframe.tv.sync.TvCertificateProvisioningResult
 import org.roomframe.tv.sync.TvMetricSnapshot
+import org.roomframe.tv.sync.RoomFramePresenceService
 import org.roomframe.tv.sync.TvSyncSchedule
 import org.roomframe.tv.ui.NativeSceneRenderer
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
@@ -69,7 +73,9 @@ class MainActivity : Activity() {
     private lateinit var store: FileExperienceStore
     private lateinit var repository: ExperienceRepository
     private lateinit var credentialStore: DeviceCredentialStore
-    private var currentSnapshot: ExperienceSnapshot? = null
+    private lateinit var sceneHost: FrameLayout
+    private var renderedSceneView: View? = null
+    @Volatile private var currentSnapshot: ExperienceSnapshot? = null
     @Volatile private var startupDurationMs: Long? = null
     @Volatile private var resumeDurationMs: Long? = null
 
@@ -84,8 +90,16 @@ class MainActivity : Activity() {
         }
         store = FileExperienceStore(File(filesDir, "experience"))
         repository = ExperienceRepository(this, store)
-        render(repository.load())
+        sceneHost = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            clipChildren = false
+            clipToPadding = false
+        }
+        setContentView(sceneHost)
+        RoomFramePresenceService.start(applicationContext)
+        render(repository.loadPreviouslyVerified() ?: repository.loadBundled())
         startupDurationMs = SystemClock.elapsedRealtime() - processStartedAt
+        verifyLocalRevisionInBackground()
     }
 
     override fun onResume() {
@@ -113,14 +127,53 @@ class MainActivity : Activity() {
     private fun render(snapshot: ExperienceSnapshot) {
         currentSnapshot = snapshot
         val renderedSnapshot = localDebugBranding(snapshot)
+        val previous = renderedSceneView
+        val preferredFocusNodeId = previous?.findFocus()?.tag as? String
         val renderer = NativeSceneRenderer(
             activity = this,
             adapters = adapters,
             debugBackground = localDebugBrandingDrawable("background"),
             debugLogo = localDebugBrandingDrawable("logo"),
         )
-        setContentView(renderer.render(renderedSnapshot))
+        val next = renderer.render(renderedSnapshot, preferredFocusNodeId)
+        renderedSceneView = next
+        sceneHost.addView(
+            next,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        if (previous != null) {
+            next.alpha = 0f
+            next.animate()
+                .alpha(1f)
+                .setDuration(SCENE_TRANSITION_DURATION_MILLIS)
+                .withEndAction {
+                    releaseScene(previous)
+                    sceneHost.removeView(previous)
+                }
+                .start()
+        }
         window.decorView.post { enterImmersiveMode() }
+    }
+
+    private fun verifyLocalRevisionInBackground() {
+        syncExecutor.execute {
+            val verified = repository.load()
+            val displayedRevisionId = currentSnapshot?.revisionId
+            if (verified.revisionId == displayedRevisionId) return@execute
+            runOnUiThread {
+                if (!isFinishing && !isDestroyed) render(verified)
+            }
+        }
+    }
+
+    private fun releaseScene(view: View) {
+        if (view is VideoView) view.stopPlayback()
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) releaseScene(view.getChildAt(index))
+        }
     }
 
     private fun synchronizeInBackground() {
@@ -403,6 +456,7 @@ class MainActivity : Activity() {
 
     private companion object {
         const val ADMIN_HOLD_MILLIS = 8_000L
+        const val SCENE_TRANSITION_DURATION_MILLIS = 140L
         const val MAX_LOCAL_BRANDING_DOCUMENT_BYTES = 64L * 1024
         const val MAX_LOCAL_BRANDING_BYTES = 25L * 1024 * 1024
         const val MAX_LOCAL_BRANDING_DIMENSION = 4096

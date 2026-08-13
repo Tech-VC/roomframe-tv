@@ -6,12 +6,15 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <queries>
         <package android:name="com.google.android.apps.mediashell" />
     </queries>
 
     <application
+        android:name=".RoomFrameApplication"
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -38,6 +41,30 @@
             android:exported="false"
             android:launchMode="singleTask" />
 
+        <activity
+            android:name=".deviceadmin.RoomFrameProvisioningModeActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.GET_PROVISIONING_MODE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".deviceadmin.RoomFrameAdminPolicyComplianceActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.ADMIN_POLICY_COMPLIANCE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".RoomFrameAdminReceiver"
             android:description="@string/device_admin_description"
@@ -51,5 +78,32 @@
         <receiver
             android:name=".adapters.AppUpdateResultReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".deviceadmin.RoomFramePolicyUpdateReceiver"
+            android:enabled="@bool/enable_policy_update_receiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.admin.action.DEVICE_POLICY_SET_RESULT" />
+                <action android:name="android.app.admin.action.DEVICE_POLICY_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".deviceadmin.DeviceOwnerPolicyRecoveryReceiver"
+            android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="org.roomframe.tv.maintenance.APPLY_PERSISTENT_HOME" />
+                <action android:name="org.roomframe.tv.maintenance.CLEAR_PERSISTENT_HOME" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".sync.RoomFramePresenceService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
     </application>
 </manifest>
