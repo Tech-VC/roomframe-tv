@@ -84,6 +84,18 @@ test("contraint un nouvel objet dans la scène", () => {
   assert.ok(scene.nodes[0].x + scene.nodes[0].width <= CANVAS_WIDTH);
 });
 
+test("le menu Sources est le point d’entrée neutre des nouvelles scènes", () => {
+  const defaultSources = DEFAULT_SCENE.nodes.filter((node) => node.kind === "source");
+  assert.deepEqual(
+    defaultSources.map((node) => [node.props.source, node.props.label]),
+    [["menu", "Sources"]],
+  );
+  const menu = createNode("source", "menu");
+  assert.equal(menu.props.source, "menu");
+  assert.equal(menu.props.label, "Sources");
+  assert.equal(menu.focusOrder, 1);
+});
+
 test("refuse les identifiants dupliqués", () => {
   const node = createNode("text");
   assert.throws(() => validateScene({
@@ -123,7 +135,20 @@ test("la scène UI par défaut passe le validateur API réel", async () => {
     node.width = 400;
     node.height = 200;
   });
+  paletteScene.nodes.find((node) => node.kind === "app").props.applicationId = "com.example.application";
   assert.doesNotThrow(() => validators.assertLayout(paletteScene));
+});
+
+test("un objet application exige un choix valide avant publication", () => {
+  const application = createNode("app");
+  assert.throws(
+    () => validateScene({ ...cloneScene(DEFAULT_SCENE), nodes: [application] }),
+    /Choisissez une application valide/,
+  );
+  application.props.applicationId = "com.example.application";
+  assert.doesNotThrow(
+    () => validateScene({ ...cloneScene(DEFAULT_SCENE), nodes: [application] }),
+  );
 });
 
 test("une météo exige une suggestion géocodée et reste indépendante de l’instance", async () => {

@@ -53,7 +53,7 @@ data class NodeProperties(
     val asset: String?,
     val assetId: String?,
     val fit: String,
-    val packageName: String?,
+    val applicationId: String?,
     val feed: String?,
     val maximumItems: Int,
     val fontScale: Float,
@@ -93,6 +93,11 @@ data class BrandingDocument(
     val logoAssetId: String? = null,
 )
 
+data class DeviceIdentityDocument(
+    val displayName: String,
+    val roomName: String,
+)
+
 data class MessageDocument(
     val id: String,
     val title: String,
@@ -116,7 +121,40 @@ data class WeatherDocument(
     val attributionUrl: String = "https://open-meteo.com/",
 )
 
+data class SourceSettingDocument(
+    val kind: String,
+    val enabled: Boolean,
+    val label: String?,
+    val physicalInput: String?,
+    val applicationId: String?,
+    val applicationIds: List<String> = applicationId?.let(::listOf) ?: emptyList(),
+)
+
+data class SourceSettingsDocument(
+    val items: Map<String, SourceSettingDocument> = emptyMap(),
+) {
+    fun settingFor(kind: String): SourceSettingDocument? = items[kind]
+}
+
+data class PrivateAccessDocument(
+    val enabled: Boolean = false,
+    val pinConfigured: Boolean = false,
+    val generation: Long = 0,
+    val maxAttempts: Int = 5,
+    val lockoutSeconds: Int = 60,
+)
+
 object ExperienceDocumentParser {
+    fun parseDeviceIdentity(bytes: ByteArray?): DeviceIdentityDocument? {
+        if (bytes == null) return null
+        val root = parseObject(bytes, "device")
+        require(root.getInt("schemaVersion") == 1) { "Version d'identite TV non supportee" }
+        return DeviceIdentityDocument(
+            displayName = boundedText(root.getString("displayName"), 100, singleLine = true),
+            roomName = boundedText(root.getString("roomName"), 100, singleLine = true),
+        )
+    }
+
     fun parseScene(bytes: ByteArray): SceneDocument {
         val root = parseObject(bytes, "scene")
         require(root.getInt("schemaVersion") == 2) { "Version de scène non supportée" }
@@ -240,6 +278,110 @@ object ExperienceDocumentParser {
         )
     }
 
+    fun parseSources(bytes: ByteArray?): SourceSettingsDocument {
+        if (bytes == null) return SourceSettingsDocument()
+        val root = parseObject(bytes, "sources")
+        require(root.getInt("schemaVersion") == 1) { "Version de sources non supportée" }
+        val rawItems = root.getJSONArray("items")
+        require(rawItems.length() <= 16) { "Trop de sources" }
+        val items = buildMap {
+            repeat(rawItems.length()) { index ->
+                val item = rawItems.getJSONObject(index)
+                val kind = item.getString("source_kind")
+                require(kind in setOf("airplay", "cast", "hdmi", "private-app")) {
+                    "Type de source invalide"
+                }
+                require(!containsKey(kind)) { "Type de source dupliqué" }
+                val configuration = item.optJSONObject("configuration") ?: JSONObject()
+                val physicalInput = configuration
+                    .optString("physicalInput")
+                    .takeIf(String::isNotBlank)
+                    ?.also {
+                        require(it == "auto" || Regex("^HDMI[1-8]$").matches(it)) {
+                            "Entrée HDMI invalide"
+                        }
+                    }
+                val applicationId = configuration
+                    .optNullableString("applicationId")
+                    ?.trim()
+                    ?.takeIf(String::isNotEmpty)
+                    ?.also {
+                        require(SAFE_PACKAGE_NAME.matches(it)) {
+                            "Identifiant d'application Android invalide"
+                        }
+                    }
+                val configuredApplicationIds = configuration
+                    .optJSONArray("applicationIds")
+                    ?.let { rawApplicationIds ->
+                        require(rawApplicationIds.length() <= 12) {
+                            "Trop d'applications privées"
+                        }
+                        buildList {
+                            repeat(rawApplicationIds.length()) { applicationIndex ->
+                                val configuredId = rawApplicationIds
+                                    .getString(applicationIndex)
+                                    .trim()
+                                require(SAFE_PACKAGE_NAME.matches(configuredId)) {
+                                    "Identifiant d'application Android invalide"
+                                }
+                                require(configuredId !in this) {
+                                    "Identifiant d'application Android dupliqué"
+                                }
+                                add(configuredId)
+                            }
+                        }
+                    }
+                    .orEmpty()
+                val applicationIds = configuredApplicationIds.ifEmpty {
+                    listOfNotNull(applicationId)
+                }
+                require(
+                    applicationId == null ||
+                        configuredApplicationIds.isEmpty() ||
+                        applicationId == configuredApplicationIds.first(),
+                ) {
+                    "Identifiants d'application Android contradictoires"
+                }
+                put(
+                    kind,
+                    SourceSettingDocument(
+                        kind = kind,
+                        enabled = item.optBoolean("enabled", false),
+                        label = item.optNullableString("label")
+                            ?.let { boundedText(it, 200, singleLine = true) },
+                        physicalInput = physicalInput,
+                        applicationId = applicationId ?: applicationIds.firstOrNull(),
+                        applicationIds = applicationIds,
+                    ),
+                )
+            }
+        }
+        return SourceSettingsDocument(items)
+    }
+
+    fun parsePrivateAccess(bytes: ByteArray?): PrivateAccessDocument {
+        if (bytes == null) return PrivateAccessDocument()
+        val root = parseObject(bytes, "private-access")
+        require(root.getInt("schemaVersion") == 1) {
+            "Version d'accès privé non supportée"
+        }
+        val generation = root.optLong("generation", 0)
+        require(generation in 0..9_007_199_254_740_991L) {
+            "Génération d'accès privé invalide"
+        }
+        val maxAttempts = root.optInt("maxAttempts", 5)
+        require(maxAttempts in 1..10) { "Nombre de tentatives privées invalide" }
+        val lockoutSeconds = root.optInt("lockoutSeconds", 60)
+        require(lockoutSeconds in 1..3_600) { "Temporisation privée invalide" }
+        return PrivateAccessDocument(
+            enabled = root.optBoolean("enabled", false),
+            pinConfigured = root.optBoolean("pinConfigured", false),
+            generation = generation,
+            maxAttempts = maxAttempts,
+            lockoutSeconds = lockoutSeconds,
+        )
+    }
+
     private fun parseBackground(raw: JSONObject): BackgroundDocument {
         val type = raw.getString("type")
         require(type in setOf("color", "image", "video")) { "Type de fond invalide" }
@@ -261,7 +403,10 @@ object ExperienceDocumentParser {
         require(SAFE_NODE_ID.matches(id)) { "Identifiant de composant invalide" }
         val props = raw.getJSONObject("props")
         require((props.names()?.length() ?: 0) <= 40) { "Trop de propriétés de composant" }
-        val packageName = props.optNullableString("packageName")?.also {
+        val applicationId = (
+            props.optNullableString("applicationId")
+                ?: props.optNullableString("packageName")
+        )?.also {
             require(SAFE_PACKAGE_NAME.matches(it)) { "Nom de package Android invalide" }
         }
         return SceneNodeDocument(
@@ -292,7 +437,7 @@ object ExperienceDocumentParser {
                 fit = props.optString("fit", "contain").also {
                     require(it in setOf("cover", "contain", "focus")) { "Mode média invalide" }
                 },
-                packageName = packageName,
+                applicationId = applicationId,
                 feed = props.optNullableString("feed")?.let { boundedText(it, 64, true) },
                 maximumItems = props.optInt("maximumItems", 3).coerceIn(1, 20),
                 fontScale = finiteFloat(props.optDouble("fontScale", 1.0), 0.25f, 4f, "fontScale"),

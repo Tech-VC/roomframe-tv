@@ -40,10 +40,52 @@ test('une scène hors canevas ou avec props libres est refusée', async () => {
   assert.throws(() => validators.assertLayout(traversal), /invalid_node_property_value/);
 });
 
+test('la scène accepte le menu Sources, le raccourci privé historique et refuse une source inconnue', async () => {
+  const layout = await readJson('defaults/experience/layout.json');
+  const source = layout.nodes.find((node) => node.kind === 'source');
+  source.props.source = 'menu';
+  assert.equal(validators.assertLayout(layout), layout);
+
+  source.props.source = 'private-app';
+  assert.equal(validators.assertLayout(layout), layout);
+
+  source.props.source = 'arbitrary-system-intent';
+  assert.throws(() => validators.assertLayout(layout), /invalid_source_kind/);
+});
+
+test('le document d’accès privé ne peut transporter aucun vérificateur', () => {
+  const policy = {
+    schemaVersion: 1,
+    enabled: true,
+    pinConfigured: true,
+    generation: 3,
+    maxAttempts: 5,
+    lockoutSeconds: 60,
+  };
+  assert.equal(validators.assertPrivateAccess(policy), policy);
+  assert.throws(
+    () => validators.assertPrivateAccess({ ...policy, pinHash: 'interdit' }),
+    /contract_validation_failed/,
+  );
+});
+
 test('un fuseau horaire inconnu est refusé', async () => {
   const schedule = await readJson('defaults/experience/schedule.json');
   schedule.timezone = 'Europe/Does_Not_Exist';
   assert.throws(() => validators.assertSchedule(schedule), /invalid_timezone/);
+});
+
+test('le nom synchronisé de la TV reste borné et sur une ligne', () => {
+  const device = {
+    schemaVersion: 1,
+    displayName: 'Salle de réunion 01',
+    roomName: 'Salle de réunion',
+  };
+  assert.equal(validators.assertTvDevice(device), device);
+  assert.throws(
+    () => validators.assertTvDevice({ ...device, displayName: 'Salle\ninterdite' }),
+    /contract_validation_failed/,
+  );
 });
 
 test('le contrat de découverte borne les origines et la signature', () => {

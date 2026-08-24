@@ -13,11 +13,38 @@ sealed interface TvCertificateProvisioningResult {
     data class Failed(val reason: String) : TvCertificateProvisioningResult
 }
 
+internal object TvCertificateTransportPolicy {
+    fun includeClientCertificate(
+        method: String,
+        path: String,
+        recoveryAttempt: Boolean,
+    ): Boolean = !(
+        recoveryAttempt &&
+            method == "GET" &&
+            path == "/api/v1/tv/certificate"
+        )
+}
+
+internal class TvCertificateRequestException(
+    val statusCode: Int,
+    message: String,
+) : IllegalStateException(message)
+
 class TvCertificateProvisioningClient(
     private val certificateStore: TvClientCertificateStore = TvClientCertificateStore(),
 ) {
     fun synchronize(credentials: DeviceCredentials): TvCertificateProvisioningResult = runCatching {
-        val status = request(credentials, "GET", "/api/v1/tv/certificate")
+        val status = try {
+            request(credentials, "GET", "/api/v1/tv/certificate")
+        } catch (error: TvCertificateRequestException) {
+            if (error.statusCode != 401) throw error
+            request(
+                credentials,
+                "GET",
+                "/api/v1/tv/certificate",
+                recoveryAttempt = true,
+            )
+        }
         when (status.optString("status")) {
             "not-requested" -> TvCertificateProvisioningResult.NotRequested
             "pending", "issuing" -> TvCertificateProvisioningResult.Pending(
@@ -39,6 +66,7 @@ class TvCertificateProvisioningClient(
         credentials: DeviceCredentials,
         response: JSONObject,
     ): TvCertificateProvisioningResult {
+        val requestId = response.getString("requestId")
         val fingerprint = response.getString("fingerprintSha256")
         val currentFingerprint = certificateStore.currentFingerprintSha256()
         val plan = TvCertificateProvisioningPolicy.plan(
@@ -58,11 +86,20 @@ class TvCertificateProvisioningClient(
             )
         }
         if (plan.activate) {
+            val proofSignature = certificateStore.activationProof(
+                deviceId = credentials.deviceId,
+                requestId = requestId,
+                fingerprintSha256 = fingerprint,
+            )
             request(
                 credentials,
                 "POST",
                 "/api/v1/tv/certificate/activate",
-                JSONObject(),
+                JSONObject()
+                    .put("algorithm", "RS256")
+                    .put("requestId", requestId)
+                    .put("fingerprintSha256", fingerprint)
+                    .put("proofSignature", proofSignature),
             ).also {
                 require(it.optBoolean("activated")) {
                     "Activation du certificat TV non confirmée"
@@ -91,6 +128,7 @@ class TvCertificateProvisioningClient(
         path: String,
         body: JSONObject? = null,
         acceptedStatuses: Set<Int> = (200..299).toSet(),
+        recoveryAttempt: Boolean = false,
     ): JSONObject {
         val base = URI(DeviceCredentialStore.validateServerUrl(credentials.serverUrl))
         val resolved = base.resolve(path)
@@ -99,7 +137,11 @@ class TvCertificateProvisioningClient(
                 resolved.host == base.host &&
                 resolved.port == base.port,
         ) { "Origine de certificat TV invalide" }
-        val connection = RoomFrameHttps.open(URL(resolved.toString())).apply {
+        val connection = RoomFrameHttps.open(
+            URL(resolved.toString()),
+            includeClientCertificate = TvCertificateTransportPolicy
+                .includeClientCertificate(method, path, recoveryAttempt),
+        ).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             instanceFollowRedirects = false
@@ -132,7 +174,7 @@ class TvCertificateProvisioningClient(
                         connection.localCertificates?.isNotEmpty() == true
                     }.getOrDefault(false),
                 )
-                throw IllegalStateException(serverReason)
+                throw TvCertificateRequestException(status, serverReason)
             }
             val contentType = connection.contentType?.substringBefore(';')?.trim()?.lowercase()
             require(contentType == "application/json") { "Réponse de certificat TV invalide" }

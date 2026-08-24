@@ -5,6 +5,7 @@ import test from "node:test";
 const source = await readFile(new URL("./app.js", import.meta.url), "utf8");
 const markup = await readFile(new URL("./index.html", import.meta.url), "utf8");
 const styles = await readFile(new URL("./styles.css", import.meta.url), "utf8");
+const androidAppCatalog = await readFile(new URL("./android-app-catalog.js", import.meta.url), "utf8");
 
 test("les formulaires asynchrones conservent leur référence après un await", () => {
   assert.doesNotMatch(source, /event\.currentTarget\.reset\(\)/);
@@ -46,6 +47,49 @@ test("les règles de salle utilisent des formulaires structurés et l’API atom
   assert.match(styles, /\.source-settings-form,[\s\S]*grid-template-columns: repeat\(2, minmax\(280px, 1fr\)\)/);
   assert.match(styles, /\.source-settings-form legend,[\s\S]*float: left;[\s\S]*width: 100%/);
   assert.doesNotMatch(source, /source-action|↗/);
+});
+
+test("l’Espace privé choisit plusieurs applications par leur nom avec un repli avancé", () => {
+  assert.match(markup, /id="sourcePrivateAppChoices"/);
+  assert.match(markup, /id="sourcePrivateAppManualList"/);
+  assert.match(markup, /Ajouter une autre application/);
+  assert.match(markup, /id="nodeAppSelect"/);
+  assert.match(markup, /class="hidden" id="nodeAppManualField"/);
+  assert.match(androidAppCatalog, /name: "CANAL\+"[\s\S]*applicationId: "com\.canal\.android\.canal"/);
+  assert.match(androidAppCatalog, /name: "YouTube"[\s\S]*applicationId: "com\.google\.android\.youtube\.tv"/);
+  assert.match(source, /normalizePrivateAndroidApplicationIds/);
+  assert.match(source, /applicationIds: privateApplicationIds/);
+  assert.match(source, /privateApplicationIds\[0\][\s\S]*applicationId/);
+  assert.match(source, /node\.props\.applicationId = resolvedAndroidApplicationId/);
+  assert.match(source, /if \(androidTvAppForId\(manualInput\.value\)\) manualInput\.value = ""/);
+  assert.match(source, /node\.props\.label = "Application"/);
+  assert.match(source, /androidTvAppDisplayName/);
+  assert.match(source, /privateApplicationStatus/);
+  assert.match(styles, /\.private-app-known/);
+  assert.match(styles, /\.android-app-help/);
+});
+
+test("le code privé est affiché une seule fois, copié sans espace et jamais gardé dans state", () => {
+  assert.match(markup, /id="privateAccessEnabled"/);
+  assert.match(markup, /id="privateAccessGenerate"/);
+  assert.match(markup, /id="privatePinDialog"/);
+  assert.match(markup, /Il ne sera plus affiché après fermeture/);
+  assert.match(source, /api\.put\("private-access"/);
+  assert.match(source, /api\.post\("private-access\/pin"/);
+  assert.match(source, /Remplacer le code actuel \?/);
+  assert.match(source, /privatePinValue"\)\.textContent\.replace\(\/\\D\/gu, ""\)/);
+  assert.match(source, /privatePinDialog"\)\.addEventListener\("close", erasePrivatePin\)/);
+  assert.match(source, /if \(view !== "fleet"\) clearPrivatePinDialog\(\)/);
+  const stateDeclaration = source.match(/const state = \{([\s\S]*?)\n\};/)?.[1] ?? "";
+  assert.doesNotMatch(stateDeclaration, /privatePin|\bpin\s*:/);
+});
+
+test("Surface propose le menu Sources sans retirer les raccourcis directs", () => {
+  assert.match(markup, /data-source="menu"[\s\S]*>Sources<\/button>/);
+  assert.match(markup, /data-source="airplay"/);
+  assert.match(markup, /data-source="cast"/);
+  assert.match(markup, /data-source="hdmi"/);
+  assert.match(styles, /\.source-glyph\.menu/);
 });
 
 test("la bibliothèque de scènes sépare chargement, copie et affectation publiée", () => {

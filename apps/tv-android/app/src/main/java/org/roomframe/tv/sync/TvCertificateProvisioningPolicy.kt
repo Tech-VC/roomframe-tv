@@ -12,6 +12,6 @@ object TvCertificateProvisioningPolicy {
         activationRequired: Boolean,
     ): TvCertificateProvisioningPlan = TvCertificateProvisioningPlan(
         install = currentFingerprintSha256 != expectedFingerprintSha256,
-        activate = activationRequired,
+        activate = activationRequired || currentFingerprintSha256 != expectedFingerprintSha256,
     )
 }

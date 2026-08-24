@@ -211,6 +211,13 @@ configuration HTML ou JavaScript n’est acceptée. La route unitaire
 aussi les délais de retour accueil et de veille propres à la cible, avec
 héritage des valeurs d’instance lorsqu’aucune surcharge n’existe.
 
+Le manifeste TV matérialise ces réglages dans `sources.json`. Le client Android
+applique `enabled` et `label` au rendu local et transmet
+`configuration.physicalInput` à l'adaptateur HDMI. Sur le profil Philips TA1,
+seules les valeurs `HDMI1` à `HDMI4` (ou `auto`, qui conserve HDMI 1) sont
+acceptées ; une valeur inconnue reste indisponible au lieu de basculer vers un
+port arbitraire.
+
 ## Enrôlement et synchronisation TV
 
 ```text
@@ -224,6 +231,7 @@ GET  /api/v1/tv/certificate
 POST /api/v1/tv/certificate/activate
 POST /api/v1/tv/certificate/renew
 GET  /api/v1/tv/sync
+POST /api/v1/tv/heartbeat
 POST /api/v1/tv/metrics
 POST /api/v1/tv/events
 GET  /api/v1/media/:assetId/:variant
@@ -235,6 +243,10 @@ Son payload suit `contracts/discovery.schema.json` et porte l’origine
 préférée, l’IP de secours, l’empreinte de la CA HTTPS et une signature
 ECDSA P-256. Il ne contient ni secret, ni organisation, ni salle, ni identité
 TV. La signature est vérifiée avant que l’APK ne tente le bootstrap chiffré.
+
+`POST /api/v1/tv/heartbeat` reçoit un objet JSON vide `{}`, met uniquement à
+jour la présence de la TV authentifiée et répond `204` sans corps. Le client ne
+tente pas de lire de flux de réponse après ce statut.
 
 Un administrateur crée d’abord un enrôlement valable 30 minutes avec
 `POST /api/v1/tvs/enrollment`. Le parcours courant affiche un code de 16
@@ -276,7 +288,19 @@ x-roomframe-device-key: <clé remise une fois>
 Le courtier root émet ensuite le certificat individuel de manière asynchrone.
 La TV interroge `GET /tv/certificate`, vérifie la chaîne, l’EKU, le SAN, la clé
 publique et l’empreinte avant de remplacer la chaîne de son alias Keystore.
-Elle appelle alors `/tv/certificate/activate` en présentant le certificat.
+Ce GET reste authentifié par l’UUID et la clé longue. Lorsqu’un certificat de
+remplacement est déjà en attente, il est la seule route qui tolère une ancienne
+empreinte mTLS encore attachée par un firmware constructeur ; la réponse ne
+contient que des certificats publics et l’ancienne empreinte reste refusée
+partout ailleurs. L'APK essaie d'abord ce GET avec son certificat actif et ne
+fait la tentative sans certificat client qu'après un 401.
+Elle appelle alors `/tv/certificate/activate` en présentant le certificat et
+une preuve `RS256` conforme à
+`contracts/tv-certificate-activation.schema.json`. Cette preuve lie l'UUID de
+la TV, l'identifiant de la demande et l'empreinte en attente. Si un firmware
+constructeur continue de présenter une ancienne identité TLS, l'API peut
+vérifier la preuve avec la clé publique déjà enregistrée, mais uniquement tant
+qu'aucun certificat actif n'existe et que la demande en attente est valide.
 Après cette activation, Caddy vérifie le certificat et l’API exige son
 empreinte en plus des deux en-têtes ci-dessus. Le renouvellement démarre à
 30 jours de l’expiration et promeut la nouvelle empreinte seulement après sa
@@ -305,10 +329,17 @@ laissent une trace d’audit.
 
 Le manifeste de synchronisation suit `contracts/tv-sync.schema.json`. Il
 contient la révision globale, la révision de scène publiée, les documents
-`scene`, `messages`, `schedule`, `sources` et `branding`, leurs SHA-256, les
+`device`, `scene`, `messages`, `schedule`, `sources`, `private-access`,
+`branding` et `weather`, leurs SHA-256, les
 variantes médias prêtes et un SHA-256 canonique du
 manifeste. `?revision=<n>` reçoit une réponse courte `upToDate` lorsque rien n’a
-changé.
+changé. `device.json` contient uniquement le nom de la TV et de sa salle tels
+qu’ils ont été configurés dans le Parc. L’application peut ainsi afficher le
+nom de l’écran sans le confondre avec le nom global de l’organisation.
+
+`private-access.json` contient seulement l'état d'activation, la présence d'un
+code, sa génération et les bornes de tentative. Il ne contient jamais le code,
+son sel ou son dérivé.
 
 Un appareil ne peut télécharger que les médias réellement référencés par sa
 scène assignée. Une session d’administration dotée de la permission adéquate
@@ -321,6 +352,29 @@ contenu regardé ni appareil personnel n’est collecté. Une mesure valide
 actualise aussi la présence de la TV. `GET /studio` expose uniquement sa
 dernière mesure et un résumé parc ; l’historique brut reste côté base pour le
 diagnostic et la future politique de rétention.
+
+## Espace privé
+
+```text
+PUT  /api/v1/private-access
+POST /api/v1/private-access/pin
+POST /api/v1/tv/private-access/unlock
+PUT  /api/v1/tv/applications/status
+```
+
+Les deux premières routes exigent une session dotée de `fleet:write` et un
+jeton CSRF. La génération renvoie le code numérique une seule fois ; les
+réponses Studio suivantes exposent uniquement `pin_configured` et la
+génération. Activer une politique sans code est refusé.
+
+Le déverrouillage exige l'identité TV complète, dont son certificat client, et
+accepte `{pin, generation}`. Une génération obsolète est refusée ; les échecs
+sont persistés par TV et cinq erreurs déclenchent un blocage de 60 secondes.
+
+Le rapport d'applications accepte au plus douze entrées dans `items`. L'API
+compare chaque `applicationId` à la configuration effective de la TV avant de
+conserver présence, version et `accessEnforced`. Un identifiant non configuré
+fait rejeter toute la requête.
 
 La clé d’appareil rotative reste une seconde preuve et facilite une transition
 réseau sûre. Elle ne remplace pas le certificat individuel : les deux doivent

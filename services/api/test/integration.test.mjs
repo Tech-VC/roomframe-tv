@@ -27,7 +27,10 @@ import { processOneMediaJob } from '../src/media-worker.mjs';
 import { importReleaseBundle } from '../src/release-importer.mjs';
 import { processSceneScheduleTransitions } from '../src/scene-scheduler.mjs';
 import { csrfTokenForSession, keyedDigest } from '../src/security.mjs';
-import { tvCertificateProofPayload } from '../src/studio-routes.mjs';
+import {
+  tvCertificateActivationProofPayload,
+  tvCertificateProofPayload,
+} from '../src/studio-routes.mjs';
 import { totpAtCounter } from '../src/totp.mjs';
 import { releaseSourceKey } from '../src/update-source.mjs';
 import {
@@ -1630,6 +1633,33 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(certificateIssued.json().status, 'issued');
   assert.equal(certificateIssued.json().certificatePem, certificatePem);
   assert.equal(certificateIssued.json().fingerprintSha256, certificateFingerprint);
+  assert.equal(certificateIssued.json().activationRequired, true);
+  const staleCertificateFingerprint = crypto
+    .createHash('sha256')
+    .update('roomframe-integration-stale-client-certificate')
+    .digest('hex');
+  const staleCertificateHeaders = {
+    ...certificateHeaders,
+    'x-roomframe-tls-client-verified': '1',
+    'x-roomframe-tls-client-fingerprint': staleCertificateFingerprint,
+  };
+  const certificateRecoveryWithStaleCertificate = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tv/certificate',
+    headers: staleCertificateHeaders,
+  });
+  assert.equal(
+    certificateRecoveryWithStaleCertificate.statusCode,
+    200,
+    certificateRecoveryWithStaleCertificate.body,
+  );
+  assert.equal(certificateRecoveryWithStaleCertificate.json().status, 'issued');
+  const staleCertificateCannotSynchronize = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: staleCertificateHeaders,
+  });
+  assert.equal(staleCertificateCannotSynchronize.statusCode, 401);
   const activationWithoutCertificate = await app.inject({
     method: 'POST',
     url: '/api/v1/tv/certificate/activate',
@@ -1637,6 +1667,83 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     payload: {},
   });
   assert.equal(activationWithoutCertificate.statusCode, 401);
+  const activationProofPayload = {
+    algorithm: 'RS256',
+    requestId: certificateDeviceCredentials.certificateRequestId,
+    fingerprintSha256: certificateFingerprint,
+    proofSignature: crypto.sign(
+      'RSA-SHA256',
+      tvCertificateActivationProofPayload(
+        certificatePendingDevice.id,
+        certificateDeviceCredentials.certificateRequestId,
+        certificateFingerprint,
+      ),
+      certificateKeyPair.privateKey,
+    ).toString('base64url'),
+  };
+  const invalidActivationProof = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: staleCertificateHeaders,
+    payload: {
+      ...activationProofPayload,
+      proofSignature: crypto.sign(
+        'RSA-SHA256',
+        Buffer.from('preuve-activation-modifiee'),
+        certificateKeyPair.privateKey,
+      ).toString('base64url'),
+    },
+  });
+  assert.equal(invalidActivationProof.statusCode, 401);
+  const pendingAfterInvalidProof = await pool.query(
+    `SELECT client_certificate_fingerprint,
+            client_certificate_pending_fingerprint
+     FROM screens
+     WHERE id = $1`,
+    [certificatePendingDevice.id],
+  );
+  assert.equal(pendingAfterInvalidProof.rows[0].client_certificate_fingerprint, null);
+  assert.equal(
+    pendingAfterInvalidProof.rows[0].client_certificate_pending_fingerprint,
+    certificateFingerprint,
+  );
+  const certificateProofRecovery = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: staleCertificateHeaders,
+    payload: activationProofPayload,
+  });
+  assert.equal(
+    certificateProofRecovery.statusCode,
+    200,
+    certificateProofRecovery.body,
+  );
+  assert.equal(certificateProofRecovery.json().activated, true);
+  assert.equal(certificateProofRecovery.json().idempotent, false);
+  const activationAudit = await pool.query(
+    `SELECT details
+     FROM audit_log
+     WHERE action = 'tv.certificate.activated'
+       AND target_id = $1
+     ORDER BY id DESC
+     LIMIT 1`,
+    [certificatePendingDevice.id],
+  );
+  assert.equal(
+    activationAudit.rows[0].details.activationMethod,
+    'keystore-proof-recovery',
+  );
+  assert.equal(
+    activationAudit.rows[0].details.fingerprintSha256,
+    certificateFingerprint,
+  );
+  const activationProofReplay = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/certificate/activate',
+    headers: certificateHeaders,
+    payload: activationProofPayload,
+  });
+  assert.equal(activationProofReplay.statusCode, 401);
   const activationHeaders = {
     ...certificateHeaders,
     'x-roomframe-tls-client-verified': '1',
@@ -1650,7 +1757,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(certificateActivation.statusCode, 200, certificateActivation.body);
   assert.equal(certificateActivation.json().activated, true);
-  assert.equal(certificateActivation.json().idempotent, false);
+  assert.equal(certificateActivation.json().idempotent, true);
   const certificateRequired = await app.inject({
     method: 'GET',
     url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
@@ -1763,6 +1870,7 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     renewedCertificateIssued.json().fingerprintSha256,
     renewedFingerprint,
   );
+  assert.equal(renewedCertificateIssued.json().activationRequired, true);
   const renewedHeaders = {
     ...certificateHeaders,
     'x-roomframe-tls-client-verified': '1',
@@ -1902,11 +2010,25 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
             signalProbe: true,
           },
         },
+        {
+          kind: 'private-app',
+          enabled: true,
+          label: 'CANAL+',
+          configuration: {
+            adapter: 'unsupported',
+            applicationId: 'com.canal.android.canal',
+            applicationIds: [
+              'com.canal.android.canal',
+              'com.google.android.youtube.tv',
+            ],
+            returnPolicy: 'home-on-exit',
+          },
+        },
       ],
     },
   });
   assert.equal(groupSources.statusCode, 200, groupSources.body);
-  assert.equal(groupSources.json().sourceCount, 2);
+  assert.equal(groupSources.json().sourceCount, 3);
   const duplicateGroupSources = await app.inject({
     method: 'PUT',
     url: '/api/v1/settings/sources',
@@ -1939,6 +2061,374 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   });
   assert.equal(privateAppWithoutPackage.statusCode, 400, privateAppWithoutPackage.body);
   assert.equal(privateAppWithoutPackage.json().error, 'source_application_id_required');
+  const privateAppWithInvalidPackage = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      items: [{
+        kind: 'private-app',
+        enabled: true,
+        label: 'Application invalide',
+        configuration: { applicationId: 'not a package' },
+      }],
+    },
+  });
+  assert.equal(privateAppWithInvalidPackage.statusCode, 400, privateAppWithInvalidPackage.body);
+  assert.equal(privateAppWithInvalidPackage.json().error, 'invalid_application_id');
+  const privateAppWithContradictoryPackages = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      items: [{
+        kind: 'private-app',
+        enabled: true,
+        label: 'Applications contradictoires',
+        configuration: {
+          applicationId: 'com.canal.android.canal',
+          applicationIds: ['com.google.android.youtube.tv'],
+        },
+      }],
+    },
+  });
+  assert.equal(
+    privateAppWithContradictoryPackages.statusCode,
+    400,
+    privateAppWithContradictoryPackages.body,
+  );
+  assert.equal(
+    privateAppWithContradictoryPackages.json().error,
+    'inconsistent_application_ids',
+  );
+  const privateAppWithEmptyCanonicalPackages = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources/private-app',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      enabled: true,
+      label: 'Applications contradictoires',
+      configuration: {
+        applicationId: 'com.canal.android.canal',
+        applicationIds: [],
+      },
+    },
+  });
+  assert.equal(
+    privateAppWithEmptyCanonicalPackages.statusCode,
+    400,
+    privateAppWithEmptyCanonicalPackages.body,
+  );
+  assert.equal(
+    privateAppWithEmptyCanonicalPackages.json().error,
+    'inconsistent_application_ids',
+  );
+
+  const privateAccessWithoutPin = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/private-access',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'group', targetId: groupId, enabled: true },
+  });
+  assert.equal(privateAccessWithoutPin.statusCode, 409, privateAccessWithoutPin.body);
+  assert.equal(privateAccessWithoutPin.json().error, 'private_access_pin_required');
+
+  const groupPrivatePinResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/private-access/pin',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'group', targetId: groupId },
+  });
+  assert.equal(groupPrivatePinResponse.statusCode, 201, groupPrivatePinResponse.body);
+  const groupPrivatePin = groupPrivatePinResponse.json().pin;
+  assert.match(groupPrivatePin, /^\d{6}$/);
+  assert.equal(groupPrivatePinResponse.json().oneTimeDisplay, true);
+  assert.equal(groupPrivatePinResponse.body.includes('pin_scrypt'), false);
+  const storedGroupPrivatePin = await pool.query(
+    `SELECT pin_scrypt_salt, pin_scrypt_hash, pin_generation
+     FROM private_access_policies
+     WHERE target_type = 'group' AND target_id = $1`,
+    [groupId],
+  );
+  assert.match(storedGroupPrivatePin.rows[0].pin_scrypt_salt, /^[A-Za-z0-9_-]{22}$/);
+  assert.match(storedGroupPrivatePin.rows[0].pin_scrypt_hash, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(storedGroupPrivatePin.rows[0].pin_scrypt_hash.includes(groupPrivatePin), false);
+  assert.equal(storedGroupPrivatePin.rows[0].pin_generation, '1');
+
+  const enabledGroupPrivateAccess = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/private-access',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'group', targetId: groupId, enabled: true },
+  });
+  assert.equal(enabledGroupPrivateAccess.statusCode, 200, enabledGroupPrivateAccess.body);
+  assert.equal(enabledGroupPrivateAccess.json().policy.enabled, true);
+  assert.equal(enabledGroupPrivateAccess.json().policy.pin_configured, true);
+  assert.equal(enabledGroupPrivateAccess.body.includes('pin_scrypt'), false);
+
+  const privateClientCertificateFingerprint = crypto
+    .createHash('sha256')
+    .update('roomframe-private-access-integration-certificate')
+    .digest('hex');
+  await pool.query(
+    `UPDATE screens
+     SET group_id = $2,
+         client_certificate_fingerprint = $3,
+         client_certificate_serial = 'AABBCCDDEE01',
+         client_certificate_issued_at = now(),
+         client_certificate_expires_at = now() + interval '90 days',
+         client_certificate_required_at = now() + interval '1 day',
+         client_certificate_activated_at = now()
+     WHERE id = $1`,
+    [pendingDevice.id, groupId, privateClientCertificateFingerprint],
+  );
+  const privateTvHeaders = {
+    'x-roomframe-device-id': pendingDevice.id,
+    'x-roomframe-device-key': deviceCredential.deviceKey,
+    'x-roomframe-tls-client-verified': '1',
+    'x-roomframe-tls-client-fingerprint': privateClientCertificateFingerprint,
+  };
+  const inheritedPrivateSync = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${pendingDevice.id}`,
+    headers: privateTvHeaders,
+  });
+  assert.equal(inheritedPrivateSync.statusCode, 200, inheritedPrivateSync.body);
+  assert.deepEqual(inheritedPrivateSync.json().documents['private-access'], {
+    schemaVersion: 1,
+    enabled: true,
+    pinConfigured: true,
+    generation: 1,
+    maxAttempts: 5,
+    lockoutSeconds: 60,
+  });
+  assert.ok(inheritedPrivateSync.json().manifest.documents.some(
+    (document) => document.path === 'private-access.json',
+  ));
+  assert.equal(inheritedPrivateSync.body.includes('pin_scrypt'), false);
+  assert.equal(inheritedPrivateSync.body.includes(groupPrivatePin), false);
+
+  const unlockWithoutMtls = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: {
+      'x-roomframe-device-id': pendingDevice.id,
+      'x-roomframe-device-key': deviceCredential.deviceKey,
+    },
+    payload: { pin: groupPrivatePin, generation: 1 },
+  });
+  assert.equal(unlockWithoutMtls.statusCode, 401, unlockWithoutMtls.body);
+  assert.equal(unlockWithoutMtls.json().error, 'tv_client_certificate_required');
+
+  const incorrectPrivatePin = groupPrivatePin === '999999' ? '888888' : '999999';
+  for (let attempt = 1; attempt < 5; attempt += 1) {
+    const denied = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tv/private-access/unlock',
+      headers: privateTvHeaders,
+      payload: { pin: incorrectPrivatePin, generation: 1 },
+    });
+    assert.equal(denied.statusCode, 401, denied.body);
+    assert.equal(denied.json().error, 'private_access_pin_invalid');
+    assert.equal(denied.json().attemptsRemaining, 5 - attempt);
+  }
+  const lockedPrivateAccess = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: incorrectPrivatePin, generation: 1 },
+  });
+  assert.equal(lockedPrivateAccess.statusCode, 423, lockedPrivateAccess.body);
+  assert.equal(lockedPrivateAccess.json().error, 'private_access_locked');
+  assert.equal(lockedPrivateAccess.json().retryAfterSeconds, 60);
+  const correctPinWhileLocked = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: groupPrivatePin, generation: 1 },
+  });
+  assert.equal(correctPinWhileLocked.statusCode, 423, correctPinWhileLocked.body);
+  await pool.query(
+    `UPDATE private_access_attempts
+     SET locked_until = now() - interval '1 second'
+     WHERE screen_id = $1`,
+    [pendingDevice.id],
+  );
+  const unlockedPrivateAccess = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: groupPrivatePin, generation: 1 },
+  });
+  assert.equal(unlockedPrivateAccess.statusCode, 200, unlockedPrivateAccess.body);
+  assert.deepEqual(unlockedPrivateAccess.json(), { granted: true, generation: 1 });
+
+  let rotatedGroupPrivatePinResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/private-access/pin',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'group', targetId: groupId },
+  });
+  assert.equal(rotatedGroupPrivatePinResponse.statusCode, 201, rotatedGroupPrivatePinResponse.body);
+  if (rotatedGroupPrivatePinResponse.json().pin === groupPrivatePin) {
+    rotatedGroupPrivatePinResponse = await app.inject({
+      method: 'POST',
+      url: '/api/v1/private-access/pin',
+      headers: { cookie, 'x-csrf-token': csrfToken },
+      payload: { targetType: 'group', targetId: groupId },
+    });
+    assert.equal(rotatedGroupPrivatePinResponse.statusCode, 201, rotatedGroupPrivatePinResponse.body);
+  }
+  const rotatedGroupPrivatePin = rotatedGroupPrivatePinResponse.json().pin;
+  const rotatedGroupGeneration = rotatedGroupPrivatePinResponse.json().policy.pin_generation;
+  assert.notEqual(rotatedGroupPrivatePin, groupPrivatePin);
+  const stalePrivateGeneration = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: groupPrivatePin, generation: 1 },
+  });
+  assert.equal(stalePrivateGeneration.statusCode, 409, stalePrivateGeneration.body);
+  assert.equal(stalePrivateGeneration.json().error, 'private_access_generation_stale');
+  const oldPrivatePin = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: groupPrivatePin, generation: rotatedGroupGeneration },
+  });
+  assert.equal(oldPrivatePin.statusCode, 401, oldPrivatePin.body);
+  const rotatedPrivateUnlock = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: rotatedGroupPrivatePin, generation: rotatedGroupGeneration },
+  });
+  assert.equal(rotatedPrivateUnlock.statusCode, 200, rotatedPrivateUnlock.body);
+
+  const tvPrivatePinResponse = await app.inject({
+    method: 'POST',
+    url: '/api/v1/private-access/pin',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'tv', targetId: pendingDevice.id },
+  });
+  assert.equal(tvPrivatePinResponse.statusCode, 201, tvPrivatePinResponse.body);
+  const tvPrivatePreviewDisabled = await app.inject({
+    method: 'GET',
+    url: `/api/v1/studio/preview?targetType=tv&targetId=${pendingDevice.id}`,
+    headers: { cookie },
+  });
+  assert.equal(tvPrivatePreviewDisabled.statusCode, 200, tvPrivatePreviewDisabled.body);
+  assert.equal(tvPrivatePreviewDisabled.json().documents['private-access'].enabled, false);
+  assert.equal(tvPrivatePreviewDisabled.json().documents['private-access'].generation, 1);
+  const enabledTvPrivateAccess = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/private-access',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: { targetType: 'tv', targetId: pendingDevice.id, enabled: true },
+  });
+  assert.equal(enabledTvPrivateAccess.statusCode, 200, enabledTvPrivateAccess.body);
+  const unlockedTvOverride = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/private-access/unlock',
+    headers: privateTvHeaders,
+    payload: { pin: tvPrivatePinResponse.json().pin, generation: 1 },
+  });
+  assert.equal(unlockedTvOverride.statusCode, 200, unlockedTvOverride.body);
+
+  const acceptedApplicationStatus = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/tv/applications/status',
+    headers: privateTvHeaders,
+    payload: {
+      items: [
+        {
+          applicationId: 'com.canal.android.canal',
+          installed: true,
+          versionName: '5.1.0',
+          versionCode: 50100,
+          accessEnforced: true,
+        },
+        {
+          applicationId: 'com.google.android.youtube.tv',
+          installed: false,
+          versionName: null,
+          versionCode: null,
+          accessEnforced: false,
+        },
+      ],
+    },
+  });
+  assert.equal(acceptedApplicationStatus.statusCode, 202, acceptedApplicationStatus.body);
+  assert.equal(acceptedApplicationStatus.json().applicationCount, 2);
+  const rejectedApplicationInventory = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/tv/applications/status',
+    headers: privateTvHeaders,
+    payload: {
+      items: [{
+        applicationId: 'org.example.personal',
+        installed: true,
+        accessEnforced: false,
+      }],
+    },
+  });
+  assert.equal(rejectedApplicationInventory.statusCode, 400, rejectedApplicationInventory.body);
+  assert.equal(rejectedApplicationInventory.json().error, 'application_inventory_not_allowed');
+
+  const refreshedFleet = await app.inject({
+    method: 'GET',
+    url: '/api/v1/tvs',
+    headers: { cookie },
+  });
+  assert.equal(refreshedFleet.statusCode, 200, refreshedFleet.body);
+  const refreshedCanalStatus = refreshedFleet.json().applicationStatuses.find(
+    (status) => (
+      status.screen_id === pendingDevice.id
+      && status.application_id === 'com.canal.android.canal'
+    ),
+  );
+  assert.equal(refreshedCanalStatus?.installed, true);
+  assert.equal(refreshedCanalStatus?.version_code, 50100);
+  assert.equal(typeof refreshedCanalStatus?.version_code, 'number');
+  assert.equal(refreshedFleet.body.includes('org.example.personal'), false);
+
+  const studioWithPrivateAccess = await app.inject({
+    method: 'GET',
+    url: '/api/v1/studio',
+    headers: { cookie },
+  });
+  assert.equal(studioWithPrivateAccess.statusCode, 200, studioWithPrivateAccess.body);
+  assert.ok(studioWithPrivateAccess.json().privateAccessPolicies.length >= 2);
+  assert.ok(studioWithPrivateAccess.json().privateAccessPolicies.every(
+    (policy) => policy.pin_configured === true,
+  ));
+  assert.ok(studioWithPrivateAccess.json().applicationStatuses.some(
+    (status) => (
+      status.screen_id === pendingDevice.id
+      && status.application_id === 'com.canal.android.canal'
+      && status.installed === true
+    ),
+  ));
+  assert.equal(studioWithPrivateAccess.body.includes('pin_scrypt'), false);
+  assert.equal(studioWithPrivateAccess.body.includes(groupPrivatePin), false);
+  assert.equal(studioWithPrivateAccess.body.includes(rotatedGroupPrivatePin), false);
+  assert.equal(studioWithPrivateAccess.body.includes(tvPrivatePinResponse.json().pin), false);
+  const privateAudit = await pool.query(
+    `SELECT action, details::text AS details
+     FROM audit_log
+     WHERE action LIKE '%private-access%'`,
+  );
+  for (const audit of privateAudit.rows) {
+    assert.equal(audit.details.includes(groupPrivatePin), false);
+    assert.equal(audit.details.includes(rotatedGroupPrivatePin), false);
+    assert.equal(audit.details.includes(tvPrivatePinResponse.json().pin), false);
+  }
   const groupPower = await app.inject({
     method: 'PUT',
     url: '/api/v1/settings/power',
@@ -1970,13 +2460,24 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(groupPreview.json().scene.document.schemaVersion, 2);
   assert.equal(groupPreview.json().documents.branding.displayName, 'Atelier de test');
   const resolvedGroupSources = groupPreview.json().documents.sources.items;
-  assert.equal(resolvedGroupSources.filter((source) => source.target_type === 'group').length, 2);
+  assert.equal(resolvedGroupSources.filter((source) => source.target_type === 'group').length, 3);
   assert.ok(resolvedGroupSources.some((source) => (
     source.source_kind === 'airplay' && source.target_type === 'group'
   )));
   assert.ok(resolvedGroupSources.some((source) => (
     source.source_kind === 'hdmi' && source.target_type === 'group'
   )));
+  assert.ok(resolvedGroupSources.some((source) => (
+    source.source_kind === 'private-app'
+    && source.target_type === 'group'
+    && source.configuration.applicationId === 'com.canal.android.canal'
+    && source.configuration.applicationIds.includes('com.google.android.youtube.tv')
+  )));
+  assert.equal(groupPreview.json().documents['private-access'].enabled, true);
+  assert.equal(
+    groupPreview.json().documents['private-access'].generation,
+    rotatedGroupGeneration,
+  );
   assert.equal(
     groupPreview.json().documents.schedule.sourcePolicies.returnHomeWhenInactiveMinutes,
     12,
@@ -2957,6 +3458,9 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
   assert.equal(sync.statusCode, 200);
   assert.equal(sync.json().upToDate, false);
   assert.match(sync.json().manifest.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(sync.json().documents.device.displayName, 'Simulateur local');
+  assert.ok(sync.json().documents.device.roomName);
+  assert.ok(sync.json().manifest.documents.some((entry) => entry.path === 'device.json'));
   assert.equal(sync.json().documents.scene.canvas.background.blur, 18);
   assert.equal(sync.json().documents.branding.displayName, 'Atelier de test');
   assert.equal(sync.json().documents.branding.accent, '#1aa6b7');
@@ -3074,6 +3578,61 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     ).props.text,
     'Bonjour, personnalisation conservée après mise à jour',
   );
+
+  const narrowedPrivateApplications = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources/private-app',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      enabled: true,
+      label: 'Espace privé',
+      configuration: {
+        applicationIds: ['com.google.android.youtube.tv'],
+      },
+    },
+  });
+  assert.equal(
+    narrowedPrivateApplications.statusCode,
+    200,
+    narrowedPrivateApplications.body,
+  );
+  const statusesAfterNarrowing = await pool.query(
+    `SELECT application_id
+     FROM tv_application_status
+     WHERE screen_id = $1
+     ORDER BY application_id`,
+    [pendingDevice.id],
+  );
+  assert.deepEqual(
+    statusesAfterNarrowing.rows.map((row) => row.application_id),
+    ['com.google.android.youtube.tv'],
+  );
+  const disabledPrivateApplications = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/settings/sources/private-app',
+    headers: { cookie, 'x-csrf-token': csrfToken },
+    payload: {
+      targetType: 'group',
+      targetId: groupId,
+      enabled: false,
+      label: 'Espace privé',
+      configuration: {
+        applicationIds: ['com.google.android.youtube.tv'],
+      },
+    },
+  });
+  assert.equal(
+    disabledPrivateApplications.statusCode,
+    200,
+    disabledPrivateApplications.body,
+  );
+  const statusesAfterDisabling = await pool.query(
+    'SELECT count(*)::integer AS count FROM tv_application_status WHERE screen_id = $1',
+    [pendingDevice.id],
+  );
+  assert.equal(statusesAfterDisabling.rows[0].count, 0);
 
   const recoveryToken = token();
   await mkdir(path.dirname(config.recoveryRequestFile), { recursive: true });

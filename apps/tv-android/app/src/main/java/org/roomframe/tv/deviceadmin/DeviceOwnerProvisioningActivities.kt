@@ -68,6 +68,7 @@ class RoomFrameAdminPolicyComplianceActivity : Activity() {
             finish()
             return
         }
+        AndroidRequiredSystemAppPolicy.from(this).ensureCastReceiverAvailable()
         val result = AndroidPersistentHomePolicy.from(this).ensureApplied()
         val accepted = result == PersistentHomePolicyResult.ALREADY_APPLIED ||
             result == PersistentHomePolicyResult.APPLY_REQUESTED

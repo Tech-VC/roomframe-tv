@@ -13,13 +13,16 @@ const schemaNames = [
   'experience-bundle.schema.json',
   'update-bundle.schema.json',
   'tv-sync.schema.json',
+  'tv-device.schema.json',
   'tv-credential.schema.json',
   'tv-certificate.schema.json',
+  'tv-certificate-activation.schema.json',
   'tv-trust-bootstrap.schema.json',
   'tv-enrollment-bootstrap.schema.json',
   'discovery.schema.json',
   'admin-user.schema.json',
   'weather.schema.json',
+  'private-access.schema.json',
 ];
 
 const allowedProps = {
@@ -36,6 +39,7 @@ const allowedProps = {
   app: new Set(['applicationId', 'label', 'iconAssetId']),
   network: new Set(['label', 'value']),
 };
+const androidApplicationIdPattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 const invalid = (code, details) => Object.assign(new Error(code), {
   statusCode: 400,
@@ -216,10 +220,13 @@ export const createValidators = async (contractsDir) => {
         }
       }
       assertNodeProps(node);
-      if (node.kind === 'source' && !['airplay', 'cast', 'hdmi'].includes(node.props.source)) {
+      if (
+        node.kind === 'source'
+        && !['airplay', 'cast', 'hdmi', 'menu', 'private-app'].includes(node.props.source)
+      ) {
         throw invalid('invalid_source_kind', [{ nodeId: node.id }]);
       }
-      if (node.kind === 'app' && !/^[A-Za-z][A-Za-z0-9_.]{2,199}$/.test(node.props.applicationId ?? '')) {
+      if (node.kind === 'app' && !androidApplicationIdPattern.test(node.props.applicationId ?? '')) {
         throw invalid('invalid_application_id', [{ nodeId: node.id }]);
       }
     }
@@ -246,12 +253,17 @@ export const createValidators = async (contractsDir) => {
     assertExperienceBundle: (value) => assert('experience-bundle.schema.json', value),
     assertUpdateBundle: (value) => assert('update-bundle.schema.json', value),
     assertTvSync: (value) => assert('tv-sync.schema.json', value),
+    assertTvDevice: (value) => assert('tv-device.schema.json', value),
     assertTvCredential: (value) => assert('tv-credential.schema.json', value),
     assertTvCertificate: (value) => assert('tv-certificate.schema.json', value),
+    assertTvCertificateActivation: (value) => (
+      assert('tv-certificate-activation.schema.json', value)
+    ),
     assertTvTrustBootstrap: (value) => assert('tv-trust-bootstrap.schema.json', value),
     assertTvEnrollmentBootstrap: (value) => assert('tv-enrollment-bootstrap.schema.json', value),
     assertDiscovery: (value) => assert('discovery.schema.json', value),
     assertAdminUser: (value) => assert('admin-user.schema.json', value),
     assertWeather: (value) => assert('weather.schema.json', value),
+    assertPrivateAccess: (value) => assert('private-access.schema.json', value),
   });
 };

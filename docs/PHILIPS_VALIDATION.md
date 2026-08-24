@@ -264,6 +264,36 @@ a conservé l’identité et remonté les états `active`, `up-to-date` et `acce
 La synchronisation périodique est maintenant de 60 secondes, sous la fenêtre
 serveur de présence de deux minutes.
 
+La candidate locale `0.3.15` (`versionCode` 18) a été installée le
+23 août 2026 sans effacer les données ni retirer le Device Owner. Elle ajoute
+un voile sombre horizontal entre le fond et les composants : la salutation,
+la météo et le libellé réseau restent lisibles sur les zones claires du fond,
+tandis que son centre conserve la photographie. Elle consomme aussi les
+réglages `sources.json` synchronisés pour masquer ou renommer une source et
+choisir réellement HDMI 1 à 4.
+
+La candidate locale `0.3.16` (`versionCode` 19) a ensuite été installée par
+`adb install -r`, toujours sans effacer l’enrôlement ni retirer le Device
+Owner. Un appui sur Cast ouvre désormais un écran d’attente RoomFrame plein
+écran, reprend la charte active et présente trois étapes courtes sans prétendre
+qu’une diffusion est déjà connectée. Le bouton Retour et la touche Back ferment
+cet écran, restaurent le focus sur Cast et laissent le processus récepteur et
+ses ports TCP 8008, 8009 et 8443 actifs. Le rendu 1920 × 1080, le focus et les
+deux retours ont été contrôlés sur la TV réelle.
+
+La correction locale `0.3.17` (`versionCode` 20) rend le fond de cet écran
+Cast entièrement opaque. Aucun texte, composant ou média de la scène d’accueil
+ne doit rester visible derrière l’état d’attente.
+
+La candidate locale `0.3.18` (`versionCode` 21) a été installée par ADB le
+23 août 2026 avec la signature de production. Le Device Owner, le certificat
+mTLS, la révision locale, la présence et les métriques sont restés actifs.
+Elle sait afficher dans l’écran Cast le `displayName` propre à la TV livré par
+le nouveau document atomique `device.json`. Avec le serveur encore antérieur à
+ce document lors du premier contrôle, le repli sur le nom global a été observé
+sans régression ; l’affichage du nom Parc exact reste à recontrôler après la
+mise à jour serveur.
+
 Les candidats intermédiaires `0.3.1` / code 4 et `0.3.2` / code 5 ont
 uniquement été construits hors matériel.
 
@@ -281,22 +311,43 @@ Le relevé ADB expose quatre services `HdmiInputService`, associés aux ports 1
 est déclaré ARC. Sur le profil strict `TPV` / `Philips` / `PH1M_WW_9972`,
 RoomFrame utilise `TvContract.buildChannelUriForPassthroughInput` et
 `TvInputManager` : l'activation du bouton HDMI a réellement ouvert l'entrée
-HDMI 1 (`HW2`) dans le lecteur TV natif. Aucun câble n'était connecté pendant
-le test, et l'écran natif a donc signalé l'absence de signal. La détection du
-signal, le choix HDMI 1 à 4 depuis la politique serveur et le retour
-automatique restent à valider.
+HDMI 1 (`HW2`) dans le lecteur TV natif. Le 23 août, les quatre entrées étaient
+déclarées déconnectées par `TvInputManager` ; l'écran noir observé ne prouve
+donc pas un défaut du bouton. Le choix HDMI 1 à 4 depuis la politique serveur
+est implémenté dans la candidate 0.3.15, mais un câble et une source réelle
+restent nécessaires pour valider chaque port, la détection du signal et le
+retour automatique.
 
 Le même chemin Android public ouvre l'entrée
 `com.mediatek.AirplayAPK/.AirPlayTvInputService`. Le bouton AirPlay RoomFrame
-a réellement basculé vers l'écran d'attente AirPlay natif. Une diffusion
-depuis un iPhone ou un Mac et le retour après sa fin restent à observer.
+a réellement basculé vers l'écran d'attente AirPlay natif. Sur le firmware
+testé le 23 août, le service constructeur `com.mediatek.airplaydaemon` a
+ensuite répété une erreur de connexion locale refusée et aucun point d'écoute
+AirPlay n'a été observé. Un redémarrage logiciel borné de ce composant n'a pas
+corrigé cet état. L’effacement ciblé des données des trois paquets AirPlay
+MediaTek, suivi d’un redémarrage complet, a conservé RoomFrame et le Device
+Owner mais a reproduit immédiatement la même connexion refusée. L’activité de
+configuration AirPlay du firmware n’a présenté aucun réglage exploitable.
+RoomFrame ne doit donc pas classer AirPlay comme compatible : le défaut se
+situe dans la pile Philips/MediaTek ou sa configuration, et une diffusion depuis
+un iPhone ou un Mac reste à valider après correction OEM.
 
 Android 12 masque les paquets qui ne sont pas déclarés dans les requêtes du
 manifeste. RoomFrame déclare donc uniquement le paquet système Chromecast
-intégré nécessaire à ce contrôle. Le bouton Cast confirme sa présence et
-invite l'utilisateur à choisir le téléviseur depuis son appareil ; il ne
-prétend pas démarrer lui-même une session Cast. Une vraie session depuis un
-client reste requise avant de classer la capacité comme compatible.
+intégré nécessaire à ce contrôle. Après la réinitialisation, SetupWraith avait
+laissé ce paquet explicitement désactivé ; il a été réactivé depuis sa fiche
+système. La candidate 0.3.15 lie ensuite RoomFrame au service Cast publié sans
+forcer un service de premier plan. La liaison réelle, le processus récepteur
+et les ports TCP 8008, 8009 et 8443 ont été confirmés, sans crash après la
+fenêtre d'échec précédente. L'état utilisateur explicitement désactivé reste
+un cas constructeur que Device Policy ne peut pas toujours réparer seul et
+doit rester diagnostiqué.
+
+Depuis le Mac de validation situé sur un autre segment, aucune annonce
+`_googlecast._tcp` n'a été reçue alors que le récepteur était actif et que ses
+ports étaient joignables. Une vraie session Cast reste donc à tester depuis le
+réseau utilisateur après validation du transport mDNS entre les VLAN ; le
+bouton RoomFrame ne doit pas prétendre qu'une session a déjà réussi.
 
 ## Veille et réveil
 

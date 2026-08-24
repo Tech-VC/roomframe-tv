@@ -28,6 +28,15 @@ class PhilipsTa1ProfileTest {
     }
 
     @Test
+    fun `configured HDMI labels map only to the four physical ports`() {
+        assertEquals(1, PhilipsTa1Profile.hdmiPort(null))
+        assertEquals(1, PhilipsTa1Profile.hdmiPort("auto"))
+        assertEquals(3, PhilipsTa1Profile.hdmiPort("HDMI3"))
+        assertNull(PhilipsTa1Profile.hdmiPort("HDMI5"))
+        assertNull(PhilipsTa1Profile.hdmiPort("USB1"))
+    }
+
+    @Test
     fun `source routes are captured from one input snapshot`() {
         val routes = PhilipsTa1Profile.sourceRoutes(
             listOf(

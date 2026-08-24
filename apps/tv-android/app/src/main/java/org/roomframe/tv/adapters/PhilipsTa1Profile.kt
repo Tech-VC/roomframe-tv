@@ -3,6 +3,9 @@ package org.roomframe.tv.adapters
 internal object PhilipsTa1Profile {
     const val AIRPLAY_PACKAGE = "com.mediatek.AirplayAPK"
     const val CAST_PACKAGE = "com.google.android.apps.mediashell"
+    const val CAST_RECEIVER_SERVICE =
+        "com.google.android.apps.mediashell.CastReceiverService"
+    const val CAST_RECEIVER_BIND_ACTION = "com.google.cast.action.BIND"
 
     data class InputDescriptor(
         val id: String,
@@ -30,6 +33,16 @@ internal object PhilipsTa1Profile {
                     expectedHardwareId
             }
             ?: inputIds.sorted().getOrNull(port - 1)
+    }
+
+    fun hdmiPort(physicalInput: String?): Int? = when (physicalInput) {
+        null, "", "auto" -> 1
+        else -> Regex("^HDMI([1-8])$")
+            .matchEntire(physicalInput)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+            ?.takeIf { it in 1..4 }
     }
 
     /** Capture les routes stables publiées par le firmware à cet instant. */

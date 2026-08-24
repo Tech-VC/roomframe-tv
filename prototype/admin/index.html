@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui24">
-  <script type="module" src="/app.js?v=0.3.0-ui24"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui26">
+  <script type="module" src="/app.js?v=0.3.0-ui26"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller au contenu principal</a>
@@ -149,6 +149,7 @@
                 <button type="button" data-add-kind="image">Image</button>
                 <button type="button" data-add-kind="video">Vidéo</button>
                 <button type="button" data-add-kind="logo">Logo</button>
+                <button type="button" data-add-kind="source" data-source="menu"><span class="source-glyph menu" aria-hidden="true"></span>Sources</button>
                 <button type="button" data-add-kind="source" data-source="airplay"><span class="source-glyph airplay" aria-hidden="true"></span>AirPlay</button>
                 <button type="button" data-add-kind="source" data-source="cast"><span class="source-glyph cast" aria-hidden="true"></span>Cast</button>
                 <button type="button" data-add-kind="source" data-source="hdmi"><span class="source-glyph hdmi" aria-hidden="true"></span>HDMI</button>
@@ -204,6 +205,14 @@
                     <div class="weather-suggestions hidden" id="weatherSuggestions" role="listbox"></div>
                     <p class="weather-status" id="weatherStatus" role="status"></p>
                     <a class="weather-attribution" href="https://open-meteo.com/" target="_blank" rel="noreferrer">Données météo : Open-Meteo</a>
+                  </div>
+                  <div class="android-app-field hidden" id="nodeAppField">
+                    <label for="nodeAppSelect">Application</label>
+                    <select id="nodeAppSelect"></select>
+                    <label class="hidden" id="nodeAppManualField" for="nodeAppId">Identifiant Android
+                      <input id="nodeAppId" maxlength="200" autocomplete="off" spellcheck="false" placeholder="org.example.application">
+                    </label>
+                    <small>Choisissez son nom. L’identifiant technique est géré automatiquement.</small>
                   </div>
                   <div id="nodeAssetField" class="hidden">
                     <label for="nodeAsset">Média</label>
@@ -428,11 +437,41 @@
                 <label for="sourceHdmiLabel">Libellé<input id="sourceHdmiLabel" maxlength="100" value="HDMI"></label>
                 <label for="sourceHdmiInput">Entrée physique<select id="sourceHdmiInput"><option>HDMI1</option><option>HDMI2</option><option>HDMI3</option><option>HDMI4</option></select></label>
               </fieldset>
-              <fieldset>
-                <legend><span class="source-glyph app" aria-hidden="true"></span> Application Android</legend>
-                <label><input id="sourcePrivateAppEnabled" type="checkbox"> Afficher cette source</label>
-                <label for="sourcePrivateAppLabel">Libellé<input id="sourcePrivateAppLabel" maxlength="100" value="Application privée"></label>
-                <label for="sourcePrivateAppId">Identifiant Android<input id="sourcePrivateAppId" maxlength="200" value="org.example.privateapp"></label>
+              <fieldset class="private-source-fieldset">
+                <legend><span class="source-glyph app" aria-hidden="true"></span> Espace privé</legend>
+                <label><input id="sourcePrivateAppEnabled" type="checkbox"> Afficher Espace privé</label>
+                <label for="sourcePrivateAppLabel">Nom affiché<input id="sourcePrivateAppLabel" maxlength="100" value="Espace privé"></label>
+                <div class="private-app-picker" role="group" aria-labelledby="privateApplicationsTitle">
+                  <b id="privateApplicationsTitle">Applications autorisées</b>
+                  <div class="private-app-known" id="sourcePrivateAppChoices"></div>
+                  <details class="private-app-advanced">
+                    <summary>Ajouter une autre application</summary>
+                    <p>L’identifiant Android reste réservé au mode avancé.</p>
+                    <div class="private-app-add-row">
+                      <label for="sourcePrivateAppId">Identifiant Android<input id="sourcePrivateAppId" maxlength="200" autocomplete="off" spellcheck="false" placeholder="org.example.application"></label>
+                      <button class="tool" id="sourcePrivateAppAdd" type="button">Ajouter</button>
+                    </div>
+                    <div class="private-app-manual-list" id="sourcePrivateAppManualList" aria-live="polite"></div>
+                  </details>
+                  <small class="android-app-help">Choisissez jusqu’à 12 applications. CANAL+ et YouTube restent affichés par leur nom.</small>
+                </div>
+                <section class="private-access-panel" aria-labelledby="privateAccessTitle">
+                  <div>
+                    <b id="privateAccessTitle">Code d’accès</b>
+                    <small id="privateAccessStatus" role="status">Aucun code créé.</small>
+                  </div>
+                  <label><input id="privateAccessEnabled" type="checkbox"> Demander le code sur la TV</label>
+                  <div class="private-access-actions">
+                    <button class="tool" id="privateAccessSave" type="button">Enregistrer le verrou</button>
+                    <button class="tool primary" id="privateAccessGenerate" type="button">Générer un code</button>
+                  </div>
+                  <p class="form-error hidden" id="privateAccessError" role="alert"></p>
+                  <small>Ce code ouvre seulement l’Espace privé. Il ne remplace pas le compte des applications.</small>
+                </section>
+                <section class="private-app-report" aria-labelledby="privateAppReportTitle">
+                  <b id="privateAppReportTitle">État sur les TV</b>
+                  <div id="privateAppStatusList" aria-live="polite"><p class="empty-copy">Aucun état remonté.</p></div>
+                </section>
               </fieldset>
               <button class="tool primary" type="submit">Enregistrer les sources</button>
               <p class="form-error hidden" id="sourceSettingsError" role="alert"></p>
@@ -476,6 +515,20 @@
           <div class="credential-dialog-actions">
             <button class="tool" id="tvCredentialCancel" type="button">Annuler</button>
             <button class="tool primary" id="tvCredentialSubmit" type="submit">Confirmer</button>
+          </div>
+        </form>
+      </dialog>
+
+      <dialog class="credential-dialog private-pin-dialog" id="privatePinDialog" aria-labelledby="privatePinTitle" aria-describedby="privatePinDescription">
+        <form method="dialog">
+          <span class="record-kicker">ESPACE PRIVÉ / AFFICHAGE UNIQUE</span>
+          <h2 id="privatePinTitle">Code à saisir sur la TV</h2>
+          <p id="privatePinDescription">Copiez ce code maintenant. Il ne sera plus affiché après fermeture.</p>
+          <output id="privatePinValue" aria-live="polite"></output>
+          <small id="privatePinGeneration"></small>
+          <div class="credential-dialog-actions">
+            <button class="tool primary" id="copyPrivatePin" type="button">Copier les chiffres</button>
+            <button class="tool" id="hidePrivatePin" value="masked" type="submit">Masquer</button>
           </div>
         </form>
       </dialog>

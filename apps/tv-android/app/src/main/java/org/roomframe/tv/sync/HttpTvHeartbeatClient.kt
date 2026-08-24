@@ -2,7 +2,15 @@ package org.roomframe.tv.sync
 
 import java.net.URI
 import java.net.URL
+import java.nio.charset.StandardCharsets
 import javax.net.ssl.HttpsURLConnection
+
+internal object TvHeartbeatHttpPolicy {
+    val requestBody: ByteArray
+        get() = "{}".toByteArray(StandardCharsets.UTF_8)
+
+    fun shouldReadResponseBody(statusCode: Int): Boolean = statusCode != 204
+}
 
 class HttpTvHeartbeatClient(
     private val credentials: DeviceCredentials,
@@ -17,6 +25,7 @@ class HttpTvHeartbeatClient(
                 resolved.host == base.host &&
                 resolved.port == base.port,
         ) { "Origine heartbeat invalide" }
+        val requestBody = TvHeartbeatHttpPolicy.requestBody
         val connection = RoomFrameHttps.open(URL(resolved.toString())).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
@@ -24,8 +33,12 @@ class HttpTvHeartbeatClient(
             useCaches = false
             requestMethod = "POST"
             setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", "application/json")
             setRequestProperty("x-roomframe-device-id", credentials.deviceId)
             setRequestProperty("x-roomframe-device-key", credentials.deviceKey)
+            doOutput = true
+            setFixedLengthStreamingMode(requestBody.size)
+            outputStream.use { it.write(requestBody) }
         }
         try {
             val status = connection.responseCode
@@ -33,7 +46,9 @@ class HttpTvHeartbeatClient(
                 connection.errorStream?.close()
                 throw IllegalStateException("API heartbeat HTTP $status")
             }
-            connection.inputStream?.close()
+            if (TvHeartbeatHttpPolicy.shouldReadResponseBody(status)) {
+                connection.inputStream?.close()
+            }
         } finally {
             connection.disconnect()
         }

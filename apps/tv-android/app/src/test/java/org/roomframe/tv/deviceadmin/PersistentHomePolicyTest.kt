@@ -1,10 +1,21 @@
 package org.roomframe.tv.deviceadmin
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PersistentHomePolicyTest {
     private val target = HomeActivity("org.roomframe.tv", "org.roomframe.tv.MainActivity")
+
+    @Test
+    fun `expose le statut Device Owner sans mutation`() {
+        val port = FakePort(deviceOwner = true, resolved = null)
+        val policy = PersistentHomePolicy(target.packageName, target, port)
+
+        assertTrue(policy.isDeviceOwner())
+        assertEquals(0, port.applyCalls)
+        assertEquals(0, port.clearCalls)
+    }
 
     @Test
     fun `ne change rien hors Device Owner`() {

@@ -39,6 +39,7 @@ export const buildApp = async ({ config, logger = true }) => {
           'req.body.enrollmentCodeId',
           'req.body.enrollmentKey',
           'req.body.nextKey',
+          'req.body.pin',
           'req.body.totpCode',
         ],
         censor: '[REDACTED]',

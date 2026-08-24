@@ -58,6 +58,10 @@ const tvDeletionConfirmation = 'SUPPRIMER LA TV';
 const tvCredentialPendingLifetimeMs = 24 * 60 * 60 * 1000;
 const tvCertificateRenewalWindowMs = 30 * 24 * 60 * 60 * 1000;
 const clientCertificateFingerprintPattern = /^[a-f0-9]{64}$/;
+const androidApplicationIdPattern = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const privateAccessMaxAttempts = 5;
+const privateAccessLockoutSeconds = 60;
+const privateAccessScryptOptions = Object.freeze({ N: 16_384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
 
 const activeFleetMetrics = (screens) => {
   const activeScreens = screens.filter(
@@ -119,6 +123,15 @@ export const tvCertificateProofPayload = (deviceId, enrollmentKey) => (
   )
 );
 
+export const tvCertificateActivationProofPayload = (
+  deviceId,
+  requestId,
+  fingerprintSha256,
+) => Buffer.from(
+  `roomframe-tv-certificate-activation-v1\n${deviceId}\n${requestId}\n${fingerprintSha256}`,
+  'utf8',
+);
+
 const verifyTvCertificateRequest = ({
   validators,
   request,
@@ -161,6 +174,72 @@ const verifyTvCertificateRequest = ({
     publicKeySpki,
     publicKeySha256: sha256(publicKeySpki),
   };
+};
+
+const invalidTvCertificateActivationProof = () => Object.assign(
+  new Error('invalid_tv_certificate_activation_proof'),
+  { statusCode: 401 },
+);
+
+const verifyTvCertificateActivationProof = ({
+  validators,
+  proof,
+  deviceId,
+  pendingFingerprintSha256,
+  certificateRequest,
+}) => {
+  try {
+    validators.assertTvCertificateActivation(proof);
+  } catch {
+    throw invalidTvCertificateActivationProof();
+  }
+  if (
+    !timingSafeTextEqual(proof.requestId, certificateRequest.id)
+    || !timingSafeTextEqual(proof.fingerprintSha256, pendingFingerprintSha256)
+    || !timingSafeTextEqual(
+      proof.fingerprintSha256,
+      certificateRequest.certificate_fingerprint_sha256,
+    )
+    || !timingSafeTextEqual(
+      sha256(certificateRequest.public_key_spki),
+      certificateRequest.public_key_sha256,
+    )
+  ) {
+    throw invalidTvCertificateActivationProof();
+  }
+  let publicKey;
+  let proofSignature;
+  try {
+    publicKey = crypto.createPublicKey({
+      key: certificateRequest.public_key_spki,
+      format: 'der',
+      type: 'spki',
+    });
+    proofSignature = canonicalBase64Url(proof.proofSignature, 'proof_signature');
+  } catch {
+    throw invalidTvCertificateActivationProof();
+  }
+  const details = publicKey.asymmetricKeyDetails ?? {};
+  if (
+    publicKey.asymmetricKeyType !== 'rsa'
+    || !Number.isSafeInteger(details.modulusLength)
+    || details.modulusLength < 2048
+    || details.modulusLength > 4096
+    || details.publicExponent !== 65_537n
+  ) {
+    throw invalidTvCertificateActivationProof();
+  }
+  const valid = crypto.verify(
+    'RSA-SHA256',
+    tvCertificateActivationProofPayload(
+      deviceId,
+      certificateRequest.id,
+      pendingFingerprintSha256,
+    ),
+    publicKey,
+    proofSignature,
+  );
+  if (!valid) throw invalidTvCertificateActivationProof();
 };
 
 const brandColor = (value, field) => {
@@ -211,14 +290,32 @@ const sourceConfiguration = (kind, value) => {
     airplay: new Set(['adapter', 'serviceName', 'receiverMode', 'returnHomeWhenInactiveMinutes']),
     cast: new Set(['adapter', 'receiverApplicationId', 'returnHomeWhenInactiveMinutes']),
     hdmi: new Set(['adapter', 'physicalInput', 'signalProbe', 'returnHomeWhenInactiveMinutes']),
-    'private-app': new Set(['adapter', 'applicationId', 'activity', 'returnPolicy']),
+    'private-app': new Set([
+      'adapter', 'applicationId', 'applicationIds', 'activity', 'returnPolicy',
+    ]),
   }[kind];
   const clean = {};
   for (const [key, raw] of Object.entries(value)) {
     if (!permitted.has(key)) {
       throw Object.assign(new Error('unsupported_source_configuration_key'), { statusCode: 400 });
     }
-    if (typeof raw === 'boolean') {
+    if (key === 'applicationIds') {
+      if (
+        kind !== 'private-app'
+        || !Array.isArray(raw)
+        || raw.length > 12
+        || raw.some((applicationId) => (
+          typeof applicationId !== 'string'
+          || !androidApplicationIdPattern.test(applicationId)
+        ))
+      ) {
+        throw Object.assign(new Error('invalid_application_ids'), { statusCode: 400 });
+      }
+      if (new Set(raw).size !== raw.length) {
+        throw Object.assign(new Error('duplicate_application_id'), { statusCode: 400 });
+      }
+      clean.applicationIds = [...raw];
+    } else if (typeof raw === 'boolean') {
       clean[key] = raw;
     } else if (typeof raw === 'number' && Number.isSafeInteger(raw)) {
       clean[key] = raw;
@@ -230,7 +327,7 @@ const sourceConfiguration = (kind, value) => {
   }
   if (
     clean.applicationId !== undefined
-    && !/^[A-Za-z][A-Za-z0-9_.]{2,199}$/.test(clean.applicationId)
+    && !androidApplicationIdPattern.test(clean.applicationId)
   ) {
     throw Object.assign(new Error('invalid_application_id'), { statusCode: 400 });
   }
@@ -248,7 +345,37 @@ const sourceConfiguration = (kind, value) => {
       1440,
     );
   }
+  if (kind === 'private-app') {
+    if (
+      clean.applicationId !== undefined
+      && clean.applicationIds !== undefined
+      && clean.applicationId !== clean.applicationIds[0]
+    ) {
+      throw Object.assign(new Error('inconsistent_application_ids'), { statusCode: 400 });
+    }
+    const canonicalApplicationIds = clean.applicationIds
+      ?? (clean.applicationId ? [clean.applicationId] : []);
+    if (canonicalApplicationIds.length) {
+      clean.applicationIds = canonicalApplicationIds;
+      clean.applicationId = canonicalApplicationIds[0];
+    }
+  }
   return clean;
+};
+
+const privateApplicationIds = (configuration) => {
+  const ids = [];
+  for (const applicationId of [
+    ...(Array.isArray(configuration?.applicationIds) ? configuration.applicationIds : []),
+    configuration?.applicationId,
+  ]) {
+    if (
+      typeof applicationId === 'string'
+      && androidApplicationIdPattern.test(applicationId)
+      && !ids.includes(applicationId)
+    ) ids.push(applicationId);
+  }
+  return ids.slice(0, 12);
 };
 
 const controlledEventPayload = (value) => {
@@ -305,6 +432,146 @@ const defaultAssetMime = (file) => ({
 const bumpSyncRevision = (client) => client.query(
   'UPDATE sync_state SET revision = revision + 1, updated_at = now() WHERE singleton = true RETURNING revision',
 );
+
+const scryptPrivateAccessPin = (pin, salt) => new Promise((resolve, reject) => {
+  crypto.scrypt(
+    pin,
+    Buffer.from(salt, 'base64url'),
+    32,
+    privateAccessScryptOptions,
+    (error, derivedKey) => (error ? reject(error) : resolve(derivedKey)),
+  );
+});
+
+const hashPrivateAccessPin = async (pin) => {
+  const salt = crypto.randomBytes(16).toString('base64url');
+  const hash = await scryptPrivateAccessPin(pin, salt);
+  return { salt, hash: hash.toString('base64url') };
+};
+
+const verifyPrivateAccessPin = async (pin, policy) => {
+  try {
+    const expected = Buffer.from(policy.pin_scrypt_hash, 'base64url');
+    const actual = await scryptPrivateAccessPin(pin, policy.pin_scrypt_salt);
+    return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+};
+
+const effectivePrivateAccessPolicy = async (connection, screen, { lock = false } = {}) => {
+  const result = await connection.query(
+    `SELECT policy.*
+     FROM private_access_policies AS policy
+     WHERE
+       (policy.target_type = 'instance' AND policy.target_id IS NULL)
+       OR (policy.target_type = 'group' AND policy.target_id = $1)
+       OR (policy.target_type = 'tv' AND policy.target_id = $2)
+     ORDER BY CASE policy.target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+     LIMIT 1
+     ${lock ? 'FOR SHARE' : ''}`,
+    [screen.group_id ?? null, screen.id ?? null],
+  );
+  return result.rows[0] ?? null;
+};
+
+const privateAccessDocument = (policy) => ({
+  schemaVersion: 1,
+  enabled: Boolean(policy?.enabled),
+  pinConfigured: Boolean(policy?.pin_scrypt_hash),
+  generation: Number(policy?.pin_generation ?? 0),
+  maxAttempts: privateAccessMaxAttempts,
+  lockoutSeconds: privateAccessLockoutSeconds,
+});
+
+const effectivePrivateApplicationIds = async (connection, screen) => {
+  const result = await connection.query(
+    `SELECT enabled, configuration
+     FROM source_settings
+     WHERE source_kind = 'private-app'
+       AND (
+         (target_type = 'instance' AND target_id IS NULL)
+         OR (target_type = 'group' AND target_id = $1)
+         OR (target_type = 'tv' AND target_id = $2)
+       )
+     ORDER BY CASE target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+     LIMIT 1`,
+    [screen.group_id ?? null, screen.id ?? null],
+  );
+  const source = result.rows[0];
+  return source?.enabled ? privateApplicationIds(source.configuration) : [];
+};
+
+const readAllowlistedApplicationStatuses = async (connection) => {
+  const result = await connection.query(
+    `SELECT status.screen_id, status.application_id, status.installed,
+            status.version_name, status.version_code, status.access_enforced,
+            status.reported_at
+     FROM tv_application_status AS status
+     JOIN screens AS screen ON screen.id = status.screen_id
+     JOIN LATERAL (
+       SELECT setting.enabled, setting.configuration
+       FROM source_settings AS setting
+       WHERE setting.source_kind = 'private-app'
+         AND (
+           (setting.target_type = 'instance' AND setting.target_id IS NULL)
+           OR (setting.target_type = 'group' AND setting.target_id = screen.group_id)
+           OR (setting.target_type = 'tv' AND setting.target_id = screen.id)
+         )
+       ORDER BY CASE setting.target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+       LIMIT 1
+     ) AS private_source ON private_source.enabled
+     WHERE private_source.configuration ->> 'applicationId' = status.application_id
+        OR COALESCE(
+          private_source.configuration -> 'applicationIds',
+          '[]'::jsonb
+        ) ? status.application_id
+     ORDER BY status.screen_id, status.application_id`,
+  );
+  return result.rows.map((status) => ({
+    ...status,
+    version_code: status.version_code === null ? null : Number(status.version_code),
+  }));
+};
+
+const purgeNonAllowlistedApplicationStatuses = (connection) => connection.query(
+  `DELETE FROM tv_application_status AS status
+   WHERE NOT EXISTS (
+     SELECT 1
+     FROM screens AS screen
+     JOIN LATERAL (
+       SELECT setting.enabled, setting.configuration
+       FROM source_settings AS setting
+       WHERE setting.source_kind = 'private-app'
+         AND (
+           (setting.target_type = 'instance' AND setting.target_id IS NULL)
+           OR (setting.target_type = 'group' AND setting.target_id = screen.group_id)
+           OR (setting.target_type = 'tv' AND setting.target_id = screen.id)
+         )
+       ORDER BY CASE setting.target_type WHEN 'tv' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+       LIMIT 1
+     ) AS private_source ON private_source.enabled
+     WHERE screen.id = status.screen_id
+       AND (
+         private_source.configuration ->> 'applicationId' = status.application_id
+         OR COALESCE(
+           private_source.configuration -> 'applicationIds',
+           '[]'::jsonb
+         ) ? status.application_id
+       )
+   )`,
+);
+
+const serializePrivateAccessPolicy = (policy) => ({
+  id: policy.id,
+  target_type: policy.target_type,
+  target_id: policy.target_id,
+  enabled: policy.enabled,
+  pin_configured: Boolean(policy.pin_configured ?? policy.pin_scrypt_hash),
+  pin_generation: Number(policy.pin_generation),
+  created_at: policy.created_at,
+  updated_at: policy.updated_at,
+});
 
 const variantUrls = (asset) => Object.fromEntries(
   Object.entries(asset.variants ?? {}).map(([name, descriptor]) => [
@@ -484,6 +751,7 @@ const activeTvFromRequest = async (
     lock = false,
     certificateOptional = false,
     acceptPendingCertificate = false,
+    allowUnknownCertificateForRecovery = false,
   } = {},
 ) => {
   const credentials = tvCredentialHeaders(request);
@@ -500,7 +768,13 @@ const activeTvFromRequest = async (
          AND client_certificate_pending_fingerprint IS NOT NULL
          AND client_certificate_pending_required_at IS NOT NULL
          AND client_certificate_pending_required_at <= now()
-       ) AS client_certificate_pending_is_required
+       ) AS client_certificate_pending_is_required,
+       (
+         client_certificate_fingerprint IS NULL
+         AND client_certificate_pending_fingerprint IS NOT NULL
+         AND client_certificate_pending_expires_at > now()
+         AND client_certificate_revoked_at IS NULL
+       ) AS client_certificate_recovery_is_allowed
      FROM screens
      WHERE id = $1
        AND device_key = $2
@@ -530,10 +804,16 @@ const activeTvFromRequest = async (
       screen.client_certificate_pending_fingerprint,
     )
   );
+  const mayRecoverUnknownCertificate = (
+    allowUnknownCertificateForRecovery
+    && certificateOptional
+    && screen.client_certificate_recovery_is_allowed
+  );
   if (
     presentedFingerprint
     && !matchesActiveCertificate
     && !matchesPendingCertificate
+    && !mayRecoverUnknownCertificate
   ) {
     throw Object.assign(new Error('invalid_tv_client_certificate'), { statusCode: 401 });
   }
@@ -641,7 +921,13 @@ const synchronizedDocumentsForScreen = async (
   prepared = {},
 ) => {
   const sceneRecord = prepared.sceneRecord ?? await sceneForScreen(pool, screen);
-  const [messagesResult, sourcesResult, powerResult, instanceResult] = await Promise.all([
+  const [
+    messagesResult,
+    sourcesResult,
+    powerResult,
+    instanceResult,
+    privateAccessPolicy,
+  ] = await Promise.all([
     pool.query(
       `SELECT id, title, body, priority, starts_at, ends_at
        FROM messages
@@ -681,6 +967,7 @@ const synchronizedDocumentsForScreen = async (
       [screen.group_id, screen.id],
     ),
     pool.query('SELECT config FROM roomframe_instance WHERE singleton = true'),
+    effectivePrivateAccessPolicy(pool, screen),
   ]);
   if (!instanceResult.rows[0]) {
     throw Object.assign(new Error('instance_not_configured'), { statusCode: 409 });
@@ -689,6 +976,11 @@ const synchronizedDocumentsForScreen = async (
   const policies = instanceConfig.defaults.policies;
   const power = powerResult.rows[0];
   const documents = {
+    device: {
+      schemaVersion: 1,
+      displayName: screen.display_name,
+      roomName: screen.room_name,
+    },
     scene: sceneRecord.document,
     messages: { schemaVersion: 1, items: messagesResult.rows },
     schedule: {
@@ -707,6 +999,7 @@ const synchronizedDocumentsForScreen = async (
       },
     },
     sources: { schemaVersion: 1, items: sourcesResult.rows },
+    'private-access': privateAccessDocument(privateAccessPolicy),
     branding: {
       schemaVersion: 1,
       displayName: instanceConfig.displayName,
@@ -921,6 +1214,8 @@ export const registerStudioRoutes = ({
       messagesResult,
       sourcesResult,
       powerResult,
+      privateAccessPoliciesResult,
+      privateApplicationStatuses,
       releasesResult,
       deploymentsResult,
       serverUpdateRequestsResult,
@@ -1012,6 +1307,14 @@ export const registerStudioRoutes = ({
       pool.query('SELECT * FROM source_settings ORDER BY source_kind'),
       pool.query('SELECT * FROM power_schedules ORDER BY created_at'),
       pool.query(
+        `SELECT id, target_type, target_id, enabled,
+                pin_scrypt_hash IS NOT NULL AS pin_configured,
+                pin_generation, created_at, updated_at
+         FROM private_access_policies
+         ORDER BY target_type, created_at`,
+      ),
+      readAllowlistedApplicationStatuses(pool),
+      pool.query(
         `SELECT id, version, status, signature_key_id, verification, imported_at, deployed_at,
                 EXISTS (
                   SELECT 1
@@ -1084,6 +1387,12 @@ export const registerStudioRoutes = ({
       messages: can('messages:read') ? messagesResult.rows : [],
       sourceSettings: can('fleet:read') ? sourcesResult.rows : [],
       powerSchedules: can('fleet:read') ? powerResult.rows : [],
+      privateAccessPolicies: can('fleet:read')
+        ? privateAccessPoliciesResult.rows.map(serializePrivateAccessPolicy)
+        : [],
+      applicationStatuses: can('fleet:read')
+        ? privateApplicationStatuses
+        : [],
       releases: can('releases:read') ? releasesResult.rows.map(serializeRelease) : [],
       deployments: can('releases:read') ? deploymentsResult.rows : [],
       serverUpdateRequests: can('releases:read') ? serverUpdateRequestsResult.rows : [],
@@ -1567,8 +1876,9 @@ export const registerStudioRoutes = ({
   app.get('/api/v1/tvs', {
     preHandler: [authenticated, requirePermission('fleet:read')],
   }, async () => {
-    const result = await pool.query(
-      `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
+    const [result, applicationStatuses] = await Promise.all([
+      pool.query(
+        `SELECT screen.id, screen.display_name, screen.room_name, screen.group_id,
               screen.enrollment_state, screen.agent_version, screen.home_version,
               screen.active_revision, screen.capabilities, screen.source_state,
               screen.last_seen_at, screen.enrollment_expires_at,
@@ -1625,13 +1935,16 @@ export const registerStudioRoutes = ({
          LIMIT 1
        ) AS update_target ON true
        ORDER BY screen.display_name`,
-    );
+      ),
+      readAllowlistedApplicationStatuses(pool),
+    ]);
     const tvs = result.rows.map((row) => ({
       ...row,
       active_revision: row.active_revision === null ? null : Number(row.active_revision),
     }));
     return {
       tvs,
+      applicationStatuses,
       measuredMetrics: activeFleetMetrics(tvs),
     };
   });
@@ -1890,6 +2203,7 @@ export const registerStudioRoutes = ({
     const { screen } = await activeTvFromRequest(pool, request, {
       certificateOptional: true,
       acceptPendingCertificate: true,
+      allowUnknownCertificateForRecovery: true,
     });
     const result = await pool.query(
       `SELECT id, status, certificate_pem, certificate_fingerprint_sha256,
@@ -1921,7 +2235,13 @@ export const registerStudioRoutes = ({
       serial: certificateRequest.certificate_serial,
       issuedAt: certificateRequest.issued_at,
       expiresAt: certificateRequest.expires_at,
-      activationRequired: !screen.client_certificate_activated_at,
+      activationRequired: (
+        !screen.client_certificate_fingerprint
+        || !timingSafeTextEqual(
+          screen.client_certificate_fingerprint,
+          certificateRequest.certificate_fingerprint_sha256,
+        )
+      ),
     };
   });
 
@@ -1932,17 +2252,70 @@ export const registerStudioRoutes = ({
       lock: true,
       certificateOptional: true,
       acceptPendingCertificate: true,
+      allowUnknownCertificateForRecovery: true,
     });
-    if (!authenticatedTv.clientCertificateFingerprint) {
-      throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
-    }
-    const promotesPending = (
+    const pendingFingerprint = (
       authenticatedTv.screen.client_certificate_pending_fingerprint
+    );
+    const pendingCertificatePresented = Boolean(
+      pendingFingerprint
+      && authenticatedTv.clientCertificateFingerprint
       && timingSafeTextEqual(
         authenticatedTv.clientCertificateFingerprint,
-        authenticatedTv.screen.client_certificate_pending_fingerprint,
-      )
+        pendingFingerprint,
+      ),
     );
+    let activationMethod = 'mtls';
+    let proofRecovery = false;
+    let promotesPending = pendingCertificatePresented;
+    if (pendingFingerprint && !pendingCertificatePresented) {
+      if (!authenticatedTv.screen.client_certificate_recovery_is_allowed) {
+        throw invalidTvCertificateActivationProof();
+      }
+      let proof;
+      try {
+        validators.assertTvCertificateActivation(request.body);
+        proof = request.body;
+      } catch {
+        throw invalidTvCertificateActivationProof();
+      }
+      const pendingRequest = await client.query(
+        `SELECT id, public_key_spki, public_key_sha256,
+                certificate_fingerprint_sha256
+         FROM tv_certificate_requests
+         WHERE id = $1
+           AND screen_id = $2
+           AND status = 'issued'
+           AND certificate_fingerprint_sha256 = $3
+           AND expires_at > now()
+         LIMIT 1
+         FOR UPDATE`,
+        [proof.requestId, authenticatedTv.screen.id, pendingFingerprint],
+      );
+      if (!pendingRequest.rows[0]) throw invalidTvCertificateActivationProof();
+      verifyTvCertificateActivationProof({
+        validators,
+        proof,
+        deviceId: authenticatedTv.screen.id,
+        pendingFingerprintSha256: pendingFingerprint,
+        certificateRequest: pendingRequest.rows[0],
+      });
+      activationMethod = 'keystore-proof-recovery';
+      proofRecovery = true;
+      promotesPending = true;
+    } else if (
+      !pendingFingerprint
+      && (
+        !authenticatedTv.clientCertificateFingerprint
+        || !authenticatedTv.screen.client_certificate_fingerprint
+        || !timingSafeTextEqual(
+          authenticatedTv.clientCertificateFingerprint,
+          authenticatedTv.screen.client_certificate_fingerprint,
+        )
+      )
+    ) {
+      throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+    }
     const activated = await client.query(
       `UPDATE screens
        SET client_certificate_fingerprint = CASE
@@ -1975,11 +2348,26 @@ export const registerStudioRoutes = ({
            client_certificate_required_at = now(),
            updated_at = now()
        WHERE id = $1
+         AND (
+           NOT $2
+           OR (
+             client_certificate_pending_fingerprint = $3
+             AND client_certificate_pending_expires_at > now()
+             AND client_certificate_revoked_at IS NULL
+           )
+         )
+         AND (NOT $4 OR client_certificate_fingerprint IS NULL)
        RETURNING client_certificate_activated_at,
                  client_certificate_required_at,
                  client_certificate_expires_at`,
-      [authenticatedTv.screen.id, promotesPending],
+      [
+        authenticatedTv.screen.id,
+        promotesPending,
+        pendingFingerprint,
+        proofRecovery,
+      ],
     );
+    if (activated.rowCount !== 1) throw invalidTvCertificateActivationProof();
     if (promotesPending || !authenticatedTv.screen.client_certificate_activated_at) {
       await appendAudit(client, {
         actorType: 'tv',
@@ -1988,7 +2376,10 @@ export const registerStudioRoutes = ({
         targetId: authenticatedTv.screen.id,
         remoteAddress: request.ip,
         details: {
-          fingerprintSha256: authenticatedTv.clientCertificateFingerprint,
+          fingerprintSha256: promotesPending
+            ? pendingFingerprint
+            : authenticatedTv.clientCertificateFingerprint,
+          activationMethod,
           renewed: Boolean(
             promotesPending
             && authenticatedTv.screen.client_certificate_fingerprint
@@ -2322,6 +2713,7 @@ export const registerStudioRoutes = ({
         ['messages', 'messages'],
         ['sourceSettings', 'source_settings'],
         ['powerSchedules', 'power_schedules'],
+        ['privateAccessPolicies', 'private_access_policies'],
         ['directDeployments', 'deployments'],
       ]) {
         const deleted = await client.query(
@@ -2494,6 +2886,133 @@ export const registerStudioRoutes = ({
     return reply.code(201).send({ id });
   });
 
+  app.put('/api/v1/private-access', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request) => {
+    const targetType = request.body?.targetType ?? 'instance';
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    if (typeof request.body?.enabled !== 'boolean') {
+      throw Object.assign(new Error('invalid_private_access_enabled'), { statusCode: 400 });
+    }
+    const targetId = targetIdFor(targetType, request.body?.targetId);
+    return withTransaction(pool, async (client) => {
+      await assertTargetExists(client, targetType, targetId);
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+        ['roomframe-private-access', `${targetType}:${targetId ?? 'instance'}`],
+      );
+      const current = await client.query(
+        `SELECT * FROM private_access_policies
+         WHERE target_type = $1 AND target_id IS NOT DISTINCT FROM $2
+         FOR UPDATE`,
+        [targetType, targetId],
+      );
+      if (request.body.enabled && !current.rows[0]?.pin_scrypt_hash) {
+        throw Object.assign(new Error('private_access_pin_required'), { statusCode: 409 });
+      }
+      const policy = current.rows[0]
+        ? (await client.query(
+            `UPDATE private_access_policies
+             SET enabled = $2, updated_at = now()
+             WHERE id = $1
+             RETURNING *`,
+            [current.rows[0].id, request.body.enabled],
+          )).rows[0]
+        : (await client.query(
+            `INSERT INTO private_access_policies (
+               id, target_type, target_id, enabled
+             ) VALUES ($1, $2, $3, false)
+             RETURNING *`,
+            [crypto.randomUUID(), targetType, targetId],
+          )).rows[0];
+      const sync = await bumpSyncRevision(client);
+      await writeAudit(
+        client,
+        request,
+        request.body.enabled ? 'private-access.enabled' : 'private-access.disabled',
+        'private-access',
+        policy.id,
+        {
+          targetType,
+          targetId,
+          generation: Number(policy.pin_generation),
+          syncRevision: Number(sync.rows[0].revision),
+        },
+      );
+      return {
+        policy: serializePrivateAccessPolicy(policy),
+        syncRevision: Number(sync.rows[0].revision),
+      };
+    });
+  });
+
+  app.post('/api/v1/private-access/pin', {
+    preHandler: [authenticated, requirePermission('fleet:write'), csrf],
+  }, async (request, reply) => {
+    const targetType = request.body?.targetType ?? 'instance';
+    if (!['instance', 'group', 'tv'].includes(targetType)) {
+      throw Object.assign(new Error('invalid_target_type'), { statusCode: 400 });
+    }
+    const targetId = targetIdFor(targetType, request.body?.targetId);
+    const pin = crypto.randomInt(0, 1_000_000).toString().padStart(6, '0');
+    const verifier = await hashPrivateAccessPin(pin);
+    const result = await withTransaction(pool, async (client) => {
+      await assertTargetExists(client, targetType, targetId);
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+        ['roomframe-private-access', `${targetType}:${targetId ?? 'instance'}`],
+      );
+      const current = await client.query(
+        `SELECT * FROM private_access_policies
+         WHERE target_type = $1 AND target_id IS NOT DISTINCT FROM $2
+         FOR UPDATE`,
+        [targetType, targetId],
+      );
+      const policy = current.rows[0]
+        ? (await client.query(
+            `UPDATE private_access_policies
+             SET pin_scrypt_salt = $2,
+                 pin_scrypt_hash = $3,
+                 pin_generation = pin_generation + 1,
+                 updated_at = now()
+             WHERE id = $1
+             RETURNING *`,
+            [current.rows[0].id, verifier.salt, verifier.hash],
+          )).rows[0]
+        : (await client.query(
+            `INSERT INTO private_access_policies (
+               id, target_type, target_id, enabled,
+               pin_scrypt_salt, pin_scrypt_hash, pin_generation
+             ) VALUES ($1, $2, $3, false, $4, $5, 1)
+             RETURNING *`,
+            [crypto.randomUUID(), targetType, targetId, verifier.salt, verifier.hash],
+          )).rows[0];
+      await client.query(
+        'DELETE FROM private_access_attempts WHERE policy_id = $1',
+        [policy.id],
+      );
+      const sync = await bumpSyncRevision(client);
+      await writeAudit(client, request, 'private-access.pin.rotated', 'private-access', policy.id, {
+        targetType,
+        targetId,
+        generation: Number(policy.pin_generation),
+        syncRevision: Number(sync.rows[0].revision),
+      });
+      return {
+        policy: serializePrivateAccessPolicy(policy),
+        syncRevision: Number(sync.rows[0].revision),
+      };
+    });
+    return reply.code(201).send({
+      ...result,
+      pin,
+      generation: result.policy.pin_generation,
+      oneTimeDisplay: true,
+    });
+  });
+
   app.put('/api/v1/settings/sources', {
     preHandler: [authenticated, requirePermission('fleet:write'), csrf],
   }, async (request) => {
@@ -2525,7 +3044,7 @@ export const registerStudioRoutes = ({
       if (
         normalizedItem.kind === 'private-app'
         && normalizedItem.enabled
-        && !normalizedItem.configuration.applicationId
+        && privateApplicationIds(normalizedItem.configuration).length === 0
       ) {
         throw Object.assign(new Error('source_application_id_required'), { statusCode: 400 });
       }
@@ -2553,6 +3072,7 @@ export const registerStudioRoutes = ({
           ],
         );
       }
+      await purgeNonAllowlistedApplicationStatuses(client);
       await bumpSyncRevision(client);
       await writeAudit(client, request, 'sources.updated', 'source-settings', targetType, {
         targetId,
@@ -2575,7 +3095,11 @@ export const registerStudioRoutes = ({
     }
     const targetId = targetIdFor(targetType, request.body?.targetId);
     const configuration = sourceConfiguration(kind, request.body?.configuration ?? {});
-    if (kind === 'private-app' && request.body?.enabled !== false && !configuration.applicationId) {
+    if (
+      kind === 'private-app'
+      && request.body?.enabled !== false
+      && privateApplicationIds(configuration).length === 0
+    ) {
       throw Object.assign(new Error('source_application_id_required'), { statusCode: 400 });
     }
     await withTransaction(pool, async (client) => {
@@ -2597,6 +3121,7 @@ export const registerStudioRoutes = ({
           JSON.stringify(configuration),
         ],
       );
+      await purgeNonAllowlistedApplicationStatuses(client);
       await bumpSyncRevision(client);
       await writeAudit(client, request, 'source.updated', 'source', kind, { targetType, targetId });
     });
@@ -3464,6 +3989,7 @@ export const registerStudioRoutes = ({
       config,
     );
     validators.assertWeather(documents.weather);
+    validators.assertPrivateAccess(documents['private-access']);
     return {
       target: {
         type: targetType,
@@ -3545,11 +4071,15 @@ export const registerStudioRoutes = ({
       sceneRecord: preparedScene,
       weather: preparedWeather,
     });
+    validators.assertTvDevice(documents.device);
+    validators.assertPrivateAccess(documents['private-access']);
     const documentEntries = [
+      jsonDocument('device.json', documents.device),
       jsonDocument('scene.json', documents.scene),
       jsonDocument('messages.json', documents.messages),
       jsonDocument('schedule.json', documents.schedule),
       jsonDocument('sources.json', documents.sources),
+      jsonDocument('private-access.json', documents['private-access']),
       jsonDocument('branding.json', documents.branding),
       jsonDocument('weather.json', documents.weather),
     ];
@@ -3620,6 +4150,235 @@ export const registerStudioRoutes = ({
       [screen.id],
     );
     return reply.code(204).send();
+  });
+
+  app.post('/api/v1/tv/private-access/unlock', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const pin = String(request.body?.pin ?? '');
+    if (!/^\d{6}$/.test(pin)) {
+      throw Object.assign(new Error('invalid_private_access_pin'), { statusCode: 400 });
+    }
+    const generation = integerInRange(
+      request.body?.generation,
+      'private_access_generation',
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    const result = await withTransaction(pool, async (client) => {
+      const authenticatedTv = await activeTvFromRequest(client, request, { lock: true });
+      if (!authenticatedTv.clientCertificateFingerprint) {
+        throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+      }
+      const { screen } = authenticatedTv;
+      const policy = await effectivePrivateAccessPolicy(client, screen, { lock: true });
+      if (!policy?.enabled || !policy.pin_scrypt_hash) {
+        return { status: 409, body: { error: 'private_access_disabled' } };
+      }
+      const currentGeneration = Number(policy.pin_generation);
+      if (generation !== currentGeneration) {
+        return {
+          status: 409,
+          body: {
+            error: 'private_access_generation_stale',
+            generation: currentGeneration,
+          },
+        };
+      }
+      const nowResult = await client.query('SELECT now() AS now');
+      const now = new Date(nowResult.rows[0].now);
+      const attemptsResult = await client.query(
+        'SELECT * FROM private_access_attempts WHERE screen_id = $1 FOR UPDATE',
+        [screen.id],
+      );
+      const existing = attemptsResult.rows[0];
+      const samePolicyGeneration = (
+        existing
+        && existing.policy_id === policy.id
+        && Number(existing.pin_generation) === currentGeneration
+      );
+      if (
+        samePolicyGeneration
+        && existing.locked_until
+        && new Date(existing.locked_until) > now
+      ) {
+        return {
+          status: 423,
+          body: {
+            error: 'private_access_locked',
+            retryAfterSeconds: Math.max(
+              1,
+              Math.ceil((new Date(existing.locked_until).getTime() - now.getTime()) / 1000),
+            ),
+          },
+        };
+      }
+      const verified = await verifyPrivateAccessPin(pin, policy);
+      if (verified) {
+        await client.query('DELETE FROM private_access_attempts WHERE screen_id = $1', [screen.id]);
+        await client.query(
+          'UPDATE screens SET last_seen_at = now(), updated_at = now() WHERE id = $1',
+          [screen.id],
+        );
+        await appendAudit(client, {
+          actorType: 'tv',
+          action: 'tv.private-access.unlocked',
+          targetType: 'tv',
+          targetId: screen.id,
+          remoteAddress: request.ip,
+          details: { policyId: policy.id, generation: currentGeneration },
+        });
+        return {
+          status: 200,
+          body: { granted: true, generation: currentGeneration },
+        };
+      }
+
+      const previousAttempts = (
+        samePolicyGeneration
+        && (!existing.locked_until || new Date(existing.locked_until) > now)
+      ) ? Number(existing.failed_attempts) : 0;
+      const failedAttempts = Math.min(privateAccessMaxAttempts, previousAttempts + 1);
+      const locked = failedAttempts >= privateAccessMaxAttempts;
+      const lockedUntil = locked
+        ? new Date(now.getTime() + privateAccessLockoutSeconds * 1000)
+        : null;
+      await client.query(
+        `INSERT INTO private_access_attempts (
+           screen_id, policy_id, pin_generation, failed_attempts, locked_until, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (screen_id) DO UPDATE
+         SET policy_id = EXCLUDED.policy_id,
+             pin_generation = EXCLUDED.pin_generation,
+             failed_attempts = EXCLUDED.failed_attempts,
+             locked_until = EXCLUDED.locked_until,
+             updated_at = now()`,
+        [screen.id, policy.id, currentGeneration, failedAttempts, lockedUntil],
+      );
+      await appendAudit(client, {
+        actorType: 'tv',
+        action: locked ? 'tv.private-access.locked' : 'tv.private-access.denied',
+        targetType: 'tv',
+        targetId: screen.id,
+        remoteAddress: request.ip,
+        details: {
+          policyId: policy.id,
+          generation: currentGeneration,
+          attemptsRemaining: Math.max(0, privateAccessMaxAttempts - failedAttempts),
+        },
+      });
+      return locked
+        ? {
+            status: 423,
+            body: {
+              error: 'private_access_locked',
+              retryAfterSeconds: privateAccessLockoutSeconds,
+            },
+          }
+        : {
+            status: 401,
+            body: {
+              error: 'private_access_pin_invalid',
+              attemptsRemaining: privateAccessMaxAttempts - failedAttempts,
+            },
+          };
+    });
+    return reply.code(result.status).send(result.body);
+  });
+
+  app.put('/api/v1/tv/applications/status', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    if (
+      !request.body
+      || typeof request.body !== 'object'
+      || Array.isArray(request.body)
+      || Object.keys(request.body).some((key) => key !== 'items')
+    ) {
+      throw Object.assign(new Error('invalid_application_status_payload'), { statusCode: 400 });
+    }
+    const applications = request.body.items;
+    if (!Array.isArray(applications) || applications.length > 12) {
+      throw Object.assign(new Error('invalid_application_status_items'), { statusCode: 400 });
+    }
+    const seen = new Set();
+    const normalized = applications.map((application) => {
+      if (
+        !application
+        || typeof application !== 'object'
+        || Array.isArray(application)
+        || Object.keys(application).some((key) => ![
+          'applicationId', 'installed', 'versionName', 'versionCode', 'accessEnforced',
+        ].includes(key))
+        || !androidApplicationIdPattern.test(String(application.applicationId ?? ''))
+        || typeof application.installed !== 'boolean'
+        || typeof application.accessEnforced !== 'boolean'
+      ) {
+        throw Object.assign(new Error('invalid_application_status_item'), { statusCode: 400 });
+      }
+      if (seen.has(application.applicationId)) {
+        throw Object.assign(new Error('duplicate_application_id'), { statusCode: 400 });
+      }
+      seen.add(application.applicationId);
+      return {
+        applicationId: application.applicationId,
+        installed: application.installed,
+        versionName: application.versionName === undefined || application.versionName === null
+          ? null
+          : cleanText(application.versionName, 'application_version_name', 100),
+        versionCode: optionalIntegerInRange(
+          application.versionCode,
+          'application_version_code',
+          0,
+          Number.MAX_SAFE_INTEGER,
+        ),
+        accessEnforced: application.accessEnforced,
+      };
+    });
+    const result = await withTransaction(pool, async (client) => {
+      const authenticatedTv = await activeTvFromRequest(client, request, { lock: true });
+      if (!authenticatedTv.clientCertificateFingerprint) {
+        throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+      }
+      const { screen } = authenticatedTv;
+      const allowedIds = await effectivePrivateApplicationIds(client, screen);
+      if (normalized.some((application) => !allowedIds.includes(application.applicationId))) {
+        throw Object.assign(new Error('application_inventory_not_allowed'), { statusCode: 400 });
+      }
+      await client.query(
+        `DELETE FROM tv_application_status
+         WHERE screen_id = $1 AND NOT (application_id = ANY($2::text[]))`,
+        [screen.id, allowedIds],
+      );
+      for (const application of normalized) {
+        await client.query(
+          `INSERT INTO tv_application_status (
+             screen_id, application_id, installed, version_name,
+             version_code, access_enforced, reported_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, now())
+           ON CONFLICT (screen_id, application_id) DO UPDATE
+           SET installed = EXCLUDED.installed,
+               version_name = EXCLUDED.version_name,
+               version_code = EXCLUDED.version_code,
+               access_enforced = EXCLUDED.access_enforced,
+               reported_at = now()`,
+          [
+            screen.id,
+            application.applicationId,
+            application.installed,
+            application.versionName,
+            application.versionCode,
+            application.accessEnforced,
+          ],
+        );
+      }
+      await client.query(
+        'UPDATE screens SET last_seen_at = now(), updated_at = now() WHERE id = $1',
+        [screen.id],
+      );
+      return { accepted: true, applicationCount: normalized.length };
+    });
+    return reply.code(202).send(result);
   });
 
   app.post('/api/v1/tv/metrics', {

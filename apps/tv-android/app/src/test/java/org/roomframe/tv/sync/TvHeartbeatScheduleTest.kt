@@ -1,10 +1,18 @@
 package org.roomframe.tv.sync
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TvHeartbeatScheduleTest {
+    @Test
+    fun `le heartbeat envoie un objet JSON et ne lit pas un 204 sans corps`() {
+        assertEquals("{}", TvHeartbeatHttpPolicy.requestBody.toString(Charsets.UTF_8))
+        assertFalse(TvHeartbeatHttpPolicy.shouldReadResponseBody(204))
+        assertTrue(TvHeartbeatHttpPolicy.shouldReadResponseBody(200))
+    }
+
     @Test
     fun `heartbeat remains below server online window and is stable per TV`() {
         val first = TvHeartbeatSchedule.intervalMillis("00000000-0000-4000-8000-000000000001")

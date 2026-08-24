@@ -5,14 +5,19 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.IBinder
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import org.roomframe.tv.MainActivity
 import org.roomframe.tv.R
+import org.roomframe.tv.deviceadmin.AndroidPrivateApplicationAccessController
+import org.roomframe.tv.deviceadmin.PrivateApplicationSessionState
 
 /**
  * Heartbeat HTTPS minimal, séparé de l'activité HOME. Il garde une TV présente
@@ -23,9 +28,38 @@ class RoomFramePresenceService : Service() {
         Thread(task, "roomframe-heartbeat").apply { isDaemon = true }
     }
     private var scheduled: ScheduledFuture<*>? = null
+    private var screenOffReceiverRegistered = false
+    private var packageReceiverRegistered = false
+    private val privateApplicationAccess by lazy {
+        AndroidPrivateApplicationAccessController(applicationContext)
+    }
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+            PrivateApplicationSessionState.lock()
+            runCatching {
+                executor.execute { privateApplicationAccess.lockPreviouslyManaged() }
+            }
+        }
+    }
+    private val packageReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action !in PACKAGE_RECONCILIATION_ACTIONS) return
+            runCatching {
+                executor.execute {
+                    val states = privateApplicationAccess.lockPreviouslyManaged()
+                    DeviceCredentialStore(this@RoomFramePresenceService).load()?.let { credentials ->
+                        runCatching { HttpPrivateApplicationStatusClient(credentials).send(states) }
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+        registerScreenOffReceiver()
+        registerPackageReceiver()
         startForeground(NOTIFICATION_ID, notification())
     }
 
@@ -47,6 +81,14 @@ class RoomFramePresenceService : Service() {
     }
 
     override fun onDestroy() {
+        if (screenOffReceiverRegistered) {
+            unregisterReceiver(screenOffReceiver)
+            screenOffReceiverRegistered = false
+        }
+        if (packageReceiverRegistered) {
+            unregisterReceiver(packageReceiver)
+            packageReceiverRegistered = false
+        }
         scheduled?.cancel(true)
         executor.shutdownNow()
         super.onDestroy()
@@ -67,6 +109,34 @@ class RoomFramePresenceService : Service() {
             .putString("last_heartbeat_state", state)
             .putLong("last_heartbeat_at", System.currentTimeMillis())
             .apply()
+    }
+
+    private fun registerScreenOffReceiver() {
+        if (screenOffReceiverRegistered) return
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(screenOffReceiver, filter)
+        }
+        screenOffReceiverRegistered = true
+    }
+
+    private fun registerPackageReceiver() {
+        if (packageReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(packageReceiver, filter)
+        }
+        packageReceiverRegistered = true
     }
 
     private fun notification(): Notification {
@@ -101,6 +171,10 @@ class RoomFramePresenceService : Service() {
     companion object {
         private const val CHANNEL_ID = "roomframe-presence"
         private const val NOTIFICATION_ID = 41
+        val PACKAGE_RECONCILIATION_ACTIONS = setOf(
+            Intent.ACTION_PACKAGE_ADDED,
+            Intent.ACTION_PACKAGE_REPLACED,
+        )
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, RoomFramePresenceService::class.java))

@@ -27,4 +27,18 @@
     <string name="presence_channel_name">Connexion RoomFrame</string>
     <string name="presence_channel_description">Présence de la TV sur le serveur local</string>
     <string name="presence_notification">Connexion au serveur local active</string>
+    <string name="home_redirect_label">RoomFrame — bouton Home</string>
+    <string name="home_redirect_description">Revient vers RoomFrame lorsque le bouton Home ouvre le lanceur Google TV.</string>
+    <string name="cast_waiting_eyebrow">DIFFUSION SANS FIL</string>
+    <string name="cast_waiting_title">Prêt à recevoir</string>
+    <string name="cast_waiting_instruction">Sur votre téléphone ou votre ordinateur, ouvrez Cast puis choisissez ce téléviseur. Il peut apparaître dans quelques secondes.</string>
+    <string name="cast_waiting_status">En attente de votre appareil</string>
+    <string name="cast_waiting_steps_title">Depuis votre appareil</string>
+    <string name="cast_waiting_step_one">Ouvrez une application compatible</string>
+    <string name="cast_waiting_step_two">Appuyez sur l’icône Cast</string>
+    <string name="cast_waiting_step_three">Choisissez ce téléviseur</string>
+    <string name="cast_waiting_back">RETOUR À L’ACCUEIL</string>
+    <string name="cast_waiting_hint">Le bouton Retour ferme cet écran sans interrompre le récepteur.</string>
+    <string name="cast_waiting_accessibility">Récepteur Cast en attente. Suivez les trois étapes affichées, ou utilisez Retour pour revenir à l’accueil.</string>
+    <string name="cast_waiting_accessibility_named">Récepteur Cast de %1$s en attente. Suivez les trois étapes affichées, ou utilisez Retour pour revenir à l’accueil.</string>
 </resources>

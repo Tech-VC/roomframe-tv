@@ -2,8 +2,8 @@
   "formatVersion": 1,
   "kind": "experience-template",
   "bundleId": "org.roomframe.default-experience",
-  "version": "1.0.0",
-  "createdAt": "2026-07-24T00:00:00Z",
+  "version": "1.1.0",
+  "createdAt": "2026-08-24T00:00:00Z",
   "seedPolicy": {
     "onlyWhenInstanceEmpty": true,
     "neverOverwriteExistingInstance": true
@@ -17,8 +17,8 @@
   "files": [
     {
       "path": "README.md",
-      "sha256": "aa88e641d11fb0d89a968724208dbfe8345db5c7d0618fedf4b44af12f479104",
-      "size": 709
+      "sha256": "888c6e835fb2d8179e1fdc64e5e1281cc6f98acae71b5cc2c5dbb5ef615902e3",
+      "size": 791
     },
     {
       "path": "assets/background-default.jpg",
@@ -42,8 +42,8 @@
     },
     {
       "path": "layout.json",
-      "sha256": "97a98d885eed5e95cfab809f19721888ec6e21f45a56519141a950f69cf59e7b",
-      "size": 2495
+      "sha256": "9bf4fb444f9c1c0786d5c070cc1e23b01b82cb42c0361137d8a89f2807e850b6",
+      "size": 2034
     },
     {
       "path": "preview.png",

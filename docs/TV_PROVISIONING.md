@@ -35,6 +35,60 @@ Les champs UUID, clé longue et URL complète restent visibles dans le volet de
 dépannage du Studio pour une ancienne version de l’application. Ils ne font
 pas partie du parcours normal.
 
+## Sources et applications privées
+
+Dans **Surface**, une tuile **Sources** ouvre un menu natif avec Accueil, Cast,
+AirPlay, l'entrée HDMI configurée et l'Espace privé. Accueil désigne toujours
+la scène RoomFrame assignée, jamais une entrée HDMI. Les anciennes tuiles de
+source directes restent compatibles avec les scènes déjà publiées.
+
+Dans **Parc → Sources**, l’administrateur choisit plusieurs applications par
+leur nom. Le catalogue intégré propose actuellement **CANAL+** et **YouTube** ;
+l’identifiant Android reste masqué hors du champ avancé **Autre application**.
+La régie peut activer l'Espace privé et générer ou remplacer son code numérique
+à six chiffres. Le code est affiché une seule fois et l'ancien devient invalide
+après rotation.
+
+Sur la TV, le code est vérifié par le serveur local authentifié. Le mini-accueil
+privé s'ouvre ensuite sans nouvelle requête réseau. Home et l'extinction de
+l'écran reverrouillent la session ; Retour depuis une application retrouve le
+mini-accueil tant que la session n'a pas été verrouillée.
+
+Une application installée s'ouvre directement. Si elle est absente, RoomFrame
+ouvre sa fiche Google Play afin que l'installation reste contrôlée par le
+Store. RoomFrame ne contourne ni le compte Google, ni les conditions, ni le
+parcours d'activation propre à l'éditeur. Le code affiché par CANAL+ appartient
+donc toujours à CANAL+ ; il est distinct du code de l'Espace privé RoomFrame.
+
+Le fonctionnement, les limites Device Owner et la future frontière Managed
+Google Play sont détaillés dans
+[Sources et espace privé](PRIVATE_APPLICATIONS.md).
+
+## Récupération d'un certificat client obsolète
+
+La lecture de `/api/v1/tv/certificate` conserve la validation de la CA HTTPS
+du serveur et l'authentification par la clé longue de la TV. L'application
+essaie d'abord le certificat client installé. Uniquement si ce GET reçoit un
+401, elle réessaie sans identité cliente afin de récupérer un pending initial.
+Certains firmwares constructeur présentent malgré tout leur identité mise en
+cache : l'API tolère alors cette ancienne empreinte uniquement sur ce GET,
+uniquement lorsqu'aucun certificat actif n'existe et qu'un certificat de
+remplacement valide est déjà en attente. Le document retourné ne contient que
+des certificats publics. Toutes les autres routes continuent à refuser
+l'ancienne empreinte.
+
+La TV vérifie ensuite que le nouveau certificat correspond à sa clé privée
+Android Keystore, à son UUID, à la CA cliente et à l'empreinte attendue. La
+requête d'activation présente ce certificat et signe également un payload
+canonique qui lie l'UUID, l'identifiant de demande et l'empreinte en attente.
+Le serveur préfère la confirmation mTLS normale. Si le firmware continue de
+présenter une ancienne identité, il accepte cette preuve uniquement pour la
+première promotion, lorsqu'aucun certificat actif n'existe, que le pending est
+valide et que la clé publique de la demande vérifie la signature. Cette
+exception ne s'applique jamais à la synchronisation, aux métriques ou au
+heartbeat. Elle ne supprime ni l'enrôlement, ni la clé privée, ni la scène
+locale.
+
 ## Provisionnement Device Owner sur une TV de test
 
 Une installation APK silencieuse exige que RoomFrame soit réellement Device
@@ -50,6 +104,14 @@ Android 12 et versions ultérieures. Il accepte uniquement le mode
 toutes les applications système. Sur Philips, cette conservation est
 obligatoire : LauncherX, SetupWraith et les services constructeur utilisés par
 HDMI, Cast ou AirPlay ne doivent jamais être désactivés.
+
+Sur le profil Philips TA1 validé, RoomFrame peut demander au
+`DevicePolicyManager` de rendre de nouveau visible le seul paquet Cast système
+attendu. Cette réconciliation reste strictement bornée au Device Owner, au
+profil matériel et à ce paquet système. Certains firmwares conservent toutefois
+un état utilisateur `disabled-user` que cette API ne répare pas : l'échec doit
+être journalisé et traité par une action guidée dans les réglages système, sans
+désactiver LauncherX ni élargir la politique à d'autres applications.
 
 Après l’activation Device Owner, RoomFrame enregistre `MainActivity` comme
 gestionnaire HOME persistant. Android la lance alors au démarrage et avec le

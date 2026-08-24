@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/tv-device.schema.json",
+  "title": "RoomFrame TV display identity",
+  "type": "object",
+  "required": ["schemaVersion", "displayName", "roomName"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "roomName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    }
+  },
+  "additionalProperties": false
+}

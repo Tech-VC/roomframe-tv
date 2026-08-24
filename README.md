@@ -142,8 +142,12 @@ Voir [docs/SECURITY.md](docs/SECURITY.md) et [docs/API.md](docs/API.md).
 - proposition des couleurs principale et d’accent depuis le logo sélectionné,
   avec comparaison et confirmation explicite avant de remplacer les couleurs
   saisies manuellement ;
-- règles AirPlay, Cast, HDMI, application privée, retour accueil et horaires
-  configurables par instance, groupe ou TV sans prétendre exécuter le matériel ;
+- menu Sources natif avec Accueil, AirPlay, Cast, HDMI et Espace privé ;
+  applications allowlistées, code à six chiffres rotatif validé par le serveur
+  local et état limité aux seules applications configurées, sans prétendre
+  installer automatiquement une application commerciale ;
+- règles de sources, retour accueil et horaires configurables par instance,
+  groupe ou TV sans prétendre exécuter une capacité matérielle non validée ;
 - bibliothèque de scènes, copie de brouillon et affectation publiée par
   instance, groupe ou TV avec aperçu résolu ;
 - programmation temporaire d’une scène par instance, groupe ou TV, avec refus

@@ -56,6 +56,8 @@ interface SourceAdapter {
 }
 
 interface HdmiAdapter : SourceAdapter {
+    fun activate(physicalInput: String?): AdapterResult
+    override fun activate(): AdapterResult = activate(null)
     fun signalState(): HdmiSignalState
 }
 

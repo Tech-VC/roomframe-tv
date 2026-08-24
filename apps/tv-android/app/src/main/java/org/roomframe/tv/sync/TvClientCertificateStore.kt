@@ -5,10 +5,13 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.io.ByteArrayInputStream
 import java.math.BigInteger
+import java.net.Socket
 import java.net.URL
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.security.Principal
+import java.security.PrivateKey
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
@@ -16,6 +19,8 @@ import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.KeyManager
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLEngine
+import javax.net.ssl.X509ExtendedKeyManager
 import javax.security.auth.x500.X500Principal
 
 data class TvCertificateEnrollmentProof(
@@ -32,18 +37,31 @@ class TvClientCertificateStore {
         val certificate = requireNotNull(androidKeyStore().getCertificate(KEY_ALIAS)) {
             "Clé TLS TV absente"
         }
-        val privateKey = requireNotNull(androidKeyStore().getKey(KEY_ALIAS, null)) {
+        val privateKey = requireNotNull(androidKeyStore().getKey(KEY_ALIAS, null) as? PrivateKey) {
             "Clé privée TLS TV absente"
-        }
-        val payload = proofPayload(normalizedId, enrollmentKey)
-        val signature = Signature.getInstance(SIGNATURE_ALGORITHM).run {
-            initSign(privateKey as java.security.PrivateKey)
-            update(payload)
-            sign()
         }
         return TvCertificateEnrollmentProof(
             publicKeySpki = certificate.publicKey.encoded.base64Url(),
-            proofSignature = signature.base64Url(),
+            proofSignature = privateKey.sign(proofPayload(normalizedId, enrollmentKey)),
+        )
+    }
+
+    fun activationProof(
+        deviceId: String,
+        requestId: String,
+        fingerprintSha256: String,
+    ): String {
+        val normalizedId = DeviceCredentialStore.validateDeviceId(deviceId)
+        require(requestId.matches(UUID)) { "Identifiant de demande de certificat invalide" }
+        require(fingerprintSha256.matches(SHA256)) { "Empreinte de certificat TV invalide" }
+        require(currentFingerprintSha256() == fingerprintSha256) {
+            "Certificat TV à activer absent du trousseau Android"
+        }
+        val privateKey = requireNotNull(
+            androidKeyStore().getKey(KEY_ALIAS, null) as? PrivateKey,
+        ) { "Clé privée TLS TV absente" }
+        return privateKey.sign(
+            activationProofPayload(normalizedId, requestId, fingerprintSha256),
         )
     }
 
@@ -176,6 +194,24 @@ class TvClientCertificateStore {
             "roomframe-tv-enrollment-v1\n$deviceId\n$enrollmentKey"
                 .toByteArray(Charsets.UTF_8)
 
+        fun activationProofPayload(
+            deviceId: String,
+            requestId: String,
+            fingerprintSha256: String,
+        ): ByteArray = (
+            "roomframe-tv-certificate-activation-v1\n" +
+                "$deviceId\n" +
+                "$requestId\n" +
+                fingerprintSha256
+            ).toByteArray(Charsets.UTF_8)
+
+        private fun PrivateKey.sign(payload: ByteArray): String =
+            Signature.getInstance(SIGNATURE_ALGORITHM).run {
+                initSign(this@sign)
+                update(payload)
+                sign().base64Url()
+            }
+
         private fun ByteArray.base64Url(): String =
             Base64.encodeToString(this, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
 
@@ -187,19 +223,76 @@ class TvClientCertificateStore {
         private const val ANDROID_KEY_STORE = "AndroidKeyStore"
         private const val SIGNATURE_ALGORITHM = "SHA256withRSA"
         private const val CLIENT_AUTH_OID = "1.3.6.1.5.5.7.3.2"
+        private val UUID = Regex(
+            "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            RegexOption.IGNORE_CASE,
+        )
         private val SHA256 = Regex("^[a-f0-9]{64}$")
     }
 }
 
 object RoomFrameHttps {
-    fun open(url: URL): HttpsURLConnection =
+    fun open(
+        url: URL,
+        includeClientCertificate: Boolean = true,
+    ): HttpsURLConnection =
         (url.openConnection() as HttpsURLConnection).also { connection ->
-            val keyManagers = TvClientCertificateStore().keyManagersOrNull()
-            val trustManagers = RoomFrameServerTrust().trustManagersOrNull()
-            if (keyManagers != null || trustManagers != null) {
-                connection.sslSocketFactory = SSLContext.getInstance("TLS").apply {
-                    init(keyManagers, trustManagers, null)
-                }.socketFactory
+            val keyManagers: Array<KeyManager>? = if (includeClientCertificate) {
+                TvClientCertificateStore().keyManagersOrNull()
+            } else {
+                arrayOf(NoClientCertificateKeyManager)
             }
+            val trustManagers = requireNotNull(
+                RoomFrameServerTrust().trustManagersOrNull(),
+            ) { "Autorité HTTPS RoomFrame absente" }
+            connection.sslSocketFactory = SSLContext.getInstance("TLS").apply {
+                init(keyManagers, trustManagers, null)
+            }.socketFactory
         }
+
+    /**
+     * Some Android TLS providers treat an empty KeyManager array as a request
+     * to fall back to the platform defaults. This explicit manager prevents
+     * that fallback on compliant JSSE providers. The server recovery route is
+     * also prepared for vendor firmware that still attaches a cached identity.
+     */
+    private object NoClientCertificateKeyManager : X509ExtendedKeyManager() {
+        override fun getClientAliases(
+            keyType: String?,
+            issuers: Array<out Principal>?,
+        ): Array<String>? = null
+
+        override fun chooseClientAlias(
+            keyType: Array<out String>?,
+            issuers: Array<out Principal>?,
+            socket: Socket?,
+        ): String? = null
+
+        override fun getServerAliases(
+            keyType: String?,
+            issuers: Array<out Principal>?,
+        ): Array<String>? = null
+
+        override fun chooseServerAlias(
+            keyType: String?,
+            issuers: Array<out Principal>?,
+            socket: Socket?,
+        ): String? = null
+
+        override fun getCertificateChain(alias: String?): Array<X509Certificate>? = null
+
+        override fun getPrivateKey(alias: String?): PrivateKey? = null
+
+        override fun chooseEngineClientAlias(
+            keyType: Array<out String>?,
+            issuers: Array<out Principal>?,
+            engine: SSLEngine?,
+        ): String? = null
+
+        override fun chooseEngineServerAlias(
+            keyType: String?,
+            issuers: Array<out Principal>?,
+            engine: SSLEngine?,
+        ): String? = null
+    }
 }

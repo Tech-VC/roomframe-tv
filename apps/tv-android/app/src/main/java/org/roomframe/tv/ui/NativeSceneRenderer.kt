@@ -27,7 +27,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import org.roomframe.tv.R
-import org.roomframe.tv.adapters.AdapterResult
 import org.roomframe.tv.adapters.DeviceAdapters
 import org.roomframe.tv.adapters.SourceAdapter
 import org.roomframe.tv.experience.BackgroundDocument
@@ -57,16 +56,27 @@ internal fun clockPattern(showDate: Boolean, format: String): String {
     return if (showDate) "d MMMM - $time" else time
 }
 
+internal fun sceneBackgroundWashColors(): IntArray = intArrayOf(
+    0xc2020606.toInt(),
+    0x6b020606,
+    0x14020606,
+    0x8c020606.toInt(),
+)
+
 class NativeSceneRenderer(
     private val activity: Activity,
     private val adapters: DeviceAdapters,
     private val debugBackground: Drawable? = null,
     private val debugLogo: Drawable? = null,
+    private val onCastWaitingRequested: (View) -> Unit,
+    private val onSourceMenuRequested: (View) -> Unit,
+    private val onPrivateSpaceRequested: (View) -> Unit,
 ) {
     private lateinit var snapshot: ExperienceSnapshot
     private lateinit var branding: BrandingDocument
     private var scale = 1f
     private val focusableViews = mutableListOf<FocusableSceneView>()
+    private val applicationLauncher = AndroidApplicationLauncher(activity)
 
     fun render(value: ExperienceSnapshot, preferredFocusNodeId: String? = null): View {
         snapshot = value
@@ -142,6 +152,21 @@ class NativeSceneRenderer(
             backgroundView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             canvas.addView(
                 backgroundView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            canvas.addView(
+                View(activity).apply {
+                    this.background = GradientDrawable(
+                        GradientDrawable.Orientation.LEFT_RIGHT,
+                        sceneBackgroundWashColors(),
+                    )
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    isClickable = false
+                    isFocusable = false
+                },
                 FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT,
@@ -299,12 +324,18 @@ class NativeSceneRenderer(
         }
     }
 
-    private fun sourceNode(node: SceneNodeDocument): TextView {
+    private fun sourceNode(node: SceneNodeDocument): TextView? {
         val source = node.properties.source.orEmpty()
+        val setting = snapshot.sources.settingFor(source)
+        if (setting?.enabled == false) return null
         val adapter = sourceAdapter(source)
         val brandedIcon = adapter?.brandedIcon()?.mutate()
         return baseText(node).apply {
-            text = node.properties.label ?: source.replaceFirstChar(Char::uppercase)
+            text = setting?.label ?: node.properties.label ?: when (source) {
+                "menu" -> "Sources"
+                "private-app" -> "Espace privé"
+                else -> source.replaceFirstChar(Char::uppercase)
+            }
             setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24f))
             typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
             gravity = Gravity.CENTER_VERTICAL
@@ -318,33 +349,81 @@ class NativeSceneRenderer(
             compoundDrawablePadding = scenePx(18f).roundToInt()
             applyInteractiveStyle(node, tintIcon = brandedIcon == null)
             setOnClickListener {
-                when (val result = adapter?.activate()) {
-                    AdapterResult.Success -> Unit
-                    is AdapterResult.Pending -> toast(result.reason)
-                    is AdapterResult.Unavailable -> toast(result.reason)
-                    is AdapterResult.Failure -> toast(result.reason)
-                    null -> toast("Source non prise en charge")
+                if (source == "menu") {
+                    onSourceMenuRequested(this)
+                    return@setOnClickListener
+                }
+                if (source == "private-app") {
+                    if (snapshot.privateAccess.enabled) {
+                        onPrivateSpaceRequested(this)
+                    } else {
+                        activateApplication(setting?.applicationIds?.firstOrNull())
+                    }
+                    return@setOnClickListener
+                }
+                val activation = if (source == "hdmi") {
+                    adapters.hdmi.activate(setting?.physicalInput)
+                } else {
+                    adapter?.activate()
+                }
+                when (val effect = sourceActivationEffect(source, activation)) {
+                    SourceActivationEffect.None -> Unit
+                    SourceActivationEffect.ShowCastWaiting -> onCastWaitingRequested(this)
+                    is SourceActivationEffect.ShowMessage -> toast(effect.message)
                 }
             }
         }
     }
 
-    private fun appNode(node: SceneNodeDocument): TextView = baseText(node).apply {
-        text = node.properties.label ?: "Application"
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24f))
-        typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(scenePx(22f).roundToInt(), 0, scenePx(22f).roundToInt(), 0)
-        applyInteractiveStyle(node, tintIcon = false)
-        setOnClickListener {
-            val packageName = node.properties.packageName
-            val launchIntent = packageName?.let {
-                activity.packageManager.getLeanbackLaunchIntentForPackage(it)
-                    ?: activity.packageManager.getLaunchIntentForPackage(it)
+    private fun appNode(node: SceneNodeDocument): TextView? {
+        val configuredPrivateApp = snapshot.sources.settingFor("private-app")
+        val usesPrivateAppFallback = node.properties.applicationId.isNullOrBlank() ||
+            node.properties.applicationId == LEGACY_PRIVATE_APP_PLACEHOLDER
+        if (usesPrivateAppFallback && configuredPrivateApp?.enabled == false) return null
+        val applicationId = if (usesPrivateAppFallback) {
+            configuredPrivateApp?.applicationId ?: node.properties.applicationId
+        } else {
+            node.properties.applicationId
+        }
+        return baseText(node).apply {
+            text = if (usesPrivateAppFallback) {
+                configuredPrivateApp?.label ?: node.properties.label ?: "Application"
+            } else {
+                node.properties.label ?: "Application"
             }
-            if (launchIntent == null) toast("Application non disponible")
-            else runCatching { activity.startActivity(launchIntent) }
-                .onFailure { toast("Ouverture de l'application impossible") }
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, scenePx(24f))
+            typeface = Typeface.create(sceneTypeface(), Typeface.BOLD)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(scenePx(22f).roundToInt(), 0, scenePx(22f).roundToInt(), 0)
+            applyInteractiveStyle(node, tintIcon = false)
+            setOnClickListener {
+                val isConfiguredPrivateApplication = applicationId != null &&
+                    configuredPrivateApp?.enabled == true &&
+                    applicationId in configuredPrivateApp?.applicationIds.orEmpty()
+                if (
+                    snapshot.privateAccess.enabled &&
+                    (usesPrivateAppFallback || isConfiguredPrivateApplication)
+                ) {
+                    onPrivateSpaceRequested(this)
+                } else {
+                    activateApplication(applicationId)
+                }
+            }
+        }
+    }
+
+    private fun activateApplication(applicationId: String?) {
+        when (
+            launchOrInstallApplication(
+                applicationId = applicationId,
+                launchInstalled = applicationLauncher::launchInstalled,
+                openStore = applicationLauncher::openStore,
+            )
+        ) {
+            ApplicationLaunchResult.LAUNCHED -> Unit
+            ApplicationLaunchResult.STORE_OPENED -> toast("Application à installer depuis Google Play")
+            ApplicationLaunchResult.INVALID_CONFIGURATION -> toast("Choisissez l'application dans la régie")
+            ApplicationLaunchResult.UNAVAILABLE -> toast("Application et Google Play indisponibles")
         }
     }
 
@@ -534,5 +613,6 @@ class NativeSceneRenderer(
     private companion object {
         const val CANVAS_WIDTH = 1920f
         const val CANVAS_HEIGHT = 1080f
+        const val LEGACY_PRIVATE_APP_PLACEHOLDER = "org.roomframe.privateapp"
     }
 }

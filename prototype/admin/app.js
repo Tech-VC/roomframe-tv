@@ -12,10 +12,27 @@ import {
   setNodeDisplayText,
   validateScene,
   weatherReadingForNode,
-} from "./scene-model.js?v=0.3.0-ui19";
+} from "./scene-model.js?v=0.3.0-ui26";
 import { paletteFromRgba } from "./logo-palette.js?v=0.3.0-ui19";
 import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui15";
 import { enrollmentCodePresentation } from "./enrollment-code.js?v=0.3.0-ui20";
+import {
+  ANDROID_TV_APPS,
+  MANUAL_ANDROID_APP,
+  MAX_PRIVATE_ANDROID_APPS,
+  androidTvAppDisplayName,
+  androidTvAppForId,
+  androidTvAppSelection,
+  normalizePrivateAndroidApplicationIds,
+  privateApplicationStatus,
+  resolvedAndroidApplicationId,
+  validAndroidApplicationId,
+} from "./android-app-catalog.js?v=0.3.0-ui26";
+import {
+  formatPrivatePin,
+  privateAccessPolicyMatches,
+  privateAccessPolicySummary,
+} from "./private-access-ui.js?v=0.3.0-ui26";
 import {
   creationOptionsFromJSON,
   credentialToJSON,
@@ -70,10 +87,42 @@ const normalizeBranding = (value = {}) => ({
 });
 
 const sourceGlyph = (source) => {
-  const normalized = ["airplay", "cast", "hdmi"].includes(source) ? source : "app";
+  const normalized = ["airplay", "cast", "hdmi", "menu"].includes(source) ? source : "app";
   const glyph = make("span", `source-glyph ${normalized}`);
   glyph.setAttribute("aria-hidden", "true");
   return glyph;
+};
+
+const androidAppOptions = () => {
+  const placeholder = make("option", "", "Choisir une application");
+  placeholder.value = "";
+  const known = ANDROID_TV_APPS.map((entry) => {
+    const option = make("option", "", entry.name);
+    option.value = entry.applicationId;
+    return option;
+  });
+  const manual = make("option", "", "Autre application…");
+  manual.value = MANUAL_ANDROID_APP;
+  return [placeholder, ...known, manual];
+};
+
+const populateAndroidAppControl = ({ select, manualField, manualInput, applicationId }) => {
+  const normalized = String(applicationId ?? "").trim();
+  select.replaceChildren(...androidAppOptions());
+  select.value = androidTvAppSelection(normalized);
+  manualInput.value = normalized;
+  manualField.classList.toggle("hidden", select.value !== MANUAL_ANDROID_APP);
+};
+
+const updateAndroidAppManualVisibility = ({ select, manualField, manualInput }) => {
+  const manual = select.value === MANUAL_ANDROID_APP;
+  manualField.classList.toggle("hidden", !manual);
+  if (manual) {
+    if (androidTvAppForId(manualInput.value)) manualInput.value = "";
+  } else {
+    manualInput.value = select.value;
+  }
+  return manual;
 };
 
 const api = {
@@ -120,6 +169,8 @@ const state = {
   televisions: [],
   groups: [],
   sourceSettings: [],
+  privateAccessPolicies: [],
+  applicationStatuses: [],
   powerSchedules: [],
   releases: [],
   deployments: [],
@@ -243,6 +294,7 @@ const confirmSceneDiscard = () => (
 );
 
 const showGate = (panel) => {
+  clearPrivatePinDialog();
   refs.app.inert = true;
   refs.app.setAttribute("aria-hidden", "true");
   refs.authGate.classList.remove("hidden");
@@ -295,10 +347,33 @@ const sessionHasPermission = (permission) => {
     && (permissions.includes("*") || permissions.includes(permission));
 };
 
+const erasePrivatePin = () => {
+  $("#privatePinValue").textContent = "";
+  $("#privatePinGeneration").textContent = "";
+};
+
+const clearPrivatePinDialog = () => {
+  const dialog = $("#privatePinDialog");
+  if (dialog.open) dialog.close("masked");
+  erasePrivatePin();
+};
+
+const showPrivatePinDialog = (pin, generation) => {
+  const formatted = formatPrivatePin(pin);
+  if (!formatted) throw new Error("Le serveur n’a pas renvoyé un code à 6 chiffres.");
+  $("#privatePinValue").textContent = formatted;
+  $("#privatePinGeneration").textContent = Number.isSafeInteger(Number(generation))
+    ? `Génération ${Number(generation)}`
+    : "Nouveau code";
+  $("#privatePinDialog").showModal();
+  $("#copyPrivatePin").focus();
+};
+
 const switchView = (view, { focus = false } = {}) => {
   const panel = $(`#view-${view}`);
   const button = $(`.section[data-view="${view}"]`);
   if (!panel || !button) return;
+  if (view !== "fleet") clearPrivatePinDialog();
   $$(".section").forEach((item) => {
     const active = item === button;
     item.classList.toggle("on", active);
@@ -424,6 +499,12 @@ const loadStudio = async (sceneId = null) => {
     state.televisions = Array.isArray(payload.televisions) ? payload.televisions : Array.isArray(payload.tvs) ? payload.tvs : [];
     state.groups = Array.isArray(payload.groups) ? payload.groups : [];
     state.sourceSettings = Array.isArray(payload.sourceSettings) ? payload.sourceSettings : [];
+    state.privateAccessPolicies = Array.isArray(payload.privateAccessPolicies)
+      ? payload.privateAccessPolicies
+      : [];
+    state.applicationStatuses = Array.isArray(payload.applicationStatuses)
+      ? payload.applicationStatuses
+      : [];
     state.powerSchedules = Array.isArray(payload.powerSchedules) ? payload.powerSchedules : [];
     state.releases = Array.isArray(payload.releases) ? payload.releases : [];
     state.deployments = Array.isArray(payload.deployments) ? payload.deployments : [];
@@ -802,7 +883,7 @@ const renderProperties = () => {
   $("#nodeLabel").disabled = !nodeSupportsLabel(node);
   const weatherDocument = state.preview?.documents?.weather ?? state.weather;
   $("#nodeText").value = nodeDisplayText(node, weatherDocument);
-  $("#nodeTextField").classList.toggle("hidden", ["clock", "weather"].includes(node.kind));
+  $("#nodeTextField").classList.toggle("hidden", ["clock", "weather", "app"].includes(node.kind));
   $("#nodeClockField").classList.toggle("hidden", node.kind !== "clock");
   if (node.kind === "clock") {
     $("#clockShowDate").checked = Boolean(node.props.showDate);
@@ -811,6 +892,15 @@ const renderProperties = () => {
   $("#nodeWeatherField").classList.toggle("hidden", node.kind !== "weather");
   if (node.kind === "weather") renderWeatherProperties(node, weatherDocument);
   else closeWeatherSuggestions();
+  $("#nodeAppField").classList.toggle("hidden", node.kind !== "app");
+  if (node.kind === "app") {
+    populateAndroidAppControl({
+      select: $("#nodeAppSelect"),
+      manualField: $("#nodeAppManualField"),
+      manualInput: $("#nodeAppId"),
+      applicationId: node.props.applicationId,
+    });
+  }
   const supportsAsset = ["image", "video", "logo"].includes(node.kind);
   $("#nodeAssetField").classList.toggle("hidden", !supportsAsset);
   if (supportsAsset) {
@@ -1026,6 +1116,171 @@ const sourceSettingFor = (kind, selection) => {
   ));
 };
 
+const privateAccessPolicyFor = (selection) => {
+  const { targetType, targetId } = parseOperationalTarget(selection);
+  return state.privateAccessPolicies.find((policy) => (
+    privateAccessPolicyMatches(policy, targetType, targetId)
+  )) ?? null;
+};
+
+const safePrivateAccessPolicy = (payload, target, fallback = {}) => {
+  const source = payload?.policy ?? payload?.privateAccessPolicy ?? {};
+  const generationValue = source.pinGeneration
+    ?? source.pin_generation
+    ?? payload?.generation
+    ?? fallback.pinGeneration
+    ?? fallback.pin_generation;
+  const generation = Number(generationValue);
+  return {
+    target_type: target.targetType,
+    target_id: target.targetId,
+    enabled: Boolean(source.enabled ?? fallback.enabled),
+    pin_configured: Boolean(
+      source.pinConfigured
+      ?? source.pin_configured
+      ?? fallback.pinConfigured
+      ?? fallback.pin_configured,
+    ),
+    pin_generation: Number.isSafeInteger(generation) && generation > 0 ? generation : null,
+    updated_at: source.updatedAt ?? source.updated_at ?? fallback.updatedAt ?? fallback.updated_at ?? null,
+  };
+};
+
+const upsertPrivateAccessPolicy = (policy) => {
+  const targetType = policy.targetType ?? policy.target_type;
+  const targetId = policy.targetId ?? policy.target_id ?? null;
+  state.privateAccessPolicies = state.privateAccessPolicies.filter(
+    (entry) => !privateAccessPolicyMatches(entry, targetType, targetId),
+  );
+  state.privateAccessPolicies.push(policy);
+};
+
+const privateApplicationIdsFromControls = () => {
+  const known = $$('[data-private-known-app]:checked', $("#sourcePrivateAppChoices"))
+    .map((input) => input.value);
+  const manual = $$('[data-private-manual-app]', $("#sourcePrivateAppManualList"))
+    .map((row) => row.dataset.privateManualApp);
+  return normalizePrivateAndroidApplicationIds({ applicationIds: [...known, ...manual] });
+};
+
+const renderPrivateManualApplications = (applicationIds) => {
+  const manualIds = applicationIds.filter((applicationId) => !androidTvAppForId(applicationId));
+  const rows = manualIds.map((applicationId, index) => {
+    const row = make("div", "private-app-manual-row");
+    row.dataset.privateManualApp = applicationId;
+    row.setAttribute("data-private-manual-app", "true");
+    const label = make("span");
+    label.append(
+      make("b", "", `Application personnalisée ${index + 1}`),
+      make("code", "", applicationId),
+    );
+    const remove = make("button", "text-button", "Retirer");
+    remove.type = "button";
+    remove.dataset.removePrivateApp = applicationId;
+    remove.setAttribute("aria-label", `Retirer l’application personnalisée ${index + 1}`);
+    row.append(label, remove);
+    return row;
+  });
+  $("#sourcePrivateAppManualList").replaceChildren(
+    ...(rows.length ? rows : [make("p", "empty-copy", "Aucune application ajoutée manuellement.")]),
+  );
+};
+
+const renderPrivateApplicationPicker = (configuration = {}) => {
+  const applicationIds = normalizePrivateAndroidApplicationIds(configuration);
+  const selected = new Set(applicationIds);
+  const choices = ANDROID_TV_APPS.map((entry, index) => {
+    const label = make("label", "private-app-choice");
+    label.htmlFor = `sourcePrivateKnownApp${index}`;
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = `sourcePrivateKnownApp${index}`;
+    input.value = entry.applicationId;
+    input.checked = selected.has(entry.applicationId);
+    input.dataset.privateKnownApp = "true";
+    label.append(input, make("span", "", entry.name));
+    return label;
+  });
+  $("#sourcePrivateAppChoices").replaceChildren(...choices);
+  renderPrivateManualApplications(applicationIds);
+  $("#sourcePrivateAppId").value = "";
+};
+
+const televisionsForOperationalTarget = (selection) => {
+  const { targetType, targetId } = parseOperationalTarget(selection);
+  const active = state.televisions.filter(
+    (tv) => (tv.enrollmentState ?? tv.enrollment_state) === "active",
+  );
+  if (targetType === "instance") return active;
+  if (targetType === "tv") return active.filter((tv) => String(tv.id) === String(targetId));
+  return active.filter((tv) => {
+    const directGroupId = tv.groupId ?? tv.group_id;
+    const groupIds = tv.groupIds ?? tv.group_ids ?? [];
+    return String(directGroupId ?? "") === String(targetId)
+      || (Array.isArray(groupIds) && groupIds.some((id) => String(id) === String(targetId)));
+  });
+};
+
+const applicationStatusFor = (tvId, applicationId) => state.applicationStatuses.find((status) => (
+  String(status.screenId ?? status.screen_id ?? status.tvId ?? status.tv_id ?? "") === String(tvId)
+  && (status.applicationId ?? status.application_id) === applicationId
+)) ?? null;
+
+const renderPrivateApplicationStatuses = (applicationIds, selection) => {
+  const container = $("#privateAppStatusList");
+  if (!applicationIds.length) {
+    container.replaceChildren(make("p", "empty-copy", "Choisissez d’abord une application."));
+    return;
+  }
+  const televisions = televisionsForOperationalTarget(selection);
+  if (!televisions.length) {
+    container.replaceChildren(make("p", "empty-copy", "Aucune TV active pour cette cible."));
+    return;
+  }
+  const customIndexes = new Map();
+  let nextCustomIndex = 1;
+  for (const applicationId of applicationIds) {
+    if (!androidTvAppForId(applicationId)) {
+      customIndexes.set(applicationId, nextCustomIndex);
+      nextCustomIndex += 1;
+    }
+  }
+  const rows = televisions.map((tv) => {
+    const row = make("section", "private-app-tv-status");
+    row.append(make("h4", "", tv.displayName ?? tv.display_name ?? tv.name ?? "TV"));
+    const applications = make("div", "private-app-status-grid");
+    for (const applicationId of applicationIds) {
+      const status = applicationStatusFor(tv.id, applicationId);
+      const labels = privateApplicationStatus(status);
+      const application = make("div", "private-app-status-row");
+      application.dataset.availability = status?.installed === true
+        ? "installed"
+        : status?.installed === false
+          ? "missing"
+          : "unknown";
+      application.append(
+        make("b", "", androidTvAppDisplayName(applicationId, customIndexes.get(applicationId))),
+        make("span", "", labels.availability),
+        make("small", "", labels.access),
+      );
+      applications.append(application);
+    }
+    row.append(applications);
+    return row;
+  });
+  container.replaceChildren(...rows);
+};
+
+const populatePrivateAccessSettings = (selection) => {
+  const policy = privateAccessPolicyFor(selection);
+  $("#privateAccessEnabled").checked = Boolean(policy?.enabled);
+  $("#privateAccessStatus").textContent = privateAccessPolicySummary(policy);
+  $("#privateAccessGenerate").textContent = policy?.pinConfigured ?? policy?.pin_configured
+    ? "Remplacer le code"
+    : "Générer un code";
+  formError("privateAccessError");
+};
+
 const populateSourceSettings = () => {
   const selection = $("#sourceTargetSelect").value || "instance";
   const fields = {
@@ -1047,13 +1302,16 @@ const populateSourceSettings = () => {
     "private-app": {
       enabled: $("#sourcePrivateAppEnabled"),
       label: $("#sourcePrivateAppLabel"),
-      defaultLabel: "Application privée",
+      defaultLabel: "Espace privé",
     },
   };
   for (const [kind, field] of Object.entries(fields)) {
     const setting = sourceSettingFor(kind, selection);
     field.enabled.checked = Boolean(setting?.enabled);
-    field.label.value = setting?.label ?? field.defaultLabel;
+    const savedLabel = String(setting?.label ?? "").trim();
+    field.label.value = kind === "private-app" && ["", "Application", "Application privée"].includes(savedLabel)
+      ? field.defaultLabel
+      : savedLabel || field.defaultLabel;
   }
   const airplay = sourceSettingFor("airplay", selection)?.configuration ?? {};
   const cast = sourceSettingFor("cast", selection)?.configuration ?? {};
@@ -1062,7 +1320,12 @@ const populateSourceSettings = () => {
   $("#sourceAirplayService").value = airplay.serviceName ?? "RoomFrame";
   $("#sourceCastReceiver").value = cast.receiverApplicationId ?? "";
   $("#sourceHdmiInput").value = hdmi.physicalInput ?? "HDMI1";
-  $("#sourcePrivateAppId").value = privateApp.applicationId ?? "org.example.privateapp";
+  renderPrivateApplicationPicker(privateApp);
+  renderPrivateApplicationStatuses(
+    normalizePrivateAndroidApplicationIds(privateApp),
+    selection,
+  );
+  populatePrivateAccessSettings(selection);
 };
 
 const powerScheduleFor = (selection) => {
@@ -1351,9 +1614,16 @@ const refreshFleetState = async ({ reportError = false } = {}) => {
     if (!Array.isArray(payload.tvs)) throw new Error("État du parc incomplet.");
     if (!fleetRefreshAllowed()) return;
     state.televisions = payload.tvs;
+    if (Array.isArray(payload.applicationStatuses)) {
+      state.applicationStatuses = payload.applicationStatuses;
+    }
     state.measuredMetrics = payload.measuredMetrics ?? activeFleetMetrics(payload.tvs);
     renderFleet();
     renderHome();
+    renderPrivateApplicationStatuses(
+      privateApplicationIdsFromControls(),
+      $("#sourceTargetSelect").value || "instance",
+    );
   } catch (error) {
     if (reportError) toast(`Actualisation du parc impossible : ${error.message}`, true);
   } finally {
@@ -2426,8 +2696,14 @@ const updateSelectedProperties = () => {
   const node = selectedNode();
   if (!node) return;
   if (nodeSupportsLabel(node)) node.props.label = $("#nodeLabel").value.slice(0, 120);
-  if (node.kind !== "weather") {
+  if (!["weather", "app"].includes(node.kind)) {
     setNodeDisplayText(node, $("#nodeText").value.slice(0, 1000));
+  }
+  if (node.kind === "app") {
+    node.props.applicationId = resolvedAndroidApplicationId(
+      $("#nodeAppSelect").value,
+      $("#nodeAppId").value,
+    ).slice(0, 200);
   }
   if (node.kind === "clock") {
     node.props.showDate = $("#clockShowDate").checked;
@@ -3528,8 +3804,70 @@ refs.backgroundBlur.addEventListener("input", () => {
   refs.backgroundBlurValue.textContent = refs.backgroundBlurValue.value;
   renderBackground();
 });
-$("#sourceTargetSelect").addEventListener("change", populateSourceSettings);
+$("#sourceTargetSelect").addEventListener("change", () => {
+  clearPrivatePinDialog();
+  populateSourceSettings();
+});
 $("#powerTargetSelect").addEventListener("change", populatePowerSettings);
+$("#sourcePrivateAppChoices").addEventListener("change", () => {
+  renderPrivateApplicationStatuses(
+    privateApplicationIdsFromControls(),
+    $("#sourceTargetSelect").value || "instance",
+  );
+});
+const addManualPrivateApplication = () => {
+  formError("sourceSettingsError");
+  const input = $("#sourcePrivateAppId");
+  const applicationId = input.value.trim();
+  if (!validAndroidApplicationId(applicationId)) {
+    formError("sourceSettingsError", "Saisissez un identifiant Android valide.");
+    input.focus();
+    return;
+  }
+  const current = privateApplicationIdsFromControls();
+  if (current.includes(applicationId)) {
+    formError("sourceSettingsError", "Cette application est déjà sélectionnée.");
+    input.focus();
+    return;
+  }
+  if (current.length >= MAX_PRIVATE_ANDROID_APPS) {
+    formError("sourceSettingsError", `Vous pouvez choisir au maximum ${MAX_PRIVATE_ANDROID_APPS} applications.`);
+    input.focus();
+    return;
+  }
+  if (androidTvAppForId(applicationId)) {
+    const known = $$('[data-private-known-app]', $("#sourcePrivateAppChoices"))
+      .find((checkbox) => checkbox.value === applicationId);
+    if (known) known.checked = true;
+  } else {
+    renderPrivateManualApplications([...current, applicationId]);
+  }
+  input.value = "";
+  renderPrivateApplicationStatuses(
+    privateApplicationIdsFromControls(),
+    $("#sourceTargetSelect").value || "instance",
+  );
+  input.focus();
+};
+$("#sourcePrivateAppAdd").addEventListener("click", addManualPrivateApplication);
+$("#sourcePrivateAppId").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  addManualPrivateApplication();
+});
+$("#sourcePrivateAppManualList").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-private-app]");
+  if (!button) return;
+  const remaining = privateApplicationIdsFromControls().filter(
+    (applicationId) => applicationId !== button.dataset.removePrivateApp,
+  );
+  renderPrivateManualApplications(remaining);
+  renderPrivateApplicationStatuses(
+    privateApplicationIdsFromControls(),
+    $("#sourceTargetSelect").value || "instance",
+  );
+  $("#sourcePrivateAppId").focus();
+});
 $("#sourceSettingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   formError("sourceSettingsError");
@@ -3537,7 +3875,12 @@ $("#sourceSettingsForm").addEventListener("submit", async (event) => {
   const submit = form.querySelector('button[type="submit"]');
   const { targetType, targetId } = parseOperationalTarget($("#sourceTargetSelect").value);
   const castReceiver = $("#sourceCastReceiver").value.trim();
-  const privateApplicationId = $("#sourcePrivateAppId").value.trim();
+  const privateApplicationIds = privateApplicationIdsFromControls();
+  if ($("#sourcePrivateAppEnabled").checked && privateApplicationIds.length === 0) {
+    formError("sourceSettingsError", "Choisissez au moins une application pour l’Espace privé.");
+    $("#sourcePrivateAppChoices").querySelector("input")?.focus();
+    return;
+  }
   const items = [
     {
       kind: "airplay",
@@ -3574,7 +3917,8 @@ $("#sourceSettingsForm").addEventListener("submit", async (event) => {
       label: $("#sourcePrivateAppLabel").value.trim(),
       configuration: {
         adapter: "unsupported",
-        ...(privateApplicationId ? { applicationId: privateApplicationId } : {}),
+        applicationIds: privateApplicationIds,
+        ...(privateApplicationIds[0] ? { applicationId: privateApplicationIds[0] } : {}),
         returnPolicy: "home-on-exit",
       },
     },
@@ -3602,12 +3946,85 @@ $("#sourceSettingsForm").addEventListener("submit", async (event) => {
       configuration: item.configuration,
     })));
     populateSourceSettings();
-    toast(`${payload.sourceCount} sources enregistrées. Les adaptateurs restent à valider sur la TV.`);
+    toast(`${payload.sourceCount} sources enregistrées.`);
   } catch (error) {
     formError("sourceSettingsError", error.message);
   } finally {
     submit.disabled = false;
   }
+});
+$("#privateAccessSave").addEventListener("click", async () => {
+  formError("privateAccessError");
+  const button = $("#privateAccessSave");
+  const targetSelect = $("#sourceTargetSelect");
+  const target = parseOperationalTarget($("#sourceTargetSelect").value || "instance");
+  const current = privateAccessPolicyFor($("#sourceTargetSelect").value || "instance") ?? {};
+  targetSelect.disabled = true;
+  setButtonBusy(button, true, "Enregistrement…");
+  try {
+    const payload = await api.put("private-access", {
+      ...target,
+      enabled: $("#privateAccessEnabled").checked,
+    });
+    upsertPrivateAccessPolicy(safePrivateAccessPolicy(payload, target, {
+      ...current,
+      enabled: $("#privateAccessEnabled").checked,
+    }));
+    populatePrivateAccessSettings($("#sourceTargetSelect").value || "instance");
+    toast($("#privateAccessEnabled").checked
+      ? "Code d’accès activé pour cette cible."
+      : "Code d’accès désactivé pour cette cible.");
+  } catch (error) {
+    formError("privateAccessError", error.message);
+  } finally {
+    setButtonBusy(button, false);
+    targetSelect.disabled = false;
+  }
+});
+$("#privateAccessGenerate").addEventListener("click", async () => {
+  formError("privateAccessError");
+  const selection = $("#sourceTargetSelect").value || "instance";
+  const target = parseOperationalTarget(selection);
+  const current = privateAccessPolicyFor(selection) ?? {};
+  const replacing = Boolean(current.pinConfigured ?? current.pin_configured);
+  if (replacing && !window.confirm(
+    "Remplacer le code actuel ? L’ancien code cessera immédiatement de fonctionner. La TV recevra le nouveau numéro de génération à sa prochaine synchronisation.",
+  )) return;
+  const button = $("#privateAccessGenerate");
+  const targetSelect = $("#sourceTargetSelect");
+  targetSelect.disabled = true;
+  setButtonBusy(button, true, replacing ? "Remplacement…" : "Création…");
+  try {
+    const payload = await api.post("private-access/pin", target);
+    const formatted = formatPrivatePin(payload?.pin);
+    if (!formatted) throw new Error("Le serveur n’a pas renvoyé un code à 6 chiffres.");
+    upsertPrivateAccessPolicy(safePrivateAccessPolicy(payload, target, {
+      ...current,
+      pin_configured: true,
+      pin_generation: payload.generation,
+    }));
+    populatePrivateAccessSettings(selection);
+    showPrivatePinDialog(payload.pin, payload.generation);
+  } catch (error) {
+    formError("privateAccessError", error.message);
+  } finally {
+    setButtonBusy(button, false);
+    targetSelect.disabled = false;
+  }
+});
+$("#copyPrivatePin").addEventListener("click", async () => {
+  const digits = $("#privatePinValue").textContent.replace(/\D/gu, "");
+  if (!/^\d{6}$/u.test(digits)) return;
+  try {
+    await navigator.clipboard.writeText(digits);
+    toast("6 chiffres copiés.");
+  } catch {
+    toast("Copie impossible. Notez le code avant de le masquer.", true);
+  }
+});
+$("#privatePinDialog").addEventListener("close", erasePrivatePin);
+$("#privatePinDialog").addEventListener("cancel", () => {
+  setTimeout(erasePrivatePin, 0);
 });
 $("#powerSettingsForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -3822,6 +4239,30 @@ $("#palette").addEventListener("click", (event) => {
   state.selectedId = node.id;
   renderSurface();
   refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`)?.focus();
+});
+
+$("#nodeAppSelect").addEventListener("change", () => {
+  const node = selectedNode();
+  if (node?.kind !== "app") return;
+  const manual = updateAndroidAppManualVisibility({
+    select: $("#nodeAppSelect"),
+    manualField: $("#nodeAppManualField"),
+    manualInput: $("#nodeAppId"),
+  });
+  const selected = androidTvAppForId($("#nodeAppSelect").value);
+  if (selected) {
+    node.props.label = selected.name;
+    $("#nodeLabel").value = selected.name;
+  } else if (
+    manual
+    && ANDROID_TV_APPS.some((entry) => entry.name === node.props.label)
+  ) {
+    node.props.label = "Application";
+    $("#nodeLabel").value = node.props.label;
+  }
+  updateSelectedProperties();
+  renderNodes();
+  if (manual) $("#nodeAppId").focus();
 });
 
 for (const field of ["Primary", "Accent", "Surface", "Ink", "Muted"]) {
@@ -4204,4 +4645,7 @@ $("#releaseBoard").addEventListener("click", async (event) => {
 
 setInterval(refreshStudioClocks, 15_000);
 setInterval(() => { void refreshFleetState(); }, FLEET_REFRESH_INTERVAL_MS);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearPrivatePinDialog();
+});
 boot();

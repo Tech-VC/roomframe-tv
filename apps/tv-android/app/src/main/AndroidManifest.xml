@@ -8,9 +8,25 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <package android:name="com.google.android.apps.mediashell" />
+        <package android:name="com.android.vending" />
+        <package android:name="com.canal.android.canal" />
+        <package android:name="com.google.android.youtube.tv" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
     </queries>
 
     <application
@@ -97,6 +113,7 @@
             <intent-filter>
                 <action android:name="org.roomframe.tv.maintenance.APPLY_PERSISTENT_HOME" />
                 <action android:name="org.roomframe.tv.maintenance.CLEAR_PERSISTENT_HOME" />
+                <action android:name="org.roomframe.tv.maintenance.READ_RUNTIME_STATUS" />
             </intent-filter>
         </receiver>
 
@@ -105,5 +122,29 @@
             android:exported="false"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />
+
+        <service
+            android:name=".deviceadmin.RoomFrameHomeAccessibilityService"
+            android:description="@string/home_redirect_description"
+            android:exported="true"
+            android:label="@string/home_redirect_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/roomframe_home_accessibility_service" />
+        </service>
+
+        <receiver
+            android:name=".deviceadmin.RoomFrameBootReceiver"
+            android:directBootAware="false"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

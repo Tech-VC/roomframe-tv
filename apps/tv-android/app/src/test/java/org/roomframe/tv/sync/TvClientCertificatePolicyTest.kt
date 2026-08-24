@@ -23,6 +23,27 @@ class TvClientCertificatePolicyTest {
     }
 
     @Test
+    fun `la preuve d activation lie la TV la demande et le certificat pending`() {
+        val deviceId = "11111111-1111-4111-8111-111111111111"
+        val requestId = "22222222-2222-4222-8222-222222222222"
+        val fingerprint = "ab".repeat(32)
+
+        assertArrayEquals(
+            (
+                "roomframe-tv-certificate-activation-v1\n" +
+                    "$deviceId\n" +
+                    "$requestId\n" +
+                    fingerprint
+            ).toByteArray(Charsets.UTF_8),
+            TvClientCertificateStore.activationProofPayload(
+                deviceId,
+                requestId,
+                fingerprint,
+            ),
+        )
+    }
+
+    @Test
     fun `la cle RSA autorise la signature brute demandee par Conscrypt`() {
         assertArrayEquals(
             arrayOf(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA256),

@@ -1,7 +1,10 @@
 package org.roomframe.tv
 
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ApplicationInfo
 import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
@@ -42,10 +45,18 @@ import org.roomframe.tv.sync.TvCertificateProvisioningResult
 import org.roomframe.tv.sync.TvMetricSnapshot
 import org.roomframe.tv.sync.RoomFramePresenceService
 import org.roomframe.tv.sync.TvSyncSchedule
+import org.roomframe.tv.ui.CastWaitingOverlayController
 import org.roomframe.tv.ui.NativeSceneRenderer
+import org.roomframe.tv.ui.PrivateSpaceOverlayController
+import org.roomframe.tv.ui.shouldLockPrivateSessionFromNavigation
+import org.roomframe.tv.ui.SourceMenuOverlayController
+import org.roomframe.tv.deviceadmin.AndroidPrivateApplicationAccessController
 import org.roomframe.tv.update.HttpAppUpdateCoordinator
 import org.roomframe.tv.update.SafeUpdateInstallPolicy
 import org.roomframe.tv.update.UpdateInstallMoment
+
+internal const val EXTRA_LOCK_PRIVATE_SESSION =
+    "org.roomframe.tv.extra.LOCK_PRIVATE_SESSION"
 
 /**
  * Launcher local-first :
@@ -73,7 +84,23 @@ class MainActivity : Activity() {
     private lateinit var store: FileExperienceStore
     private lateinit var repository: ExperienceRepository
     private lateinit var credentialStore: DeviceCredentialStore
+    private lateinit var rootHost: FrameLayout
     private lateinit var sceneHost: FrameLayout
+    private lateinit var overlayHost: FrameLayout
+    private lateinit var castWaitingOverlay: CastWaitingOverlayController
+    private lateinit var sourceMenuOverlay: SourceMenuOverlayController
+    private lateinit var privateSpaceOverlay: PrivateSpaceOverlayController
+    private var screenOffReceiverRegistered = false
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (
+                intent?.action == Intent.ACTION_SCREEN_OFF &&
+                ::privateSpaceOverlay.isInitialized
+            ) {
+                privateSpaceOverlay.lockForScreenOff()
+            }
+        }
+    }
     private var renderedSceneView: View? = null
     @Volatile private var currentSnapshot: ExperienceSnapshot? = null
     @Volatile private var startupDurationMs: Long? = null
@@ -90,14 +117,60 @@ class MainActivity : Activity() {
         }
         store = FileExperienceStore(File(filesDir, "experience"))
         repository = ExperienceRepository(this, store)
+        rootHost = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            clipChildren = false
+            clipToPadding = false
+        }
         sceneHost = FrameLayout(this).apply {
             setBackgroundColor(android.graphics.Color.BLACK)
             clipChildren = false
             clipToPadding = false
         }
-        setContentView(sceneHost)
+        overlayHost = FrameLayout(this).apply {
+            visibility = View.GONE
+            clipChildren = false
+            clipToPadding = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        rootHost.addView(
+            sceneHost,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        rootHost.addView(
+            overlayHost,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        castWaitingOverlay = CastWaitingOverlayController(this, sceneHost, overlayHost)
+        privateSpaceOverlay = PrivateSpaceOverlayController(
+            activity = this,
+            sceneHost = sceneHost,
+            overlayHost = overlayHost,
+            applicationAccess = AndroidPrivateApplicationAccessController(applicationContext),
+            credentials = credentialStore::load,
+            onExitRequested = ::completePrivateExit,
+            onRefreshRequested = ::synchronizeInBackground,
+        )
+        sourceMenuOverlay = SourceMenuOverlayController(
+            activity = this,
+            adapters = adapters,
+            sceneHost = sceneHost,
+            overlayHost = overlayHost,
+            onHomeRequested = ::returnToRoomFrameHome,
+            onPrivateRequested = ::showPrivateSpace,
+            onCastWaitingRequested = ::showCastWaiting,
+        )
+        setContentView(rootHost)
+        registerScreenOffReceiver()
         RoomFramePresenceService.start(applicationContext)
         render(repository.loadPreviouslyVerified() ?: repository.loadBundled())
+        consumeHomeRedirect(intent)
         startupDurationMs = SystemClock.elapsedRealtime() - processStartedAt
         verifyLocalRevisionInBackground()
     }
@@ -115,18 +188,38 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         scheduler.removeCallbacks(periodicSync)
+        if (::castWaitingOverlay.isInitialized) {
+            castWaitingOverlay.dismiss(restoreFocus = false)
+        }
         super.onPause()
     }
 
     override fun onDestroy() {
         scheduler.removeCallbacks(periodicSync)
+        if (::castWaitingOverlay.isInitialized) castWaitingOverlay.release()
+        if (::sourceMenuOverlay.isInitialized) sourceMenuOverlay.release()
+        if (::privateSpaceOverlay.isInitialized) privateSpaceOverlay.release()
+        if (screenOffReceiverRegistered) {
+            unregisterReceiver(screenOffReceiver)
+            screenOffReceiverRegistered = false
+        }
         syncExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent != null) {
+            setIntent(intent)
+            consumeHomeRedirect(intent)
+        }
     }
 
     private fun render(snapshot: ExperienceSnapshot) {
         currentSnapshot = snapshot
         val renderedSnapshot = localDebugBranding(snapshot)
+        sourceMenuOverlay.update(renderedSnapshot)
+        privateSpaceOverlay.update(renderedSnapshot)
         val previous = renderedSceneView
         val preferredFocusNodeId = previous?.findFocus()?.tag as? String
         val renderer = NativeSceneRenderer(
@@ -134,6 +227,11 @@ class MainActivity : Activity() {
             adapters = adapters,
             debugBackground = localDebugBrandingDrawable("background"),
             debugLogo = localDebugBrandingDrawable("logo"),
+            onCastWaitingRequested = { sourceView ->
+                showCastWaiting(sourceView)
+            },
+            onSourceMenuRequested = ::showSourceMenu,
+            onPrivateSpaceRequested = ::showPrivateSpace,
         )
         val next = renderer.render(renderedSnapshot, preferredFocusNodeId)
         renderedSceneView = next
@@ -430,6 +528,32 @@ class MainActivity : Activity() {
             lastUserInteractionAt = SystemClock.elapsedRealtime()
             userInteractedSinceStartup = true
         }
+        if (
+            ::privateSpaceOverlay.isInitialized &&
+            privateSpaceOverlay.handleKeyEvent(event)
+        ) {
+            return true
+        }
+        if (
+            ::sourceMenuOverlay.isInitialized &&
+            sourceMenuOverlay.isVisible &&
+            event.keyCode == KeyEvent.KEYCODE_BACK
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                sourceMenuOverlay.dismiss()
+            }
+            return true
+        }
+        if (
+            ::castWaitingOverlay.isInitialized &&
+            castWaitingOverlay.isVisible &&
+            event.keyCode == KeyEvent.KEYCODE_BACK
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                castWaitingOverlay.dismiss()
+            }
+            return true
+        }
         if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 okDownAt = System.currentTimeMillis()
@@ -452,6 +576,79 @@ class MainActivity : Activity() {
             }
         }
         return super.dispatchKeyEvent(event)
+    }
+
+    private fun showSourceMenu(sourceView: View) {
+        castWaitingOverlay.dismiss(restoreFocus = false)
+        privateSpaceOverlay.lockForHome()
+        sourceMenuOverlay.show(sourceView)
+    }
+
+    private fun showPrivateSpace(sourceView: View) {
+        castWaitingOverlay.dismiss(restoreFocus = false)
+        sourceMenuOverlay.dismiss(restoreFocus = false)
+        privateSpaceOverlay.show(sourceView)
+    }
+
+    private fun showCastWaiting(sourceView: View) {
+        sourceMenuOverlay.dismiss(restoreFocus = false)
+        privateSpaceOverlay.lockForHome()
+        val displayed = currentSnapshot?.let(::localDebugBranding) ?: return
+        castWaitingOverlay.show(
+            sourceView = sourceView,
+            branding = displayed.branding,
+            tvDisplayName = displayed.deviceIdentity?.displayName
+                ?: displayed.branding.displayName,
+        )
+    }
+
+    private fun returnToRoomFrameHome() {
+        castWaitingOverlay.dismiss(restoreFocus = false)
+        sourceMenuOverlay.dismiss(restoreFocus = false)
+        privateSpaceOverlay.lockForHome()
+        renderedSceneView?.post {
+            renderedSceneView?.findFocus()?.clearFocus()
+            renderedSceneView?.let(::firstFocusableDescendant)?.requestFocus()
+        }
+    }
+
+    private fun firstFocusableDescendant(view: View): View? {
+        if (view.visibility == View.VISIBLE && view.isFocusable) return view
+        if (view !is ViewGroup) return null
+        for (index in 0 until view.childCount) {
+            firstFocusableDescendant(view.getChildAt(index))?.let { return it }
+        }
+        return null
+    }
+
+    private fun completePrivateExit() {
+        castWaitingOverlay.dismiss(restoreFocus = false)
+        sourceMenuOverlay.dismiss(restoreFocus = false)
+    }
+
+    private fun consumeHomeRedirect(intent: Intent) {
+        val explicitRedirect = intent.getBooleanExtra(EXTRA_LOCK_PRIVATE_SESSION, false)
+        if (
+            !shouldLockPrivateSessionFromNavigation(
+                action = intent.action,
+                hasHomeCategory = intent.hasCategory(Intent.CATEGORY_HOME),
+                explicitHomeRedirect = explicitRedirect,
+            )
+        ) return
+        intent.removeExtra(EXTRA_LOCK_PRIVATE_SESSION)
+        if (::privateSpaceOverlay.isInitialized) returnToRoomFrameHome()
+    }
+
+    private fun registerScreenOffReceiver() {
+        if (screenOffReceiverRegistered) return
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(screenOffReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(screenOffReceiver, filter)
+        }
+        screenOffReceiverRegistered = true
     }
 
     private companion object {

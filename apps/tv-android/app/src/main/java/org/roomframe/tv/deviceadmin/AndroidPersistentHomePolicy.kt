@@ -14,6 +14,8 @@ class AndroidPersistentHomePolicy private constructor(
 ) {
     fun ensureApplied(): PersistentHomePolicyResult = policy.ensureApplied()
 
+    fun isDeviceOwner(): Boolean = policy.isDeviceOwner()
+
     /**
      * Controlled maintenance hook. It intentionally does not remove Device
      * Owner and does not alter any other policy.

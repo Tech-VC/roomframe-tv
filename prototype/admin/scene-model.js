@@ -15,6 +15,7 @@ const ALLOWED_PROPS = {
   app: new Set(["applicationId", "label", "iconAssetId"]),
   network: new Set(["label", "value"]),
 };
+const ANDROID_APPLICATION_ID = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 const numberInRange = (value, fallback, min, max) => {
   const number = Number(value);
@@ -51,9 +52,7 @@ export const DEFAULT_SCENE = Object.freeze({
   nodes: [
     { id: "greeting", kind: "text", x: 90, y: 170, width: 1000, height: 220, zIndex: 20, focusOrder: 0, props: { role: "greeting", text: "Bonjour,\nBienvenue en salle de réunion 1", fontScale: 1, maxLines: 2 } },
     { id: "clock-weather", kind: "clock", x: 1210, y: 50, width: 610, height: 110, zIndex: 20, focusOrder: 0, props: { showDate: true, showWeather: true, format: "24h" } },
-    { id: "airplay", kind: "source", x: 90, y: 420, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "airplay", label: "AirPlay" } },
-    { id: "cast", kind: "source", x: 90, y: 560, width: 410, height: 125, zIndex: 20, focusOrder: 2, props: { source: "cast", label: "Cast" } },
-    { id: "hdmi", kind: "source", x: 90, y: 700, width: 410, height: 125, zIndex: 20, focusOrder: 3, props: { source: "hdmi", label: "HDMI", physicalInput: "auto" } },
+    { id: "sources", kind: "source", x: 90, y: 520, width: 410, height: 125, zIndex: 20, focusOrder: 1, props: { source: "menu", label: "Sources" } },
     { id: "messages", kind: "message", x: 1160, y: 285, width: 610, height: 400, zIndex: 20, focusOrder: 0, props: { title: "ACTUALITÉS", feed: "default", maximumItems: 3 } },
     { id: "network", kind: "network", x: 90, y: 970, width: 700, height: 45, zIndex: 20, focusOrder: 0, props: { label: "RÉSEAU", value: "À CONFIGURER DANS L’ADMINISTRATION" } },
     { id: "logo", kind: "logo", x: 1505, y: 850, width: 285, height: 145, zIndex: 30, focusOrder: 0, props: { asset: "assets/logo-placeholder.png", fit: "contain", anchor: "bottom-right", alt: "Logo" } },
@@ -150,6 +149,9 @@ export const validateScene = (scene) => {
         throw new Error(`Choisissez une suggestion valide pour l’objet « ${node.props.label || "Météo"} ».`);
       }
     }
+    if (node.kind === "app" && !ANDROID_APPLICATION_ID.test(node.props.applicationId ?? "")) {
+      throw new Error(`Choisissez une application valide pour l’objet « ${node.props.label || "Application"} ».`);
+    }
   }
   return normalized;
 };
@@ -161,8 +163,14 @@ export const createNode = (kind, source = null) => {
   if (safeKind === "clock") Object.assign(props, { showDate: true, showWeather: false, format: "24h" });
   if (safeKind === "weather") Object.assign(props, { label: "Météo", location: "", units: "metric" });
   if (safeKind === "message") Object.assign(props, { title: "ACTUALITÉS", feed: "default", maximumItems: 3 });
-  if (safeKind === "source") Object.assign(props, { source: source || "hdmi", label: (source || "source").toUpperCase() });
-  if (safeKind === "app") Object.assign(props, { applicationId: "org.roomframe.privateapp", label: "Application privée" });
+  if (safeKind === "source") {
+    const sourceKind = source || "hdmi";
+    Object.assign(props, {
+      source: sourceKind,
+      label: sourceKind === "menu" ? "Sources" : sourceKind.toUpperCase(),
+    });
+  }
+  if (safeKind === "app") Object.assign(props, { applicationId: "", label: "Application" });
   if (safeKind === "network") Object.assign(props, { label: "RÉSEAU", value: "INFORMATION LOCALE" });
   if (safeKind === "logo") Object.assign(props, { asset: "assets/logo-placeholder.png", fit: "contain", anchor: "bottom-right", alt: "Logo" });
   if (safeKind === "image") Object.assign(props, { assetId: null, fit: "contain", focalX: .5, focalY: .5, alt: "" });

@@ -2,8 +2,8 @@
   "formatVersion": 1,
   "kind": "experience-template",
   "bundleId": "org.roomframe.default-experience",
-  "version": "1.0.0",
-  "createdAt": "2026-07-24T00:00:00Z",
+  "version": "1.1.0",
+  "createdAt": "2026-08-24T00:00:00Z",
   "seedPolicy": {
     "onlyWhenInstanceEmpty": true,
     "neverOverwriteExistingInstance": true
@@ -42,8 +42,8 @@
     },
     {
       "path": "layout.json",
-      "sha256": "093b5e3dfeee59c4068407bd062d0faacc65384b1e1c38001792c9d0977045f4",
-      "size": 2452
+      "sha256": "3b6e9aaae4dc8197d01d35923c464d77c4b81d94742ef7a0ad8af0fe3e8d77a9",
+      "size": 2017
     },
     {
       "path": "schedule.json",

@@ -4,7 +4,8 @@ private const val HARDWARE_NOT_VALIDATED = "Intégration matérielle non validé
 
 object UnsupportedHdmiAdapter : HdmiAdapter {
     override val capability = CapabilityState.UNSUPPORTED
-    override fun activate(): AdapterResult = AdapterResult.Unavailable(HARDWARE_NOT_VALIDATED)
+    override fun activate(physicalInput: String?): AdapterResult =
+        AdapterResult.Unavailable(HARDWARE_NOT_VALIDATED)
     override fun signalState(): HdmiSignalState = HdmiSignalState.UNKNOWN
 }
 

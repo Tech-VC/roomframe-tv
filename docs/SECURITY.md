@@ -222,6 +222,20 @@ Les téléchargements d’une TV sont limités aux assets de sa scène. Les
 métriques et événements acceptent des champs et types fermés, des tailles
 bornées et une rétention de 90 jours par défaut.
 
+Le code de l'Espace privé est un contrôle distinct du code d'installation. Il
+comporte six chiffres, n'est rendu qu'une fois à l'administrateur et n'est
+jamais livré dans un document de synchronisation. PostgreSQL conserve
+uniquement un sel aléatoire et un dérivé lent. La validation exige le certificat
+client et la clé rotative de la TV ; les échecs sont comptés par TV et
+persistés afin qu'un redémarrage de l'API ne contourne pas le blocage. Après
+cinq erreurs, le serveur refuse temporairement les nouvelles tentatives. Une
+rotation incrémente la génération et invalide l'ancien code sans l'inscrire
+dans l'audit.
+
+L'état d'applications remonté par une TV est limité à l'allowlist effective de
+son Espace privé. L'API refuse tout identifiant supplémentaire : cette route ne
+doit jamais devenir un inventaire général des applications installées.
+
 Lors de l’enrôlement, l’APK génère une clé RSA 2048 bits dans Android Keystore.
 La clé privée n’est pas exportable. La TV envoie seulement sa clé publique SPKI
 et une signature de la clé d’enrôlement et de son UUID. L’API vérifie cette
@@ -242,6 +256,19 @@ opération Caddy : une suppression configurée en parallèle serait appliquée
 après le remplacement et effacerait l’attestation. L’API exige ensuite que
 cette empreinte appartienne à l’UUID et à la clé rotative présentés. Après
 activation par la TV, une requête sans le certificat individuel est refusée.
+La seule exception est la lecture de récupération du certificat public : elle
+exige toujours l’UUID et la clé longue valides, ainsi qu’un certificat de
+remplacement déjà en attente et l'absence de certificat actif côté serveur.
+L'APK conserve le mTLS normal en premier choix et ne tente le repli qu'après un
+401. Sur ce GET uniquement, une ancienne empreinte
+encore attachée par un firmware peut être ignorée afin que la TV installe puis
+présente la nouvelle empreinte. L'activation possède un repli distinct et
+borné : si aucun certificat actif n'existe encore, une signature RSA de la clé
+Android Keystore peut promouvoir uniquement la demande en attente, non expirée,
+dont l'UUID et l'empreinte sont inclus dans le payload canonique. Le serveur
+revérifie la clé publique SPKI enregistrée et efface le pending dans la même
+transaction, ce qui interdit le rejeu. Cette preuve ne s'applique ni à la
+synchronisation, ni aux métriques, ni au heartbeat, ni au renouvellement.
 
 Le renouvellement commence 30 jours avant l’expiration et conserve l’ancien
 certificat actif jusqu’à la confirmation du nouveau. La révocation

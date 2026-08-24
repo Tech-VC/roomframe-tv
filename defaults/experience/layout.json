@@ -46,43 +46,17 @@
       }
     },
     {
-      "id": "airplay",
+      "id": "sources",
       "kind": "source",
       "x": 90,
-      "y": 420,
+      "y": 520,
       "width": 410,
       "height": 125,
       "zIndex": 20,
+      "focusOrder": 1,
       "props": {
-        "source": "airplay",
-        "label": "AirPlay"
-      }
-    },
-    {
-      "id": "cast",
-      "kind": "source",
-      "x": 90,
-      "y": 560,
-      "width": 410,
-      "height": 125,
-      "zIndex": 20,
-      "props": {
-        "source": "cast",
-        "label": "Cast"
-      }
-    },
-    {
-      "id": "hdmi",
-      "kind": "source",
-      "x": 90,
-      "y": 700,
-      "width": 410,
-      "height": 125,
-      "zIndex": 20,
-      "props": {
-        "source": "hdmi",
-        "label": "HDMI",
-        "physicalInput": "auto"
+        "source": "menu",
+        "label": "Sources"
       }
     },
     {

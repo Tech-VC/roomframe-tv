@@ -8,7 +8,7 @@ class SimulatedHdmiAdapter(
     private var signal: HdmiSignalState = HdmiSignalState.NO_SIGNAL,
 ) : HdmiAdapter {
     override val capability = CapabilityState.SUPPORTED
-    override fun activate(): AdapterResult =
+    override fun activate(physicalInput: String?): AdapterResult =
         if (signal == HdmiSignalState.ACTIVE) AdapterResult.Success
         else AdapterResult.Unavailable("Simulation : aucun signal HDMI")
 

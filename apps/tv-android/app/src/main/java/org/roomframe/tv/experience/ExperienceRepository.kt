@@ -9,10 +9,13 @@ import org.roomframe.tv.cache.ExperienceStore
 
 data class ExperienceSnapshot(
     val revisionId: String,
+    val deviceIdentity: DeviceIdentityDocument?,
     val scene: SceneDocument,
     val branding: BrandingDocument,
     val messages: List<MessageDocument>,
     val weather: WeatherDocument,
+    val sources: SourceSettingsDocument,
+    val privateAccess: PrivateAccessDocument,
     val assets: ExperienceAssetIndex,
     val bundled: Boolean,
 )
@@ -124,13 +127,22 @@ class ExperienceRepository(
     }
 
     private fun loadRevision(active: ActiveRevision): ExperienceSnapshot {
+        val deviceFile = File(active.directory, "device.json")
         val sceneBytes = readBounded(File(active.directory, "scene.json"), "scene")
         val brandingFile = File(active.directory, "branding.json")
         val messagesFile = File(active.directory, "messages.json")
         val weatherFile = File(active.directory, "weather.json")
+        val sourcesFile = File(active.directory, "sources.json")
+        val privateAccessFile = listOf(
+            File(active.directory, "private-access.json"),
+            File(active.directory, "privateAccess.json"),
+        ).firstOrNull(File::isFile)
         val manifestBytes = readBounded(File(active.directory, "manifest.json"), "manifest")
         return ExperienceSnapshot(
             revisionId = active.revisionId,
+            deviceIdentity = ExperienceDocumentParser.parseDeviceIdentity(
+                deviceFile.takeIf(File::isFile)?.let { readBounded(it, "device") },
+            ),
             scene = ExperienceDocumentParser.parseScene(sceneBytes),
             branding = ExperienceDocumentParser.parseBranding(
                 brandingFile.takeIf(File::isFile)?.let { readBounded(it, "branding") },
@@ -140,6 +152,14 @@ class ExperienceRepository(
             ),
             weather = ExperienceDocumentParser.parseWeather(
                 weatherFile.takeIf(File::isFile)?.let { readBounded(it, "weather") },
+            ),
+            sources = ExperienceDocumentParser.parseSources(
+                sourcesFile.takeIf(File::isFile)?.let { readBounded(it, "sources") },
+            ),
+            privateAccess = ExperienceDocumentParser.parsePrivateAccess(
+                privateAccessFile?.let {
+                    readBounded(it, "private-access")
+                },
             ),
             assets = ExperienceAssetIndex.fromRevision(active.directory, manifestBytes),
             bundled = false,
@@ -151,10 +171,13 @@ class ExperienceRepository(
         val messageBytes = context.assets.open("default-experience/content.json").use { it.readBytes() }
         return ExperienceSnapshot(
             revisionId = "bundled-default-1.0.0",
+            deviceIdentity = null,
             scene = ExperienceDocumentParser.parseScene(sceneBytes),
             branding = BrandingDocument(),
             messages = ExperienceDocumentParser.parseMessages(messageBytes),
             weather = WeatherDocument(),
+            sources = SourceSettingsDocument(),
+            privateAccess = PrivateAccessDocument(),
             assets = ExperienceAssetIndex.empty(),
             bundled = true,
         )

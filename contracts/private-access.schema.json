@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://roomframe.example/schemas/private-access.schema.json",
+  "title": "RoomFrame private application access policy",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "enabled",
+    "pinConfigured",
+    "generation",
+    "maxAttempts",
+    "lockoutSeconds"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "enabled": {"type": "boolean"},
+    "pinConfigured": {"type": "boolean"},
+    "generation": {"type": "integer", "minimum": 0},
+    "maxAttempts": {"const": 5},
+    "lockoutSeconds": {"const": 60}
+  },
+  "additionalProperties": false
+}

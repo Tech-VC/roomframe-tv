@@ -187,6 +187,14 @@ reste indépendante de la résolution 4K/HDR des applications natives ouvertes.
 L’horloge peut inclure la date, et un objet message sans contenu actif n’ajoute
 aucun panneau vide au rendu.
 
+Le menu Sources et l'Espace privé sont des overlays Android opaques et
+réutilisables : ils ne reconstruisent pas la scène et n'effectuent aucun appel
+réseau pendant la navigation D-pad. Seule la validation du code privé appelle
+le serveur local. La liste d'applications vient de `sources.json`, tandis que
+`private-access.json` ne transporte que les métadonnées de politique. Cette
+séparation permet de faire évoluer plus tard le fournisseur d'installation
+sans mêler un secret de contrôle d'accès à la composition de scène.
+
 Après la synchronisation d’expérience, le client peut récupérer une mise à
 jour APK affectée. Il vérifie l’artefact et utilise `PackageInstaller`
 uniquement derrière `AppUpdateAdapter`; l’installation silencieuse reste

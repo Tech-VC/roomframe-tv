@@ -35,8 +35,10 @@ class PersistentHomePolicy(
     private val target: HomeActivity,
     private val port: PersistentHomePolicyPort,
 ) {
+    fun isDeviceOwner(): Boolean = port.isDeviceOwner(packageName)
+
     fun ensureApplied(): PersistentHomePolicyResult {
-        if (!port.isDeviceOwner(packageName)) {
+        if (!isDeviceOwner()) {
             return PersistentHomePolicyResult.NOT_DEVICE_OWNER
         }
         if (port.resolveHomeActivity() == target) {
@@ -53,7 +55,7 @@ class PersistentHomePolicy(
     }
 
     fun clearForMaintenance(): PersistentHomePolicyResult {
-        if (!port.isDeviceOwner(packageName)) {
+        if (!isDeviceOwner()) {
             return PersistentHomePolicyResult.NOT_DEVICE_OWNER
         }
         return runCatching {
