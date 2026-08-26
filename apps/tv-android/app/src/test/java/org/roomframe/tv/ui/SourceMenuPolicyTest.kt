@@ -10,6 +10,20 @@ import org.roomframe.tv.experience.SourceSettingsDocument
 
 class SourceMenuPolicyTest {
     @Test
+    fun `canonical source tile opens the RoomFrame selector`() {
+        assertEquals(true, shouldOpenRoomFrameSourceMenu("menu", "Sources"))
+        assertEquals(true, shouldOpenRoomFrameSourceMenu("sources", null))
+    }
+
+    @Test
+    fun `legacy tile labelled Sources opens RoomFrame instead of the hardware selector`() {
+        assertEquals(true, shouldOpenRoomFrameSourceMenu("hdmi", "Sources"))
+        assertEquals(true, shouldOpenRoomFrameSourceMenu("airplay", "  sources  "))
+        assertEquals(false, shouldOpenRoomFrameSourceMenu("hdmi", "HDMI 3"))
+        assertEquals(false, shouldOpenRoomFrameSourceMenu("private-app", "Sources"))
+    }
+
+    @Test
     fun `menu stays concise and orders home sources then private space`() {
         val sources = SourceSettingsDocument(
             mapOf(

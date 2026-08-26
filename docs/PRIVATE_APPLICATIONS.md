@@ -15,6 +15,11 @@ Les anciennes tuiles Cast, AirPlay et HDMI restent acceptées afin de ne pas
 casser les scènes publiées. Le menu Sources est opaque : aucune partie de la
 scène ne doit rester lisible derrière lui.
 
+Pour préserver une scène historique déjà renommée dans le Studio, toute tuile
+explicitement libellée **Sources** ouvre également le menu RoomFrame, même si
+elle transporte encore un ancien type matériel. Une tuile conservant un
+libellé comme **HDMI 3**, **Cast** ou **AirPlay** reste un raccourci direct.
+
 Les nouveaux modèles et le secours embarqué dans l’APK utilisent ce menu.
 Une mise à jour ne transforme jamais silencieusement une scène déjà publiée :
 remplacez ses anciennes tuiles par **Sources** depuis Surface, puis enregistrez

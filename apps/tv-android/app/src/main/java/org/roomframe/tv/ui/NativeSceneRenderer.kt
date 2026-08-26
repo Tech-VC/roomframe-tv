@@ -349,7 +349,7 @@ class NativeSceneRenderer(
             compoundDrawablePadding = scenePx(18f).roundToInt()
             applyInteractiveStyle(node, tintIcon = brandedIcon == null)
             setOnClickListener {
-                if (source == "menu") {
+                if (shouldOpenRoomFrameSourceMenu(source, node.properties.label)) {
                     onSourceMenuRequested(this)
                     return@setOnClickListener
                 }

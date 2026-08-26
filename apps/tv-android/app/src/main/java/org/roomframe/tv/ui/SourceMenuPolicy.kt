@@ -17,6 +17,20 @@ internal data class SourceMenuEntry(
     val label: String,
 )
 
+/**
+ * Les scènes récentes utilisent la valeur canonique `menu`. Certaines scènes
+ * déjà publiées ont toutefois conservé une ancienne source matérielle tout en
+ * renommant visuellement la tuile en « Sources ». Dans ce cas précis, le
+ * libellé exprime sans ambiguïté l'intention de l'administrateur : ouvrir le
+ * menu RoomFrame, jamais le sélecteur constructeur.
+ */
+internal fun shouldOpenRoomFrameSourceMenu(source: String?, label: String?): Boolean {
+    val normalizedSource = source?.trim()?.lowercase().orEmpty()
+    if (normalizedSource in setOf("menu", "sources")) return true
+    if (normalizedSource == "private-app") return false
+    return label?.trim()?.equals("Sources", ignoreCase = true) == true
+}
+
 internal fun sourceMenuEntries(snapshot: ExperienceSnapshot): List<SourceMenuEntry> =
     sourceMenuEntries(snapshot.sources, snapshot.privateAccess)
 
