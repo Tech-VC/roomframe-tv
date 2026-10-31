@@ -6,9 +6,11 @@ import rateLimit from '@fastify/rate-limit';
 import { registerAccountSecurityRoutes } from './account-security-routes.mjs';
 import { registerBootstrapAuthRoutes } from './bootstrap-auth-routes.mjs';
 import { createPool } from './database.mjs';
+import { isMalformedMultipartError } from './multipart-errors.mjs';
 import { loadVerifiedDefaultExperience } from './seed.mjs';
 import { registerStudioRoutes } from './studio-routes.mjs';
 import { registerUserRoutes } from './user-routes.mjs';
+import { createTrustedProxy } from './trusted-proxy.mjs';
 import { createValidators } from './validation.mjs';
 import { registerWeatherRoutes } from './weather-routes.mjs';
 
@@ -46,9 +48,9 @@ export const buildApp = async ({ config, logger = true }) => {
       },
     } : false,
     bodyLimit: 1024 * 1024,
-    // Caddy est l'unique proxy devant l'API. Ne faire confiance qu'à ce saut
-    // évite qu'un client du LAN forge sa provenance via X-Forwarded-For.
-    trustProxy: 1,
+    // Caddy est le seul saut admis. Valider aussi l'adresse de son réseau
+    // privé : les versions récentes de Fastify refusent trustProxy: 1.
+    trustProxy: createTrustedProxy(config.trustedProxyCidrs),
     requestIdHeader: false,
     genReqId: () => crypto.randomUUID(),
   });
@@ -150,7 +152,10 @@ export const buildApp = async ({ config, logger = true }) => {
     app.setErrorHandler((error, request, reply) => {
       let status = Number(error.statusCode ?? 500);
       let code = error.message ?? 'internal_error';
-      if (error.code === '23505') {
+      if (isMalformedMultipartError(error)) {
+        status = 400;
+        code = 'invalid_multipart';
+      } else if (error.code === '23505') {
         status = 409;
         code = 'conflict';
       } else if (

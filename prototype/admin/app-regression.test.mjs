@@ -99,7 +99,7 @@ test("la bibliothèque de scènes sépare chargement, copie et affectation publi
   assert.match(markup, /id="sceneAssignmentForm"/);
   assert.match(source, /api\.post\("scenes", \{ name, scene \}\)/);
   assert.match(source, /api\.put\("scene-assignments"/);
-  assert.match(source, /studio\?sceneId=/);
+  assert.match(source, /loadWorkspacePayload\(api, sessionHasPermission, sceneId\)/);
   assert.match(markup, /les modifications non enregistrées seront perdues/);
   assert.match(markup, /id="automaticReleaseSource"/);
   assert.match(source, /state\.releaseSource = payload\.source \?\? null/);

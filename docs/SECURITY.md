@@ -23,6 +23,17 @@ Philips Android TV 12 de validation.
 
 ## Secrets de l’instance
 
+L’API ne publie aucun port sur l’hôte. Pour les en-têtes `X-Forwarded-*`, elle
+valide l’adresse du pair immédiat et n’accepte qu’un seul saut de proxy.
+`ROOMFRAME_TRUSTED_PROXY_CIDRS` permet de restreindre cette confiance aux
+adresses ou sous-réseaux de Caddy, séparés par des virgules. La valeur par
+défaut `loopback,uniquelocal` couvre le réseau Docker privé de l’installation.
+Elle ne doit pas servir à exposer directement l’API sur un LAN partagé :
+dans une topologie personnalisée, indiquer les seuls CIDR de Caddy.
+La forme numérique `trustProxy: 1` est désactivée par Fastify depuis 5.12.1 ;
+elle ne doit pas être réintroduite, sous peine de regrouper toutes les
+adresses clientes derrière celle du proxy.
+
 L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 
 - `postgres_password` ;
