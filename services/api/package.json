@@ -27,7 +27,7 @@
     "file-type": "22.0.1",
     "pg": "8.22.0",
     "semver": "7.8.5",
-    "sharp": "0.35.3",
+    "sharp": "0.35.5",
     "yauzl": "3.4.0"
   },
   "devDependencies": {
