@@ -14,7 +14,9 @@ import {
   weatherReadingForNode,
 } from "./scene-model.js?v=0.3.0-ui26";
 import { paletteFromRgba } from "./logo-palette.js?v=0.3.0-ui19";
-import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui15";
+import { ApiError, readApiResponse } from "./api-client.js?v=0.3.0-ui27";
+import { publicationBlockReason, sceneFingerprint } from "./scene-workflow.js?v=0.3.0-ui27";
+import { loadWorkspacePayload, viewIsAllowed } from "./workspace-loader.js?v=0.3.0-ui27";
 import { enrollmentCodePresentation } from "./enrollment-code.js?v=0.3.0-ui20";
 import {
   ANDROID_TV_APPS,
@@ -260,8 +262,7 @@ const setStatus = (kind, text, retry = false) => {
 
 const setBusy = (busy) => {
   refs.app.setAttribute("aria-busy", String(busy));
-  $("#saveButton").disabled = busy || Boolean(state.preview);
-  $("#publishButton").disabled = busy || Boolean(state.preview);
+  updateSceneActions();
 };
 
 const setButtonBusy = (button, busy, busyLabel = "En cours…") => {
@@ -283,7 +284,6 @@ const setButtonBusy = (button, busy, busyLabel = "En cours…") => {
   button.removeAttribute("aria-busy");
 };
 
-const sceneFingerprint = (scene) => (scene ? JSON.stringify(scene) : null);
 const hasUnsavedSceneChanges = () => (
   Boolean(state.scene)
   && state.savedSceneFingerprint !== sceneFingerprint(state.scene)
@@ -292,6 +292,26 @@ const confirmSceneDiscard = () => (
   !hasUnsavedSceneChanges()
   || window.confirm("Les modifications non enregistrées seront perdues. Continuer ?")
 );
+
+const updateSceneActions = () => {
+  const busy = refs.app.getAttribute("aria-busy") === "true";
+  const editable = Boolean(state.scene) && !state.preview && sessionHasPermission("studio:write");
+  const reason = publicationBlockReason({
+    scene: state.scene,
+    revision: state.currentRevisionId,
+    savedFingerprint: state.savedSceneFingerprint,
+  });
+  $("#saveButton").disabled = busy || !editable;
+  $("#publishButton").disabled = busy || !editable || Boolean(reason);
+  $("#publishButton").title = reason ?? "Publier la révision enregistrée";
+  if (!state.preview && state.scene) {
+    refs.stageMeta.textContent = `1920 × 1080 · ${
+      hasUnsavedSceneChanges() ? "modifications non enregistrées"
+        : state.currentRevisionId ? `révision ${state.currentRevisionId} enregistrée`
+          : "brouillon non enregistré"
+    }`;
+  }
+};
 
 const showGate = (panel) => {
   clearPrivatePinDialog();
@@ -370,6 +390,7 @@ const showPrivatePinDialog = (pin, generation) => {
 };
 
 const switchView = (view, { focus = false } = {}) => {
+  if (!viewIsAllowed(view, sessionHasPermission)) return;
   const panel = $(`#view-${view}`);
   const button = $(`.section[data-view="${view}"]`);
   if (!panel || !button) return;
@@ -458,25 +479,45 @@ const enterStudio = async () => {
     state.session = await api.get("auth/session");
   }
   hideGate();
+  applyWorkspacePermissions();
   renderSecurity();
   await loadStudio();
   await loadSecurityState();
   switchView("home");
 };
 
+const applyWorkspacePermissions = () => {
+  for (const button of $$(".section, [data-go-view]")) {
+    const view = button.dataset.view ?? button.dataset.goView;
+    button.classList.toggle("hidden", !viewIsAllowed(view, sessionHasPermission));
+  }
+  const forms = {
+    enrollmentForm: 'fleet:write', sourceSettingsForm: 'fleet:write',
+    powerSettingsForm: 'fleet:write', sceneAssignmentForm: 'fleet:write',
+    sceneScheduleForm: 'studio:write', mediaForm: 'media:write',
+    messageForm: 'messages:write', brandForm: 'instance:write',
+    releaseForm: 'releases:write', serverUpdateForm: 'releases:write',
+    serverUpdatePolicyForm: 'releases:write', deploymentForm: 'deployments:write',
+  };
+  for (const [id, permission] of Object.entries(forms)) {
+    if (sessionHasPermission(permission)) continue;
+    $$('input, select, textarea, button', $(`#${id}`)).forEach((control) => { control.disabled = true; });
+  }
+};
+
 const loadStudio = async (sceneId = null) => {
   setBusy(true);
   setStatus("loading", "Chargement de la régie…");
   try {
-    const payload = await api.get(
-      sceneId ? `studio?sceneId=${encodeURIComponent(sceneId)}` : "studio",
-    );
+    const payload = await loadWorkspacePayload(api, sessionHasPermission, sceneId);
     applyBranding(payload.instance ?? state.bootstrapStatus?.identity ?? {});
     state.persistedIdentity = structuredClone(state.instance);
     const sourceScene = payload.scene?.document ?? payload.scene ?? payload.draft?.scene ?? payload.currentRevision?.scene ?? payload.layout;
-    state.scene = normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE));
+    state.scene = sessionHasPermission("studio:read")
+      ? normalizeScene(sourceScene ?? cloneScene(DEFAULT_SCENE))
+      : null;
     state.savedSceneFingerprint = sceneFingerprint(state.scene);
-    state.sceneId = payload.scene?.id ?? state.scene.layoutId;
+    state.sceneId = payload.scene?.id ?? state.scene?.layoutId ?? null;
     state.currentRevisionId = payload.scene?.currentRevision ?? payload.currentRevisionId ?? payload.draft?.revision ?? payload.currentRevision?.revision ?? null;
     state.scenes = Array.isArray(payload.scenes) ? payload.scenes : [];
     state.sceneAssignments = Array.isArray(payload.sceneAssignments) ? payload.sceneAssignments : [];
@@ -517,18 +558,20 @@ const loadStudio = async (sceneId = null) => {
     state.weather = payload.weather ?? null;
     state.preview = null;
     state.previewSelection = "";
-    state.selectedId = state.scene.nodes[0]?.id ?? null;
+    state.selectedId = state.scene?.nodes[0]?.id ?? null;
     state.studioLoaded = true;
     renderStudio();
-    setStatus("ok", sourceScene ? "Régie synchronisée avec l’API" : "Instance vide · scène locale prête à enregistrer");
+    setStatus("ok", !sessionHasPermission("studio:read") ? "Espace chargé selon vos autorisations"
+      : sourceScene ? "Régie synchronisée avec l’API" : "Instance vide · scène locale prête à enregistrer");
   } catch (error) {
-    state.studioLoaded = false;
-    state.scene = null;
-    state.savedSceneFingerprint = null;
-    state.preview = null;
-    state.previewSelection = "";
-    renderStudio();
-    setStatus("error", `Chargement du studio impossible : ${error.message}`, true);
+    if (!state.studioLoaded) {
+      state.scene = null;
+      state.savedSceneFingerprint = null;
+      state.preview = null;
+      state.previewSelection = "";
+      renderStudio();
+    }
+    setStatus("error", `Chargement du studio impossible : ${error.message} Affichage précédent conservé.`, true);
   } finally {
     setBusy(false);
   }
@@ -544,21 +587,26 @@ const selectedNode = () => (
 
 const applyPreviewMode = () => {
   const previewing = Boolean(state.preview);
+  const readOnly = previewing || !state.scene || !sessionHasPermission("studio:write");
   for (const control of [
     refs.sceneName,
     refs.greetingInput,
     refs.backgroundBlur,
     $("#backgroundFile"),
     $("#deleteNodeButton"),
+    $("#sceneCloneButton"),
+    $("#sceneCloneName"),
   ]) {
-    control.disabled = previewing;
+    control.disabled = readOnly;
   }
   $$("[data-fit], [data-add-kind]").forEach((button) => {
-    button.disabled = previewing;
+    button.disabled = readOnly;
+  });
+  $$("#propertiesForm input, #propertiesForm select, #propertiesForm textarea").forEach((control) => {
+    control.disabled = readOnly || (control.id === "nodeLabel" && !nodeSupportsLabel(selectedNode()));
   });
   refs.monitor.classList.toggle("target-preview", previewing);
-  $("#saveButton").disabled = previewing || refs.app.getAttribute("aria-busy") === "true";
-  $("#publishButton").disabled = previewing || refs.app.getAttribute("aria-busy") === "true";
+  updateSceneActions();
 };
 
 const renderSurface = () => {
@@ -597,6 +645,7 @@ const renderStudio = () => {
   renderCollections();
   renderEnrollmentTicket();
   renderReleases();
+  applyWorkspacePermissions();
 };
 
 const renderTargets = () => {
@@ -880,7 +929,7 @@ const renderProperties = () => {
   if (!node) return;
   refs.selectedKind.textContent = node.kind;
   $("#nodeLabel").value = nodeLabel(node);
-  $("#nodeLabel").disabled = !nodeSupportsLabel(node);
+  $("#nodeLabel").disabled = !nodeSupportsLabel(node) || !sessionHasPermission("studio:write");
   const weatherDocument = state.preview?.documents?.weather ?? state.weather;
   $("#nodeText").value = nodeDisplayText(node, weatherDocument);
   $("#nodeTextField").classList.toggle("hidden", ["clock", "weather", "app"].includes(node.kind));
@@ -1413,6 +1462,17 @@ const renderHome = () => {
   $("#homeReleaseDetail").textContent = verifiedReleases === 0
     ? "Aucune version vérifiée"
     : `${verifiedReleases} version${verifiedReleases > 1 ? "s" : ""} vérifiée${verifiedReleases > 1 ? "s" : ""}`;
+  for (const [permission, metric, detail] of [
+    ['fleet:read', 'homeTvMetric', 'homeTvDetail'],
+    ['studio:read', 'homeSceneMetric', 'homeSceneDetail'],
+    ['media:read', 'homeContentMetric', 'homeContentDetail'],
+    ['releases:read', 'homeReleaseMetric', 'homeReleaseDetail'],
+  ]) {
+    if (!sessionHasPermission(permission)) {
+      $(`#${metric}`).textContent = '—';
+      $(`#${detail}`).textContent = 'Accès réservé à un autre rôle';
+    }
+  }
 };
 
 const renderFleet = () => {
@@ -2303,7 +2363,7 @@ const passkeyErrorMessage = (error) => {
     invalid_passkey_response: "La clé d’accès a été refusée.",
     invalid_passkey_challenge: "La demande de clé d’accès a expiré. Recommencez.",
   };
-  return messages[error?.message] ?? error?.message ?? "Impossible d’utiliser la clé d’accès.";
+  return messages[error?.code ?? error?.message] ?? error?.message ?? "Impossible d’utiliser la clé d’accès.";
 };
 
 const renderPasskeys = () => {
@@ -2401,6 +2461,9 @@ const roleLabel = (slug) => (
     owner: "Propriétaire",
     admin: "Administrateur",
     content: "Gestionnaire de contenus",
+    fleet: "Gestionnaire du parc",
+    release: "Gestionnaire des versions",
+    security: "Gestionnaire de sécurité",
     viewer: "Lecture seule",
   }[slug])
   ?? slug
@@ -2574,7 +2637,7 @@ const scenePoint = (event) => {
 
 const beginInteraction = (event) => {
   const element = event.target.closest("[data-node-id]");
-  if (!element || !state.scene || state.preview) return;
+  if (!element || !state.scene || state.preview || !sessionHasPermission("studio:write")) return;
   const node = state.scene.nodes.find((item) => item.id === element.dataset.nodeId);
   if (!node) return;
   event.preventDefault();
@@ -2659,6 +2722,7 @@ const endInteraction = (event) => {
 };
 
 const nudgeSelected = (event) => {
+  if (!sessionHasPermission("studio:write")) return;
   const node = selectedNode();
   if (!node || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Delete", "Backspace"].includes(event.key)) return;
   if (["Delete", "Backspace"].includes(event.key)) {
@@ -2795,16 +2859,19 @@ const selectWeatherSuggestion = async (index) => {
 };
 
 const saveRevision = async () => {
-  if (!state.scene || state.preview) return;
+  if (!state.scene || state.preview || !sessionHasPermission("studio:write")) return;
   const button = $("#saveButton");
   setBusy(true);
   setButtonBusy(button, true, "Enregistrement…");
   try {
     state.scene = validateScene(state.scene);
+    const savedSceneId = state.sceneId;
+    const submittedFingerprint = sceneFingerprint(state.scene);
     const payload = await api.post(`scenes/${encodeURIComponent(state.sceneId ?? state.scene.layoutId)}/revisions`, {
       scene: state.scene,
       baseRevision: state.currentRevisionId,
     });
+    if (state.sceneId !== savedSceneId) return;
     state.currentRevisionId = payload.revision ?? payload.revisionId ?? payload.revision?.id ?? payload.id ?? state.currentRevisionId;
     if (payload.revision) state.revisions.unshift({
       revision: payload.revision,
@@ -2812,7 +2879,7 @@ const saveRevision = async () => {
       createdAt: new Date().toISOString(),
       status: "brouillon",
     });
-    state.savedSceneFingerprint = sceneFingerprint(state.scene);
+    state.savedSceneFingerprint = submittedFingerprint;
     renderSurface();
     toast(`Brouillon enregistré${state.currentRevisionId ? ` · ${state.currentRevisionId}` : ""}.`);
     setStatus("ok", "Brouillon enregistré par l’API");
@@ -2826,11 +2893,17 @@ const saveRevision = async () => {
 };
 
 const publishRevision = async () => {
-  if (!state.scene || state.preview) return;
-  if (!state.currentRevisionId) {
-    toast("Enregistrez d’abord une révision.", true);
+  if (!state.scene || state.preview || !sessionHasPermission("studio:write")) return;
+  const reason = publicationBlockReason({
+    scene: state.scene,
+    revision: state.currentRevisionId,
+    savedFingerprint: state.savedSceneFingerprint,
+  });
+  if (reason) {
+    toast(reason, true);
     return;
   }
+  const publishedSceneId = state.sceneId;
   const button = $("#publishButton");
   setBusy(true);
   setButtonBusy(button, true, "Publication…");
@@ -2841,7 +2914,9 @@ const publishRevision = async () => {
     const count = payload.targetCount ?? payload.deployment?.targetCount;
     toast(count == null ? "Révision publiée par le serveur." : `Révision publiée vers ${count} cible${count > 1 ? "s" : ""}.`);
     setStatus("ok", `Publication atomique confirmée${payload.manifestHash ? ` · ${payload.manifestHash.slice(0, 12)}` : ""}`);
-    await loadStudio(state.sceneId);
+    if (state.sceneId === publishedSceneId && !hasUnsavedSceneChanges()) {
+      await loadStudio(publishedSceneId);
+    }
   } catch (error) {
     toast(`Publication refusée : ${error.message}`, true);
     setStatus("error", `Publication impossible : ${error.message}`, false);
@@ -3062,6 +3137,8 @@ $("#passkeyRevokeForm").addEventListener("submit", async (event) => {
 $("#sessionList").addEventListener("click", async (event) => {
   const button = event.target.closest("[data-session-revoke]");
   if (!button) return;
+  const currentSession = state.securitySessions.find((session) => session.id === button.dataset.sessionRevoke);
+  if (currentSession?.current && !confirmSceneDiscard()) return;
   button.disabled = true;
   formError("sessionSecurityError");
   try {
@@ -3082,6 +3159,7 @@ $("#sessionList").addEventListener("click", async (event) => {
       state.preview = null;
       $("#loginForm").reset();
       showGate("login");
+      window.location.reload();
       return;
     }
     await loadSecurityState();
@@ -3118,7 +3196,7 @@ const userAdministrationErrorMessage = (error) => {
     role_unchanged: "Choisissez un rôle différent.",
     invalid_role: "Le rôle demandé n’existe pas.",
   };
-  return messages[error?.message] ?? error?.message ?? "Gestion du compte impossible.";
+  return messages[error?.code ?? error?.message] ?? error?.message ?? "Gestion du compte impossible.";
 };
 
 $("#openUserInvitation").addEventListener("click", (event) => {
@@ -3578,11 +3656,14 @@ $("#bootstrapForm").addEventListener("submit", async (event) => {
 });
 
 refs.logoutButton.addEventListener("click", async () => {
+  if (!confirmSceneDiscard()) return;
+  setButtonBusy(refs.logoutButton, true, "Déconnexion…");
   try {
-    await api.post("auth/logout", {});
-  } catch (error) {
-    toast(`Déconnexion non confirmée : ${error.message}`, true);
-  } finally {
+    try {
+      await api.post("auth/logout", {});
+    } catch (error) {
+      if (error.status !== 401) throw error;
+    }
     api.csrfToken = "";
     state.session = null;
     state.scene = null;
@@ -3596,6 +3677,12 @@ refs.logoutButton.addEventListener("click", async () => {
     state.previewSelection = "";
     $("#loginForm").reset();
     showGate("login");
+    // A fresh document also removes previous-user data and in-flight requests.
+    window.location.reload();
+  } catch (error) {
+    toast(`Déconnexion non confirmée : ${error.message}`, true);
+  } finally {
+    setButtonBusy(refs.logoutButton, false);
   }
 });
 
@@ -3775,6 +3862,7 @@ refs.sceneName.addEventListener("input", () => {
   if (!state.scene || state.preview) return;
   state.scene.name = refs.sceneName.value.slice(0, 100);
   refs.stageTitle.textContent = state.scene.name || "Scène sans titre";
+  updateSceneActions();
 });
 refs.greetingInput.addEventListener("input", () => {
   if (state.preview) return;
@@ -4511,7 +4599,7 @@ $("#automaticReleaseSource").addEventListener("click", async (event) => {
     );
   } catch (error) {
     toast(
-      error.message === "github_update_check_rate_limited"
+      error.code === "github_update_check_rate_limited"
         ? "Une recherche vient déjà de se terminer. Réessayez dans quelques secondes."
         : `Recherche GitHub impossible : ${error.message}`,
       true,
@@ -4644,6 +4732,10 @@ $("#releaseBoard").addEventListener("click", async (event) => {
 });
 
 setInterval(refreshStudioClocks, 15_000);
+$("#view-surface").addEventListener("input", () => updateSceneActions());
+$("#view-surface").addEventListener("click", () => updateSceneActions());
+refs.monitor.addEventListener("pointerup", () => updateSceneActions());
+refs.nodeLayer.addEventListener("keydown", () => updateSceneActions());
 setInterval(() => { void refreshFleetState(); }, FLEET_REFRESH_INTERVAL_MS);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) clearPrivatePinDialog();

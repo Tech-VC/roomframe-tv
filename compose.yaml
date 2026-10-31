@@ -8,6 +8,7 @@ x-api-environment: &api-environment
   ROOMFRAME_BOOTSTRAP_TOKEN_FILE: /run/secrets/bootstrap_token
   ROOMFRAME_SESSION_SECRET_FILE: /run/secrets/session_secret
   ROOMFRAME_TOTP_KEY_FILE: /run/secrets/totp_encryption_key
+  ROOMFRAME_TRUSTED_PROXY_CIDRS: ${ROOMFRAME_TRUSTED_PROXY_CIDRS:-loopback,uniquelocal}
   ROOMFRAME_VERSION: ${ROOMFRAME_VERSION:-dev}
   ROOMFRAME_MEDIA_DIR: /data/media
   ROOMFRAME_PROCESSING_DIR: /data/processing

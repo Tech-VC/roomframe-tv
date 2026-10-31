@@ -312,6 +312,41 @@ RELEASE_REAL="$(realpath -e "$VERIFIED_ROOT/$RELEASE_SHA.rfupdate")"
   && -f "$RELEASE_REAL"
   && ! -L "$RELEASE_REAL"
 ]] || fail "chemin de release hors de la quarantaine attendue"
+
+# La quarantaine reste modifiable par le compte runtime. Tous les contrôles et
+# toutes les lectures suivantes doivent porter sur une copie privée root :
+# revérifier le fichier partagé puis le rouvrir laisserait une course TOCTOU.
+INSTALL_PARENT="$(dirname "$INSTALL_DIR")"
+STAGE="$(mktemp -d "$INSTALL_PARENT/.roomframe-apply.XXXXXX")"
+chmod 0700 "$STAGE"
+CANDIDATE="$STAGE/candidate"
+CODE_ROLLBACK="$STAGE/previous-code"
+mkdir "$CANDIDATE"
+
+python3 - "$RELEASE_REAL" "$STAGE/release.rfupdate" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+source_path = pathlib.Path(sys.argv[1])
+destination = pathlib.Path(sys.argv[2])
+flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+with os.fdopen(os.open(source_path, flags), "rb") as source:
+    info = os.fstat(source.fileno())
+    if not stat.S_ISREG(info.st_mode):
+        raise SystemExit("le bundle doit rester un fichier régulier")
+    with destination.open("xb") as target:
+        os.fchmod(target.fileno(), 0o600)
+        remaining = info.st_size
+        while remaining:
+            chunk = source.read(min(1024 * 1024, remaining))
+            if not chunk:
+                raise SystemExit("bundle tronqué pendant la copie privée")
+            target.write(chunk)
+            remaining -= len(chunk)
+PY
+RELEASE_REAL="$STAGE/release.rfupdate"
 [[ "$(sha256sum "$RELEASE_REAL" | awk '{print $1}')" == "$RELEASE_SHA" ]] \
   || fail "SHA-256 du bundle différent de l'historique"
 
@@ -324,13 +359,6 @@ python3 "$VERIFY_UPDATE_COMMAND" \
   "$RELEASE_REAL" \
   --trust-key "$TRUST_KEY" \
   --current-version "$CURRENT_VERSION"
-
-INSTALL_PARENT="$(dirname "$INSTALL_DIR")"
-STAGE="$(mktemp -d "$INSTALL_PARENT/.roomframe-apply.XXXXXX")"
-chmod 0700 "$STAGE"
-CANDIDATE="$STAGE/candidate"
-CODE_ROLLBACK="$STAGE/previous-code"
-mkdir "$CANDIDATE"
 
 python3 - \
   "$RELEASE_REAL" "$STAGE/server.tar.gz" \

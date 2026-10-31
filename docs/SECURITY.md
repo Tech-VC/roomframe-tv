@@ -23,6 +23,17 @@ Philips Android TV 12 de validation.
 
 ## Secrets de l’instance
 
+L’API ne publie aucun port sur l’hôte. Pour les en-têtes `X-Forwarded-*`, elle
+valide l’adresse du pair immédiat et n’accepte qu’un seul saut de proxy.
+`ROOMFRAME_TRUSTED_PROXY_CIDRS` permet de restreindre cette confiance aux
+adresses ou sous-réseaux de Caddy, séparés par des virgules. La valeur par
+défaut `loopback,uniquelocal` couvre le réseau Docker privé de l’installation.
+Elle ne doit pas servir à exposer directement l’API sur un LAN partagé :
+dans une topologie personnalisée, indiquer les seuls CIDR de Caddy.
+La forme numérique `trustProxy: 1` est désactivée par Fastify depuis 5.12.1 ;
+elle ne doit pas être réintroduite, sous peine de regrouper toutes les
+adresses clientes derrière celle du proxy.
+
 L’installation crée une fois, sous `/etc/roomframe/secrets/` :
 
 - `postgres_password` ;
@@ -449,9 +460,12 @@ réactive automatiquement la configuration, les données et la base précédente
 
 `roomframe-apply-update` partage ce même verrou et n’accepte qu’un UUID de
 release déjà importée accompagné d’une confirmation de version. Il exige le
-chemin par hash sous `releases/verified`, recalcule le SHA-256 et revalide la
-signature Ed25519 avant toute extraction. L’archive serveur est extraite sans
-liens, périphériques ni traversée, dans un staging root-only placé sur le même
+chemin par hash sous `releases/verified`, copie le bundle dans un staging root
+`0700` avec un fichier `0600`, puis recalcule le SHA-256 et revalide la
+signature Ed25519 sur cette copie. Toutes les lectures suivantes utilisent
+la même copie privée, même si le runtime remplace son fichier partagé.
+L’archive serveur est extraite sans liens, périphériques ni traversée,
+dans un staging root-only placé sur le même
 système de fichiers que le code. La commande préconstruit, sauvegarde, vérifie
 le point de retour puis bascule. L’API, le worker et le poller ne possèdent ni
 socket Docker, ni mécanisme sudo permettant de lancer cette commande.
