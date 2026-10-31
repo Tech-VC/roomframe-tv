@@ -460,9 +460,12 @@ réactive automatiquement la configuration, les données et la base précédente
 
 `roomframe-apply-update` partage ce même verrou et n’accepte qu’un UUID de
 release déjà importée accompagné d’une confirmation de version. Il exige le
-chemin par hash sous `releases/verified`, recalcule le SHA-256 et revalide la
-signature Ed25519 avant toute extraction. L’archive serveur est extraite sans
-liens, périphériques ni traversée, dans un staging root-only placé sur le même
+chemin par hash sous `releases/verified`, copie le bundle dans un staging root
+`0700` avec un fichier `0600`, puis recalcule le SHA-256 et revalide la
+signature Ed25519 sur cette copie. Toutes les lectures suivantes utilisent
+la même copie privée, même si le runtime remplace son fichier partagé.
+L’archive serveur est extraite sans liens, périphériques ni traversée,
+dans un staging root-only placé sur le même
 système de fichiers que le code. La commande préconstruit, sauvegarde, vérifie
 le point de retour puis bascule. L’API, le worker et le poller ne possèdent ni
 socket Docker, ni mécanisme sudo permettant de lancer cette commande.
