@@ -744,6 +744,52 @@ const clientCertificateFingerprint = (request) => {
   return clientCertificateFingerprintPattern.test(fingerprint) ? fingerprint : null;
 };
 
+const assertTvClientCertificate = (
+  screen,
+  request,
+  {
+    certificateOptional = false,
+    acceptPendingCertificate = false,
+    allowUnknownCertificateForRecovery = false,
+  } = {},
+) => {
+  const presentedFingerprint = clientCertificateFingerprint(request);
+  const matchesActiveCertificate = (
+    presentedFingerprint
+    && screen.client_certificate_fingerprint
+    && timingSafeTextEqual(presentedFingerprint, screen.client_certificate_fingerprint)
+  );
+  const matchesPendingCertificate = (
+    acceptPendingCertificate
+    && presentedFingerprint
+    && screen.client_certificate_pending_fingerprint
+    && timingSafeTextEqual(presentedFingerprint, screen.client_certificate_pending_fingerprint)
+  );
+  const mayRecoverUnknownCertificate = (
+    allowUnknownCertificateForRecovery
+    && certificateOptional
+    && screen.client_certificate_recovery_is_allowed
+  );
+  if (
+    presentedFingerprint
+    && !matchesActiveCertificate
+    && !matchesPendingCertificate
+    && !mayRecoverUnknownCertificate
+  ) {
+    throw Object.assign(new Error('invalid_tv_client_certificate'), { statusCode: 401 });
+  }
+  if (
+    !certificateOptional
+    && (
+      (screen.client_certificate_is_required && !matchesActiveCertificate)
+      || (screen.client_certificate_pending_is_required && !matchesPendingCertificate)
+    )
+  ) {
+    throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
+  }
+  return presentedFingerprint;
+};
+
 const activeTvFromRequest = async (
   connection,
   request,
@@ -786,51 +832,11 @@ const activeTvFromRequest = async (
     throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
   }
   const screen = result.rows[0];
-  const presentedFingerprint = clientCertificateFingerprint(request);
-  const matchesActiveCertificate = (
-    presentedFingerprint
-    && screen.client_certificate_fingerprint
-    && timingSafeTextEqual(
-      presentedFingerprint,
-      screen.client_certificate_fingerprint,
-    )
-  );
-  const matchesPendingCertificate = (
-    acceptPendingCertificate
-    && presentedFingerprint
-    && screen.client_certificate_pending_fingerprint
-    && timingSafeTextEqual(
-      presentedFingerprint,
-      screen.client_certificate_pending_fingerprint,
-    )
-  );
-  const mayRecoverUnknownCertificate = (
-    allowUnknownCertificateForRecovery
-    && certificateOptional
-    && screen.client_certificate_recovery_is_allowed
-  );
-  if (
-    presentedFingerprint
-    && !matchesActiveCertificate
-    && !matchesPendingCertificate
-    && !mayRecoverUnknownCertificate
-  ) {
-    throw Object.assign(new Error('invalid_tv_client_certificate'), { statusCode: 401 });
-  }
-  const certificateIsRequired = (
-    !certificateOptional
-    && screen.client_certificate_is_required
-  );
-  const pendingCertificateIsRequired = (
-    !certificateOptional
-    && screen.client_certificate_pending_is_required
-  );
-  if (
-    (certificateIsRequired && !matchesActiveCertificate)
-    || (pendingCertificateIsRequired && !matchesPendingCertificate)
-  ) {
-    throw Object.assign(new Error('tv_client_certificate_required'), { statusCode: 401 });
-  }
+  const presentedFingerprint = assertTvClientCertificate(screen, request, {
+    certificateOptional,
+    acceptPendingCertificate,
+    allowUnknownCertificateForRecovery,
+  });
   return {
     screen,
     credentials,
@@ -2537,7 +2543,18 @@ export const registerStudioRoutes = ({
     const requestedGeneration = credentialGeneration(request.body?.generation);
     return withTransaction(pool, async (client) => {
       const current = await client.query(
-        `SELECT *
+        `SELECT screens.*,
+           (
+             client_certificate_fingerprint IS NOT NULL
+             AND client_certificate_required_at IS NOT NULL
+             AND client_certificate_required_at <= now()
+           ) AS client_certificate_is_required,
+           (
+             client_certificate_fingerprint IS NULL
+             AND client_certificate_pending_fingerprint IS NOT NULL
+             AND client_certificate_pending_required_at IS NOT NULL
+             AND client_certificate_pending_required_at <= now()
+           ) AS client_certificate_pending_is_required
          FROM screens
          WHERE id = $1 AND enrollment_state = 'active'
          FOR UPDATE`,
@@ -2547,6 +2564,7 @@ export const registerStudioRoutes = ({
       if (!screen) {
         throw Object.assign(new Error('invalid_tv_credentials'), { statusCode: 401 });
       }
+      assertTvClientCertificate(screen, request);
       const storedGeneration = Number(screen.credential_generation);
       if (
         timingSafeTextEqual(supplied.deviceKeyHash, screen.device_key)
