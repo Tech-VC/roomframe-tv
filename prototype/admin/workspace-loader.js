@@ -3,7 +3,7 @@ export const viewIsAllowed = (view, can) => ({
   surface: can('studio:read'),
   content: can('media:read') || can('messages:read'),
   brand: can('instance:write'),
-  fleet: can('fleet:read'),
+  fleet: can('fleet:read') || can('studio:write'),
   releases: can('releases:read'),
   security: true,
 }[view] ?? false);

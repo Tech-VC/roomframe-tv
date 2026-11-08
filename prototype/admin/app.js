@@ -1754,7 +1754,7 @@ const enrollmentErrorMessage = (error) => ({
   tv_must_be_revoked_before_deletion: "Révoquez d’abord cette TV avant de supprimer définitivement sa fiche.",
   simulator_deletion_not_allowed: "Le simulateur local ne peut pas être supprimé.",
   tv_not_found: "Cette TV n’existe plus dans le Parc.",
-}[error?.message] ?? error?.message);
+}[error?.code ?? error?.message] ?? error?.message);
 
 const tvCredentialActionSpec = {
   revoke: {
@@ -3413,7 +3413,7 @@ const activationErrorMessage = (error) => ({
   invalid_activation_challenge: "Le défi TOTP est invalide ou expiré. Recommencez l’enrôlement.",
   invalid_password_length: "La phrase de passe doit contenir entre 12 et 256 caractères.",
   password_too_weak: "Choisissez une phrase de passe plus forte et moins prévisible.",
-}[error?.message] ?? error?.message ?? "Activation impossible.");
+}[error?.code ?? error?.message] ?? error?.message ?? "Activation impossible.");
 
 $("#openActivationButton").addEventListener("click", () => {
   formError("loginError");

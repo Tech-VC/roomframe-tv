@@ -319,4 +319,4 @@ export const nodeLabel = (node) => {
   return labels[node.kind] || node.kind;
 };
 
-export const nodeSupportsLabel = (node) => ALLOWED_PROPS[node.kind]?.has("label") ?? false;
+export const nodeSupportsLabel = (node) => ALLOWED_PROPS[node?.kind]?.has("label") ?? false;
