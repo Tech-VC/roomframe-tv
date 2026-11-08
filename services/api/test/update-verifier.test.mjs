@@ -23,6 +23,20 @@ import { createValidators } from '../src/validation.mjs';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const validators = await createValidators(path.join(root, 'contracts'));
 
+test('un ZIP avec trop d’entrées vides est arrêté avant la vérification du manifeste', async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'roomframe-update-entry-limit-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bundle = await buildTestUpdate(directory, {
+    extraEntries: Array.from({ length: 4096 }, (_, index) => ({ path: `empty/${index}` })),
+  });
+  await assert.rejects(verifyUpdateBundle({
+    file: bundle.bundlePath,
+    validators,
+    trustDir: path.dirname(bundle.publicKeyPath),
+    currentVersion: '0.3.0',
+  }), { message: 'update_entry_limit_exceeded', statusCode: 422 });
+});
+
 test('un .rfupdate Ed25519 valide est accepté et les altérations sont refusées', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'roomframe-update-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

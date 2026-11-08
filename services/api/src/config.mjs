@@ -63,6 +63,9 @@ export const loadConfig = async (overrides = {}) => {
   return Object.freeze({
     port: positiveInteger(overrides.port ?? process.env.PORT, 8080),
     version: overrides.version ?? process.env.ROOMFRAME_VERSION ?? '0.3.0',
+    trustedProxyCidrs: overrides.trustedProxyCidrs
+      ?? process.env.ROOMFRAME_TRUSTED_PROXY_CIDRS
+      ?? 'loopback,uniquelocal',
     publicUrl: overrides.publicUrl ?? process.env.ROOMFRAME_PUBLIC_URL ?? null,
     preferredUrl: overrides.preferredUrl ?? process.env.ROOMFRAME_PREFERRED_URL ?? null,
     fallbackUrl: overrides.fallbackUrl ?? process.env.ROOMFRAME_FALLBACK_URL ?? null,

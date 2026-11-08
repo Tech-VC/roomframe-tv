@@ -1780,6 +1780,76 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     },
   });
   assert.equal(wrongCertificate.statusCode, 401);
+  const certificateNextKey = token();
+  const certificateRotation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/rotate',
+    headers: activationHeaders,
+    payload: { currentGeneration: 1, nextKey: certificateNextKey },
+  });
+  assert.equal(certificateRotation.statusCode, 200, certificateRotation.body);
+  const pendingKeyHeaders = {
+    ...certificateHeaders,
+    'x-roomframe-device-key': certificateNextKey,
+  };
+  for (const headers of [
+    pendingKeyHeaders,
+    {
+      ...pendingKeyHeaders,
+      'x-roomframe-tls-client-verified': '1',
+      'x-roomframe-tls-client-fingerprint': '0'.repeat(64),
+    },
+  ]) {
+    const rejected = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tv/credentials/confirm',
+      headers,
+      payload: { generation: 2 },
+    });
+    assert.equal(rejected.statusCode, 401, rejected.body);
+    const unchanged = await pool.query(
+      'SELECT device_key, device_key_pending, credential_generation FROM screens WHERE id = $1',
+      [certificatePendingDevice.id],
+    );
+    assert.equal(Number(unchanged.rows[0].credential_generation), 1);
+    assert.equal(unchanged.rows[0].device_key_pending, crypto.createHash('sha256').update(certificateNextKey).digest('hex'));
+    assert.notEqual(unchanged.rows[0].device_key, unchanged.rows[0].device_key_pending);
+  }
+  const confirmedKeyHeaders = {
+    ...activationHeaders,
+    'x-roomframe-device-key': certificateNextKey,
+  };
+  const certificateKeyConfirmation = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: confirmedKeyHeaders,
+    payload: { generation: 2 },
+  });
+  assert.equal(certificateKeyConfirmation.statusCode, 200, certificateKeyConfirmation.body);
+  assert.equal(certificateKeyConfirmation.json().idempotent, false);
+  const previousKeyRejected = await app.inject({
+    method: 'GET',
+    url: `/api/v1/tv/sync?deviceId=${certificatePendingDevice.id}`,
+    headers: activationHeaders,
+  });
+  assert.equal(previousKeyRejected.statusCode, 401);
+  const certificateKeyReplay = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: confirmedKeyHeaders,
+    payload: { generation: 2 },
+  });
+  assert.equal(certificateKeyReplay.statusCode, 200, certificateKeyReplay.body);
+  assert.equal(certificateKeyReplay.json().idempotent, true);
+  const uncertifiedReplay = await app.inject({
+    method: 'POST',
+    url: '/api/v1/tv/credentials/confirm',
+    headers: pendingKeyHeaders,
+    payload: { generation: 2 },
+  });
+  assert.equal(uncertifiedReplay.statusCode, 401);
+  certificateHeaders['x-roomframe-device-key'] = certificateNextKey;
+  activationHeaders['x-roomframe-device-key'] = certificateNextKey;
   await pool.query(
     `UPDATE screens
      SET client_certificate_expires_at = now() + interval '29 days'
@@ -3549,8 +3619,8 @@ test('bootstrap concurrent, auth, mise à jour personnalisée et cache TV resten
     Object.fromEntries(credentialAudit.rows.map((row) => [row.action, row.count])),
     {
       'tv.credential.revoked': 2,
-      'tv.credential.rotation.confirmed': 1,
-      'tv.credential.rotation.prepared': 1,
+      'tv.credential.rotation.confirmed': 2,
+      'tv.credential.rotation.prepared': 2,
       'tv.reenrollment.created': 1,
     },
   );

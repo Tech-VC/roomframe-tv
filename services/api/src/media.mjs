@@ -123,6 +123,9 @@ export const storeMediaUpload = async ({
   const originalName = safeOriginalName(part.filename);
   try {
     const written = await writeUpload(part.file, temporary, config.maxVideoBytes);
+    if (part.file.truncated) {
+      throw Object.assign(new Error('media_too_large'), { statusCode: 413 });
+    }
     const detected = await detectMedia(temporary, originalName);
     const maximum = detected.kind === 'image' ? config.maxImageBytes : config.maxVideoBytes;
     if (written.byteSize > maximum) {

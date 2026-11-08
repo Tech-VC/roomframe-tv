@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; connect-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self'; form-action 'self'">
   <title>RoomFrame TV — régie</title>
-  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui26">
-  <script type="module" src="/app.js?v=0.3.0-ui26"></script>
+  <link rel="stylesheet" href="/styles.css?v=0.3.0-ui27">
+  <script type="module" src="/app.js?v=0.3.0-ui27"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Aller au contenu principal</a>
@@ -161,7 +161,7 @@
 
           <section class="stage-zone" aria-label="Éditeur de scène">
             <div class="stage-head">
-              <div><strong id="stageTitle">Scène</strong><br><span id="stageMeta">1920 × 1080 · brouillon local</span></div>
+              <div><strong id="stageTitle">Scène</strong><br><span id="stageMeta" role="status" aria-live="polite">1920 × 1080 · brouillon local</span></div>
               <div class="stage-tools">
                 <button class="tool" type="button" id="reloadStudioButton">Recharger</button>
                 <button class="tool" type="button" id="saveButton">Enregistrer</button>

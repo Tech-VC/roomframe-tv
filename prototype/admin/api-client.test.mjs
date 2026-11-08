@@ -43,7 +43,9 @@ test("conserve les erreurs JSON structurées de l’API", async () => {
     (error) => (
       error instanceof ApiError
       && error.status === 401
-      && error.message === "authentication_required"
+      && error.code === "authentication_required"
+      && error.payload.error === "authentication_required"
+      && error.message === "Votre session a expiré. Reconnectez-vous."
     ),
   );
 });
@@ -54,4 +56,21 @@ test("retourne une réponse JSON valide", async () => {
     headers: { "content-type": "application/json" },
   });
   assert.deepEqual(await readApiResponse(response), { configured: true });
+});
+
+test("les réponses sans contenu et les erreurs problem+json sont prises en charge", async () => {
+  assert.deepEqual(await readApiResponse(new Response(null, {
+    status: 204, headers: { 'content-type': 'application/json' },
+  })), {});
+  await assert.rejects(readApiResponse(new Response('{"error":"media_too_large"}', {
+    status: 413, headers: { 'content-type': 'Application/Problem+Json; charset=utf-8' },
+  })), (error) => error.status === 413 && error.code === 'media_too_large'
+    && error.message === 'Ce média dépasse la taille autorisée.');
+});
+
+test("une erreur serveur inconnue ne divulgue pas de détails techniques", async () => {
+  await assert.rejects(readApiResponse(new Response('{"error":"internal_error","message":"database credentials or internal path"}', {
+    status: 500, headers: { 'content-type': 'application/json' },
+  })), (error) => error.status === 500 && !error.message.includes('database')
+    && error.message.includes('Réessayez'));
 });

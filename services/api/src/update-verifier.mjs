@@ -12,6 +12,10 @@ const SIGNATURE_LIMIT = 4096;
 const SBOM_LIMIT = 16 * 1024 * 1024;
 const BUNDLE_UNCOMPRESSED_LIMIT = 8 * 1024 * 1024 * 1024;
 const MAX_COMPRESSION_RATIO = 250;
+// The manifest allows 1000 artifacts. Also leave room for control files and
+// directory entries, without collecting an unbounded number of empty entries
+// before the signature can be checked.
+const MAX_ARCHIVE_ENTRIES = 4096;
 
 const invalidUpdate = (code, statusCode = 422, cause = undefined) => Object.assign(
   new Error(code),
@@ -51,6 +55,9 @@ const collectEntries = (archive) => new Promise((resolve, reject) => {
   archive.once('error', reject);
   archive.on('entry', (entry) => {
     try {
+      if (entries.size >= MAX_ARCHIVE_ENTRIES) {
+        throw invalidUpdate('update_entry_limit_exceeded');
+      }
       const name = safeEntryName(entry.fileName);
       if (entries.has(name)) throw invalidUpdate('duplicate_update_entry');
       if ((entry.generalPurposeBitFlag & 0x1) !== 0) throw invalidUpdate('encrypted_update_entry');
