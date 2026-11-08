@@ -32,8 +32,10 @@ sudo roomframe-apply-update \
   --confirm 0.3.1
 ```
 
-La commande n’accepte pas de chemin arbitraire. Elle relit la quarantaine
-adressée par SHA-256, revalide la signature Ed25519 et la compatibilité, extrait
+La commande n’accepte pas de chemin arbitraire. Elle copie le bundle de la
+quarantaine adressée par SHA-256 dans son staging root-only, puis vérifie le
+hash, la signature Ed25519 et la compatibilité sur cette copie privée. Toutes
+les lectures suivantes utilisent cette même copie. Elle extrait ensuite
 l’unique `server-archive` dans un staging root-only, contrôle les versions et
 la liste de migrations, puis préconstruit les images.
 

@@ -23,6 +23,10 @@ jobs:
           sudo ./scripts/test-backup-verify-e2e.sh
           sudo ./scripts/test-discovery.sh
           ./scripts/test-supply-chain.sh
+          sudo python3 scripts/test-apply-update-security.py
+      - name: Audit production dependencies
+        working-directory: services/api
+        run: npm audit --omit=dev --audit-level=high
       - name: Smoke-test installer idempotence
         run: |
           test_root="$(mktemp -d)"
